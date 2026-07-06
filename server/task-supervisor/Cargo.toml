@@ -1,0 +1,13 @@
+[package]
+name = "task-supervisor"
+version = "0.1.0"
+edition = "2021"
+description = "Supervised tokio background tasks: auto-restart on panic, graceful shutdown with timeout"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/JitterCompany/sensor-link"
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["time", "rt", "macros"] }
+tracing.workspace = true

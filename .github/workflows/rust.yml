@@ -1,0 +1,43 @@
+name: Rust CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize]
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format-check:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  test:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+      - name: Run Tests
+        run: cargo test --workspace

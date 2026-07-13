@@ -6,8 +6,8 @@ Reusable building blocks for Jitter sensor platforms, in three groups:
 | Directory | Contents |
 |---|---|
 | [server/](server/) | Server-side crates |
-| protocol/ | Device ↔ server protocol crates (planned) |
-| firmware/ | Firmware crates (planned) |
+| sensor-link-protocol/ | Device ↔ server protocol crate (planned) |
+| sensor-link-firmware/ | Firmware library crate (planned) |
 
 ## Crates
 

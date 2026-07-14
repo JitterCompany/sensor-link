@@ -442,7 +442,7 @@ mod fixedint {
         }
 
         #[inline]
-        pub(super) fn to_bytes(&self) -> [u8; Self::BYTES_PER_SAMPLE] {
+        pub(super) fn to_bytes(self) -> [u8; Self::BYTES_PER_SAMPLE] {
             self.value.to_le_bytes()
         }
 

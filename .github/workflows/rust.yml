@@ -38,6 +38,6 @@ jobs:
       - name: Cache Cargo Deps
         uses: Swatinem/rust-cache@v2
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --features sensor-link-firmware/test-mono -- -D warnings
       - name: Run Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --features sensor-link-firmware/test-mono

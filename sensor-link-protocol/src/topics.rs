@@ -263,14 +263,14 @@ pub struct TopicParts<'a, TOPIC> {
 /// Topics have the format "<direction | manufacturer>/<client_id>/<topic_name>",
 /// where
 /// - the first part can be "f" (from client) or "t" (to client) as Jitter manufacturer proprietary values
-///     or any specific value for other manufacturers.
+///   or any specific value for other manufacturers.
 /// - the second part specifies the device id
 /// - the last part defines the topic_name itself (which may include subtopics)
 ///
 /// Note: the prefix and device_id are not validated. The caller may use them for further parsing / verification.
 pub fn parse_topic_from_device(
     topic: &str,
-) -> Result<TopicParts<TopicFromDevice>, TopicParseError> {
+) -> Result<TopicParts<'_, TopicFromDevice>, TopicParseError> {
     // split into 3 parts, skipping th first 2 and keeping the remainder
     let mut parts = topic.splitn(3, '/');
     let prefix = parts.next().ok_or(TopicParseError::MissingPrefix)?;
@@ -291,8 +291,8 @@ pub fn parse_topic_from_device(
 
     // already returned an error at this point when there are less than 3 parts
     Ok(TopicParts {
-        prefix: prefix.into(),
-        device_id: device_id.into(),
+        prefix,
+        device_id,
         topic,
     })
 }
@@ -302,12 +302,12 @@ pub fn parse_topic_from_device(
 /// Topics have the format "<direction | manufacturer>/<client_id>/<topic_name>",
 /// where
 /// - the first part can be "f" (from client) or "t" (to client) as Jitter manufacturer proprietary values
-///     or any specific value for other manufacturers.
+///   or any specific value for other manufacturers.
 /// - the second part specifies the device id
 /// - the last part defines the topic_name itself (which may include subtopics)
 ///
 /// Note: the prefix and device_id are not validated. The caller may use them for further parsing / verification.
-pub fn parse_topic_to_device(topic: &str) -> Result<TopicParts<TopicToDevice>, TopicParseError> {
+pub fn parse_topic_to_device(topic: &str) -> Result<TopicParts<'_, TopicToDevice>, TopicParseError> {
     // split into 3 parts, skipping th first 2 and keeping the remainder
     let mut parts = topic.splitn(3, '/');
     let prefix = parts.next().ok_or(TopicParseError::MissingPrefix)?;
@@ -323,8 +323,8 @@ pub fn parse_topic_to_device(topic: &str) -> Result<TopicParts<TopicToDevice>, T
 
     // already returned an error at this point when there are less than 3 parts
     Ok(TopicParts {
-        prefix: prefix.into(),
-        device_id: device_id.into(),
+        prefix,
+        device_id,
         topic,
     })
 }

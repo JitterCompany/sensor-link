@@ -48,7 +48,7 @@ impl Online {
     /// Returns the time since the device was last online.
     /// If the device is offline, returns None.
     pub fn since(&self) -> Option<Milliseconds> {
-        self.since.clone()
+        self.since
     }
 
     /// Returns true if this message means that the device disconnected ungracefully.

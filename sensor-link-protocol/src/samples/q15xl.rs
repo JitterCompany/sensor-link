@@ -217,9 +217,7 @@ impl<const N_CH: usize, const MAX_N_SAMPLES: usize> Uniform<Q15XL<N_CH, MAX_N_SA
         }
 
         let available_bytes_per_channel = available_bytes / N_CH;
-        let available_samples_per_channel =
-            (available_bytes_per_channel - Q15_OVERHEAD_PER_CHANNEL) / Q15_BYTES_PER_SAMPLE;
-        available_samples_per_channel
+        (available_bytes_per_channel - Q15_OVERHEAD_PER_CHANNEL) / Q15_BYTES_PER_SAMPLE
     }
 
     #[inline]
@@ -371,7 +369,7 @@ impl<const MAX_N_SAMPLES: usize> Q15Channel<MAX_N_SAMPLES> {
 
     pub const fn empty() -> Self {
         // compile-time assert: q15xl::Q15Channel only works for MAX_N_SAMPLES <= 65535
-        let _ = assert!(MAX_N_SAMPLES <= u16::MAX as usize);
+        assert!(MAX_N_SAMPLES <= u16::MAX as usize);
 
         Self {
             exponent: 0,

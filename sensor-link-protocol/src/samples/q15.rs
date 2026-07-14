@@ -135,7 +135,7 @@ impl<const N_CH: usize, const MAX_N_SAMPLES: usize> Q15<N_CH, MAX_N_SAMPLES> {
             ch: [Q15Channel::EMPTY; N_CH],
         };
 
-        let num_samples_u8: u8 = bytes.get(0).cloned().unwrap_or(0);
+        let num_samples_u8: u8 = bytes.first().cloned().unwrap_or(0);
         let num_samples: usize = num_samples_u8.into();
 
         // Check if num_samples exceeds the maximum allowed samples
@@ -219,9 +219,7 @@ impl<const N_CH: usize, const MAX_N_SAMPLES: usize> Uniform<Q15<N_CH, MAX_N_SAMP
         }
 
         let available_bytes_per_channel = available_bytes / N_CH;
-        let available_samples_per_channel =
-            (available_bytes_per_channel - Q15_OVERHEAD_PER_CHANNEL) / Q15_BYTES_PER_SAMPLE;
-        available_samples_per_channel
+        (available_bytes_per_channel - Q15_OVERHEAD_PER_CHANNEL) / Q15_BYTES_PER_SAMPLE
     }
 
     #[inline]
@@ -373,7 +371,7 @@ impl<const MAX_N_SAMPLES: usize> Q15Channel<MAX_N_SAMPLES> {
 
     pub const fn empty() -> Self {
         // compile-time assert: q15::Q15 only has 8-bit length field (see q15xl::Q15XL for larger sizes)
-        let _ = assert!(MAX_N_SAMPLES <= u8::MAX as usize);
+        assert!(MAX_N_SAMPLES <= u8::MAX as usize);
 
         Self {
             exponent: 0,

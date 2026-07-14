@@ -1,0 +1,56 @@
+[package]
+name = "sensor-link-firmware"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+use-std = ["critical-section", "tokio", "glob", "rustls-pemfile", "x509-parser"]
+# Enables PEM (de)serialization in `utils::crypto` (pulls in alloc-backed parsing).
+alloc = ["p256/pkcs8", "elliptic-curve/pem"]
+# Use the tokio-based, manipulable test timer (set_time_offset/advance_time,
+# MonotonicInstant::test) instead of the rtic hardware timer. Enabled by
+# downstream test suites that drive monotonic time directly.
+test-mono = ["use-std"]
+
+[dependencies]
+heapless = {version = "0.8.0", default-features = false}
+log = "0.4.19"
+postcard = { version = "1.1.1" }
+serde = { version = "1", default-features = false, features = ["derive"]}
+embassy-sync = { version = "0.4.0", package = "embassy-sync" }
+num_enum = { version="0.7.1", default-features = false }
+critical-section = { version = "1.1", features = ["std"], optional = true}
+tokio = { version = "1.24.2", default-features = false, features = ["sync", "rt", "time", "macros"], optional = true}
+futures = { version = "0.3", default-features = false }
+rtic-time = "2.0.0"
+rtic-sync = { version = "1.3.0" }
+rtt-target = { version = "0.6.2" }
+embedded-storage = "0.3.0"
+embedded-storage-async = "0.4.0"
+crc = "3.0.1"
+paste = "1"
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"
+embedded-io-async = { version = "0.6.0" }
+static_cell = "2.0.0"
+nom = { version = "^7.1", default-features = false }
+strum = { version = "0.25.0", default-features = false, features = ["derive"] }
+chrono = { version = "=0.4.34", default-features = false, features = ["serde"] }
+libm = "0.2.15"
+elliptic-curve = { version = "0.13.8", default-features = false }
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa"] }
+sha2 = { version = "0.10.8", default-features = false }
+glob = { version = "0.3.1", optional = true }
+rustls-pemfile = { version = "2.1.0", optional = true }
+x509-parser = { version = "0.16", optional = true }
+sensor-link-protocol = { path = "../sensor-link-protocol" }
+
+# Use fork until our changes get merged in if ever.
+[dependencies.atat]
+features = ["heapless"]
+git = "https://github.com/JitterCompany/atat.git"
+rev = "827a605c1ef3818085759a50f0f62482c4baa65b"
+
+[dev-dependencies]
+simple_logger = "*"
+assert_float_eq = "1.1"

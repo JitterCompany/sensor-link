@@ -268,9 +268,11 @@ pub struct TopicParts<'a, TOPIC> {
 /// - the last part defines the topic_name itself (which may include subtopics)
 ///
 /// Note: the prefix and device_id are not validated. The caller may use them for further parsing / verification.
+/// Note: `mismatched_lifetime_syntaxes` is allowed because only the "not use-std" feature return type requires a lifetime parameter.
+#[allow(mismatched_lifetime_syntaxes)]
 pub fn parse_topic_from_device(
-    topic: &'_ str,
-) -> Result<TopicParts<'_, TopicFromDevice>, TopicParseError> {
+    topic: &str,
+) -> Result<TopicParts<TopicFromDevice>, TopicParseError> {
     // split into 3 parts, skipping th first 2 and keeping the remainder
     let mut parts = topic.splitn(3, '/');
     let prefix = parts.next().ok_or(TopicParseError::MissingPrefix)?;
@@ -309,9 +311,9 @@ pub fn parse_topic_from_device(
 /// - the last part defines the topic_name itself (which may include subtopics)
 ///
 /// Note: the prefix and device_id are not validated. The caller may use them for further parsing / verification.
-pub fn parse_topic_to_device(
-    topic: &'_ str,
-) -> Result<TopicParts<'_, TopicToDevice>, TopicParseError> {
+/// Note: `mismatched_lifetime_syntaxes` is allowed because only the "not use-std" feature return type requires a lifetime parameter.
+#[allow(mismatched_lifetime_syntaxes)]
+pub fn parse_topic_to_device(topic: &str) -> Result<TopicParts<TopicToDevice>, TopicParseError> {
     // split into 3 parts, skipping th first 2 and keeping the remainder
     let mut parts = topic.splitn(3, '/');
     let prefix = parts.next().ok_or(TopicParseError::MissingPrefix)?;

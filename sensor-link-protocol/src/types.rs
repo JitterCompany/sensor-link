@@ -49,7 +49,7 @@ impl Microseconds {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror_no_std::Error, Debug)]
 pub enum ThresholdError {
     #[error("Threshold value is not finite")]
     InvalidValue,
@@ -82,7 +82,7 @@ impl Threshold {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror_no_std::Error, Debug)]
 pub enum FractionError {
     #[error("Fraction value is not valid (must be finite and positive)")]
     InvalidValue,

@@ -2,7 +2,7 @@ use super::TopicPayloadSerialize;
 use crate::MAX_MESSAGE_LEN;
 use serde::{Deserialize, Serialize};
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror_no_std::Error, Debug)]
 pub enum Error {
     #[error("{0}")]
     JsonDeserializeError(#[from] serde_json_core::de::Error),

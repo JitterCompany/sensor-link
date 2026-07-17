@@ -269,7 +269,7 @@ pub struct TopicParts<'a, TOPIC> {
 ///
 /// Note: the prefix and device_id are not validated. The caller may use them for further parsing / verification.
 pub fn parse_topic_from_device(
-    topic: &str,
+    topic: &'_ str,
 ) -> Result<TopicParts<'_, TopicFromDevice>, TopicParseError> {
     // split into 3 parts, skipping th first 2 and keeping the remainder
     let mut parts = topic.splitn(3, '/');
@@ -310,7 +310,7 @@ pub fn parse_topic_from_device(
 ///
 /// Note: the prefix and device_id are not validated. The caller may use them for further parsing / verification.
 pub fn parse_topic_to_device(
-    topic: &str,
+    topic: &'_ str,
 ) -> Result<TopicParts<'_, TopicToDevice>, TopicParseError> {
     // split into 3 parts, skipping th first 2 and keeping the remainder
     let mut parts = topic.splitn(3, '/');

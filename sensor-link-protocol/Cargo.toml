@@ -16,6 +16,7 @@ strum = { version = "0.25.0", default-features = false, features = ["derive"] }
 postcard = { version = "1.1.1", features = ["experimental-derive"] }
 serde_with = { version = "3.11.0", default-features = false, features = ["macros"]}
 libm = "0.2.15"
+thiserror = "2"
 
 [dependencies.xxhash-rust]
 version = "0.8.15"

@@ -49,6 +49,12 @@ impl Microseconds {
     }
 }
 
+#[derive(thiserror::Error, Debug)]
+pub enum ThresholdError {
+    #[error("Threshold value is not finite")]
+    InvalidValue,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 #[serde(transparent)]
 pub struct Threshold(f32);
@@ -67,13 +73,19 @@ impl Threshold {
     /// Get raw threshold as f32
     ///
     /// Returns error if threshold is not valid
-    pub fn raw_threshold(&self) -> Result<f32, ()> {
+    pub fn raw_threshold(&self) -> Result<f32, ThresholdError> {
         if Self::is_valid(self.0) {
             Ok(self.0)
         } else {
-            Err(())
+            Err(ThresholdError::InvalidValue)
         }
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum FractionError {
+    #[error("Fraction value is not valid (must be finite and positive)")]
+    InvalidValue,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
@@ -94,11 +106,11 @@ impl Fraction {
     /// Get raw fraction as f32
     ///
     /// Returns error if fraction is not valid
-    pub fn raw_fraction(&self) -> Result<f32, ()> {
+    pub fn raw_fraction(&self) -> Result<f32, FractionError> {
         if Self::is_valid(self.0) {
             Ok(self.0)
         } else {
-            Err(())
+            Err(FractionError::InvalidValue)
         }
     }
 }

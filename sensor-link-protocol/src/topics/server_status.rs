@@ -2,6 +2,12 @@ use super::TopicPayloadSerialize;
 use crate::MAX_MESSAGE_LEN;
 use serde::{Deserialize, Serialize};
 
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    JsonDeserializeError(#[from] serde_json_core::de::Error),
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerStatus {
@@ -14,10 +20,8 @@ pub enum ServerStatus {
 }
 
 impl ServerStatus {
-    pub fn from_slice(slice: &[u8]) -> Result<Self, ()> {
-        serde_json_core::from_slice(slice)
-            .map(|(val, _len)| val)
-            .map_err(|_| ())
+    pub fn from_slice(slice: &[u8]) -> Result<Self, Error> {
+        Ok(serde_json_core::from_slice(slice).map(|(val, _len)| val)?)
     }
 
     #[cfg(feature = "use-std")]

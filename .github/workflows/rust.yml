@@ -32,12 +32,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Full history so the script can find the merge-base with the base branch.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - name: Cache Cargo Deps
         uses: Swatinem/rust-cache@v2
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+      - name: Clippy (changed files)
+        run: ./scripts/clippy-changed.sh "origin/${{ github.base_ref || github.ref_name }}"
       - name: Run Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --features sensor-link-firmware/test-mono

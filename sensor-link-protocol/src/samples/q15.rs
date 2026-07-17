@@ -87,6 +87,11 @@ impl<const N_CH: usize, const MAX_N_SAMPLES: usize> Q15<N_CH, MAX_N_SAMPLES> {
         self.num_samples as usize
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.num_samples == 0
+    }
+
     /// Serialize to bytes
     pub fn to_bytes<'buffer>(
         &self,

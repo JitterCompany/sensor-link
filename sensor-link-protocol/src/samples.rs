@@ -61,6 +61,11 @@ impl<const N_CH: usize, const MAX_N_SAMPLES: usize> UniformSamples<N_CH, MAX_N_S
         min_len
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.t == 0
+    }
+
     /// How many samples can be accepted by all channels
     pub fn free_space(&self) -> usize {
         let max_len = self.ch.iter().fold(0, |acc, vec| acc.max(vec.len()));

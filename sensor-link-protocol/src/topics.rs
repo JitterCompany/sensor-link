@@ -291,8 +291,10 @@ pub fn parse_topic_from_device(
 
     // already returned an error at this point when there are less than 3 parts
     Ok(TopicParts {
-        prefix,
-        device_id,
+        #[allow(clippy::useless_conversion)]
+        prefix: prefix.into(),
+        #[allow(clippy::useless_conversion)]
+        device_id: device_id.into(),
         topic,
     })
 }
@@ -325,8 +327,10 @@ pub fn parse_topic_to_device(
 
     // already returned an error at this point when there are less than 3 parts
     Ok(TopicParts {
-        prefix,
-        device_id,
+        #[allow(clippy::useless_conversion)]
+        prefix: prefix.into(),
+        #[allow(clippy::useless_conversion)]
+        device_id: device_id.into(),
         topic,
     })
 }

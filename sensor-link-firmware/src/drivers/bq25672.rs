@@ -806,6 +806,10 @@ where
         .await
     }
 
+    // The `0 << n` terms spell out which register bits are deliberately left
+    // zero, so the code mirrors the datasheet's bitfield layout. Clippy folds
+    // them to `0 | 0` and reports equal operands.
+    #[allow(clippy::eq_op)]
     async fn set_watchdog(&mut self, config: WatchdogConfig) -> Result<(), Error<P::Error>> {
         self.write_reg_8(
             RegU8::ChargerControl1,
@@ -816,6 +820,7 @@ where
         .await
     }
 
+    #[allow(clippy::eq_op)] // See set_watchdog: zeroed bits mirror the datasheet.
     async fn set_power_mode(&mut self, power_mode: PowerMode) -> Result<(), Error<P::Error>> {
         self.write_reg_8(
             RegU8::ChargerControl2,
@@ -830,6 +835,7 @@ where
         .await
     }
 
+    #[allow(clippy::eq_op)] // See set_watchdog: zeroed bits mirror the datasheet.
     async fn configure_adc_inputs(&mut self) -> Result<(), Error<P::Error>> {
         self.write_reg_8(
             RegU8::ADCDisable0,

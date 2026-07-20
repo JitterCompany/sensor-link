@@ -52,5 +52,6 @@ git = "https://github.com/JitterCompany/atat.git"
 rev = "827a605c1ef3818085759a50f0f62482c4baa65b"
 
 [dev-dependencies]
+tokio = "1.24.2"
 simple_logger = "*"
 assert_float_eq = "1.1"

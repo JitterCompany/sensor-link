@@ -1,0 +1,32 @@
+[package]
+name = "sensor-link-server-core"
+edition = "2021"
+
+[features]
+default = []
+actix = ["dep:actix-web"]
+mongodb = ["dep:mongodb", "dep:bson", "dep:futures", "dep:itertools"]
+
+[dependencies]
+actix-web = { version = "4", optional = true, default-features = false }
+anyhow.workspace = true
+async-trait.workspace = true
+bson = { workspace = true, optional = true }
+chrono.workspace = true
+field_types.workspace = true
+futures = { workspace = true, optional = true }
+heapless.workspace = true
+itertools = { workspace = true, optional = true }
+mongodb = { workspace = true, optional = true }
+num_enum.workspace = true
+rand.workspace = true
+sensor-link-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+strum.workspace = true
+task-supervisor.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+utoipa.workspace = true

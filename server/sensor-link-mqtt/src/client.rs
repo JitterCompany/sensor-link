@@ -30,6 +30,23 @@ use task_supervisor::{get_crate_relative_function_path, Handle, PanicCallback};
 
 pub type ConnectionErrorCallback = Arc<dyn Fn(&rumqttc::ConnectionError) + Send + Sync + 'static>;
 
+/// Optional observability hooks for the MQTT client task.
+///
+/// Bundles the callbacks and watchers an embedder may want to attach to the
+/// client. Adding a new hook here does not change [`start_task`]'s signature,
+/// and — because the struct derives [`Default`] — callers that don't need a
+/// given hook (or any) don't have to be updated when new fields are added.
+#[derive(Default, Clone)]
+pub struct MqttHooks {
+    /// Invoked when the event loop hits a connection error. Deduplicated: only
+    /// the first error of a disconnect streak is reported.
+    pub on_connection_error: Option<ConnectionErrorCallback>,
+    /// Receives the client's connection status whenever it changes (`true` when
+    /// connected, `false` when disconnected), so external code can observe
+    /// connectivity via a [`watch::Receiver`].
+    pub connection_status_tx: Option<watch::Sender<bool>>,
+}
+
 use crate::{
     metrics, ControlMessageIn, ControlMessageOut, DeviceControlIn, DeviceControlOut, MqttDataType,
     ParsedMqttIn, ProcessingIn, ProcessingMessage, SystemMessageIn, TopicCodec,
@@ -74,7 +91,7 @@ pub fn start_task<C, DS>(
     rx: mpsc::Receiver<ControlMessageOut<C::ControlOut>>,
     db: DS,
     on_task_panic: PanicCallback,
-    on_connection_error: ConnectionErrorCallback,
+    hooks: MqttHooks,
 ) -> Handle
 where
     C: TopicCodec,
@@ -120,7 +137,7 @@ where
                 rx.clone(),
                 db.clone(),
                 on_panic_clone.clone(),
-                on_connection_error.clone(),
+                hooks.clone(),
             )
         },
         get_crate_relative_function_path(task_function),
@@ -136,7 +153,7 @@ async fn mqtt_task<DS, C: TopicCodec>(
     msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
     db: DS,
     on_task_panic: PanicCallback,
-    on_connection_error: ConnectionErrorCallback,
+    hooks: MqttHooks,
 ) where
     DS: EventStore + DeviceStore + Clone + Send + 'static,
 {
@@ -180,7 +197,7 @@ async fn mqtt_task<DS, C: TopicCodec>(
                     connect_tx.clone(),
                     eventloop.clone(),
                     in_handler.clone(),
-                    on_connection_error.clone(),
+                    hooks.clone(),
                 )
             },
             "sensor_mqtt::client::mqtt_event_loop_task",
@@ -324,7 +341,7 @@ async fn mqtt_event_loop_task(
     connect_tx: Arc<Mutex<watch::Sender<()>>>,
     eventloop: Arc<Mutex<EventLoop>>,
     mut incoming_handler: impl IncomingHandler,
-    on_connection_error: ConnectionErrorCallback,
+    hooks: MqttHooks,
 ) {
     let mut eventloop = eventloop
         .try_lock()
@@ -367,6 +384,10 @@ async fn mqtt_event_loop_task(
                         tracing::info!("Connected to MQTT broker");
                         error_detected = false;
 
+                        if let Some(status_tx) = &hooks.connection_status_tx {
+                            let _ = status_tx.send(true);
+                        }
+
                         // send a signal to the mqtt_task that a new connection is made
                         let _ = connect_tx.send(());
                     }
@@ -384,7 +405,12 @@ async fn mqtt_event_loop_task(
                             break;
                         }
                         if !error_detected {
-                            on_connection_error(&err);
+                            if let Some(on_connection_error) = &hooks.on_connection_error {
+                                on_connection_error(&err);
+                            }
+                            if let Some(status_tx) = &hooks.connection_status_tx {
+                                let _ = status_tx.send(false);
+                            }
                             print_error("MQTT client", "while polling", &err.to_string());
                         }
                         // Reduce CPU load while MQTT broker is down
@@ -397,6 +423,11 @@ async fn mqtt_event_loop_task(
                 }
             }
         }
+    }
+
+    // Notify that we're disconnecting
+    if let Some(status_tx) = &hooks.connection_status_tx {
+        let _ = status_tx.send(false);
     }
 
     tracing::info!("Exit MQTT event loop task");

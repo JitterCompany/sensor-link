@@ -131,13 +131,15 @@ where
         move |shutdown_rx| {
             task_function(
                 shutdown_rx,
-                mqttoptions.clone(),
-                data_tx.clone(),
-                device_tx.clone(),
-                rx.clone(),
-                db.clone(),
-                on_panic_clone.clone(),
-                hooks.clone(),
+                MqttTaskParams {
+                    mqttoptions: mqttoptions.clone(),
+                    data_tx: data_tx.clone(),
+                    device_tx: device_tx.clone(),
+                    msg_out: rx.clone(),
+                    db: db.clone(),
+                    on_task_panic: on_panic_clone.clone(),
+                    hooks: hooks.clone(),
+                },
             )
         },
         get_crate_relative_function_path(task_function),
@@ -145,18 +147,31 @@ where
     )
 }
 
-async fn mqtt_task<DS, C: TopicCodec>(
-    mut shutdown_rx: Receiver<()>,
-    mut mqttoptions: MqttOptions,
+/// Dependencies for [`mqtt_task`], bundled to keep its argument list manageable.
+struct MqttTaskParams<DS, C: TopicCodec> {
+    mqttoptions: MqttOptions,
     data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
     device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
     msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
     db: DS,
     on_task_panic: PanicCallback,
     hooks: MqttHooks,
-) where
+}
+
+async fn mqtt_task<DS, C: TopicCodec>(mut shutdown_rx: Receiver<()>, params: MqttTaskParams<DS, C>)
+where
     DS: EventStore + DeviceStore + Clone + Send + 'static,
 {
+    let MqttTaskParams {
+        mut mqttoptions,
+        data_tx,
+        device_tx,
+        msg_out,
+        db,
+        on_task_panic,
+        hooks,
+    } = params;
+
     let mut msg_out = msg_out
         .try_lock()
         .expect("Message out receiver seems to be locked by another task then MQTT task");

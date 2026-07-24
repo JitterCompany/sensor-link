@@ -49,7 +49,7 @@ pub struct MqttHooks {
 
 use crate::{
     metrics, ControlMessageIn, ControlMessageOut, DeviceControlIn, DeviceControlOut, MqttDataType,
-    ParsedMqttIn, ProcessingIn, ProcessingMessage, SystemMessageIn, TopicCodec,
+    ParsedMqttIn, ParsedMqttInFor, ProcessingIn, ProcessingMessage, SystemMessageIn, TopicCodec,
 };
 
 pub fn print_error(component: &str, message: &str, error: &str) {
@@ -545,7 +545,7 @@ where
 
 fn get_mqtt_message<C: TopicCodec>(
     publish: &Publish,
-) -> Result<ParsedMqttIn<C::DT, C::D, C::S, C::EV, C::P>, InHandlerError> {
+) -> Result<ParsedMqttInFor<C>, InHandlerError> {
     let full_topic = &publish.topic;
     if let Some(system_topic) = parse_system_topic(full_topic) {
         match system_topic {
@@ -635,7 +635,13 @@ async fn insert_sensor_server_log(
 /// It is generic over the device-info (`D`), status (`S`) and event (`EV`)
 /// payload types so that manufacturer-specific codecs can reuse it (by
 /// specializing those type parameters) to handle their shared topics.
-pub struct JitterTopicCodec<DT, D, S, EV = Event>(PhantomData<fn() -> (DT, D, S, EV)>);
+pub struct JitterTopicCodec<DT, D, S, EV = Event>(CodecMarker<DT, D, S, EV>);
+
+/// Zero-sized marker carrying a codec's type parameters without owning them.
+///
+/// Uses `fn() -> (…)` so the marker is covariant and imposes no auto-trait or
+/// drop obligations on `DT`/`D`/`S`/`EV`.
+type CodecMarker<DT, D, S, EV> = PhantomData<fn() -> (DT, D, S, EV)>;
 
 impl<DT, D, S, EV> TopicCodec for JitterTopicCodec<DT, D, S, EV>
 where

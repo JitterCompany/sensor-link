@@ -67,6 +67,16 @@ pub enum ParsedMqttIn<DT: MqttDataType, D, S, EV = Event, P = ProcessingIn> {
     System(SystemMessageIn),
 }
 
+/// The [`ParsedMqttIn`] variant produced by a given [`TopicCodec`] `C`,
+/// with all of the codec's associated payload types filled in.
+pub type ParsedMqttInFor<C> = ParsedMqttIn<
+    <C as TopicCodec>::DT,
+    <C as TopicCodec>::D,
+    <C as TopicCodec>::S,
+    <C as TopicCodec>::EV,
+    <C as TopicCodec>::P,
+>;
+
 /// Codec for a manufacturer's MQTT topic/payload scheme.
 ///
 /// `sensor-mqtt`'s connection/event-loop machinery is generic over this trait
@@ -88,7 +98,7 @@ pub trait TopicCodec: Send + Sync + 'static {
     fn parse_payload(
         payload: &[u8],
         parts: TopicParts<Self::TopicFromDevice>,
-    ) -> Result<ParsedMqttIn<Self::DT, Self::D, Self::S, Self::EV, Self::P>, String>;
+    ) -> Result<ParsedMqttInFor<Self>, String>;
 
     /// Returns the full topic string and serialized payload to publish, or an
     /// error description if encoding failed.

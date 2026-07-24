@@ -30,8 +30,8 @@ use crate::{
     sensor_data::{MPSensorData, MPSensorDataChannels, SensorData, TimeResolution},
     sensor_server_log::SensorServerLog,
     store_traits::{
-        DataStoreError, DeviceStore, EventStore, FirmwareStore, Result, SensorDataStore,
-        TransactionDataStore,
+        DataStoreError, DeviceStore, EventStore, FirmwareStore, Result, SensorDataOptions,
+        SensorDataStore, TransactionDataStore,
     },
     utils::datetime::datetime_from_millis,
     DataStoreId, MeteorId, TimeRange,
@@ -1205,8 +1205,7 @@ where
             meas_point_id,
             timerange,
             inclusive_range,
-            None,
-            None,
+            SensorDataOptions::default(),
         )
         .await
     }
@@ -1218,9 +1217,10 @@ where
         meas_point_id: &DataStoreId,
         timerange: &TimeRange,
         inclusive_range: bool,
-        sort: Option<i32>,
-        limit: Option<u64>,
+        options: SensorDataOptions,
     ) -> Result<MPSensorData> {
+        let SensorDataOptions { sort, limit } = options;
+
         let meas_point_id = ObjectId::parse_str(meas_point_id)?;
 
         let (data_set_ids, findquery) = self

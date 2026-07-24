@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use crate::{
     sensor_data::{MPSensorData, TimeResolution},
-    store_traits::{Result, SensorDataStore},
+    store_traits::{Result, SensorDataOptions, SensorDataStore},
     DataKind, DataStoreId, TimeRange,
 };
 
@@ -192,8 +192,10 @@ where
             query.measuring_point_id,
             &query.time_range,
             true,
-            query.sort,
-            query.limit,
+            SensorDataOptions {
+                sort: query.sort,
+                limit: query.limit,
+            },
         )
         .await?;
 

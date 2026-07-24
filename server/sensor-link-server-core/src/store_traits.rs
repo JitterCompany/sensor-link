@@ -17,6 +17,13 @@ use crate::{
     DataStoreId, MeteorId, TimeRange,
 };
 
+/// Optional query parameters for [`SensorDataStore::sensor_data_for_measuring_point_with_options`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SensorDataOptions {
+    pub sort: Option<i32>,
+    pub limit: Option<u64>,
+}
+
 #[derive(Debug, Error)]
 pub enum DataStoreError {
     #[error("Database error: {0}")]
@@ -269,8 +276,7 @@ pub trait SensorDataStore: Send + Sync + 'static {
         meas_point_id: &DataStoreId,
         timerange: &TimeRange,
         inclusive_range: bool,
-        sort: Option<i32>,
-        limit: Option<u64>,
+        options: SensorDataOptions,
     ) -> Result<MPSensorData>;
 
     async fn get_highest_values(

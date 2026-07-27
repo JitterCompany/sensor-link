@@ -33,24 +33,27 @@ impl ServerStatus {
 impl TopicPayloadSerialize<MAX_MESSAGE_LEN> for ServerStatus {}
 
 #[cfg(test)]
-#[cfg(feature = "use-std")]
 mod test {
     use super::*;
 
     #[test]
     fn test_from_slice() {
-        assert_eq!(ServerStatus::from_slice(b"\"ok\""), Ok(ServerStatus::Ok));
         assert_eq!(
-            ServerStatus::from_slice(b"\"offline\""),
-            Ok(ServerStatus::Offline)
+            ServerStatus::from_slice(b"\"ok\"").unwrap(),
+            ServerStatus::Ok
         );
         assert_eq!(
-            ServerStatus::from_slice(b"\"maintenance\""),
-            Ok(ServerStatus::Maintenance)
+            ServerStatus::from_slice(b"\"offline\"").unwrap(),
+            ServerStatus::Offline
         );
-        assert_eq!(ServerStatus::from_slice(b"\"unknown\""), Err(()));
+        assert_eq!(
+            ServerStatus::from_slice(b"\"maintenance\"").unwrap(),
+            ServerStatus::Maintenance
+        );
+        assert!(ServerStatus::from_slice(b"\"unknown\"").is_err());
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn test_serialize() {
         assert_eq!(ServerStatus::Ok.serialize(), "\"ok\"");
@@ -58,6 +61,7 @@ mod test {
         assert_eq!(ServerStatus::Maintenance.serialize(), "\"maintenance\"");
     }
 
+    #[cfg(feature = "use-std")]
     #[test]
     fn test_serializ_deserialize() {
         let ok = ServerStatus::Ok;

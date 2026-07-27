@@ -35,7 +35,7 @@ embedded-io-async = { version = "0.6.0" }
 static_cell = "2.0.0"
 nom = { version = "^7.1", default-features = false }
 strum = { version = "0.25.0", default-features = false, features = ["derive"] }
-chrono = { version = "=0.4.34", default-features = false, features = ["serde"] }
+chrono = { version = "0.4.41", default-features = false, features = ["serde"] }
 libm = "0.2.15"
 elliptic-curve = { version = "0.13.8", default-features = false }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa"] }
@@ -52,5 +52,6 @@ git = "https://github.com/JitterCompany/atat.git"
 rev = "827a605c1ef3818085759a50f0f62482c4baa65b"
 
 [dev-dependencies]
+tokio = "1.24.2"
 simple_logger = "*"
 assert_float_eq = "1.1"

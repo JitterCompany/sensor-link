@@ -7,3 +7,33 @@ anyhow = "1.0"
 futures = "0.3"
 tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
+async-trait = "0.1.88"
+bson = { version = "2.14", features = ["chrono-0_4"] }
+chrono = { version = "0.4.41", features = ["serde", "unstable-locales"] }
+field_types = "1.1.0"
+heapless = "0.8.0"
+itertools = "0.14.0"
+lettre = { version = "0.11.19", default-features = false, features = [
+    "builder",
+    "hostname",
+    "smtp-transport",
+    "tokio1",
+    "tokio1-rustls-tls",
+    "pool",
+] }
+mongodb = "3.2.3"
+num_enum = "0.7.3"
+opentelemetry = { version = "0.29", features = ["trace", "metrics", "logs"] }
+rand = "0.8.3"
+reqwest = { version = "0.12.15", features = ["json", "rustls-tls"] }
+rumqttc = "0.24.0"
+sensor-link-mqtt = { path = "server/sensor-link-mqtt" }
+sensor-link-server-core = { path = "server/sensor-link-server-core" }
+sensor-link-protocol = { path = "sensor-link-protocol" }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+serde_with = "3.12.0"
+strum = { version = "0.27.1", features = ["derive"] }
+task-supervisor = { path = "server/task-supervisor" }
+thiserror = "2"
+utoipa = { version = "5.4.0", features = ["chrono"] }

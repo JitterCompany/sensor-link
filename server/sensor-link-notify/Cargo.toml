@@ -1,0 +1,19 @@
+[package]
+name = "sensor-link-notify"
+edition = "2021"
+
+[dependencies]
+sensor-link-server-core.workspace = true
+sensor-link-mqtt.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+sensor-link-protocol.workspace = true
+lettre.workspace = true
+num_enum.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+task-supervisor.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+tracing.workspace = true

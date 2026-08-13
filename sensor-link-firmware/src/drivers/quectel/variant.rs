@@ -110,14 +110,9 @@ impl<EP: StatefulOutputPin, PK: OutputPin, RP: OutputPin, SP: InputPin> ModemVar
         delay_ms(600).await;
         self.pwrkey.set_low().ok();
 
-        // Diagnostic only: STATUS polarity is not bench-verified yet,
-        // so log it but do not gate the power-on on it.
-        for _ in 0..20 {
-            if self.status.is_high().unwrap_or(false) {
-                break;
-            }
-            delay_ms(100).await;
-        }
+        // Diagnostic only: STATUS is not used to gate the power-on, the
+        // driver awaits the RDY URC instead. Note: on the 5101 board STATUS
+        // reads low while the modem is on (inverting level shifter).
         log::debug!(target: "quectel", "STATUS pin high: {:?}", self.status.is_high());
     }
 

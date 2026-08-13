@@ -52,15 +52,15 @@ impl FlashDescriptor {
         if self.page_size < 1 || !self.page_size.is_power_of_two() {
             return Err(DescriptorError::PageSizeInvalid);
         }
-        if self.erase_size % self.page_size != 0 {
+        if !self.erase_size.is_multiple_of(self.page_size) {
             return Err(DescriptorError::EraseSizeNotMultipleOfPage);
         }
 
-        if self.total_size % self.erase_size != 0 {
+        if !self.total_size.is_multiple_of(self.erase_size) {
             return Err(DescriptorError::TotalSizeNotMultipleOfErase);
         }
 
-        if MAX_ERASE_SIZE % self.erase_size != 0 {
+        if !MAX_ERASE_SIZE.is_multiple_of(self.erase_size) {
             return Err(DescriptorError::EraseSizeNotMultipleMaxEraseSize);
         }
 
@@ -389,7 +389,7 @@ where
     ///
     /// Any slice of data can be read from the flash as long as it stays within the bounds of the flash total_size
     pub async fn read(&mut self, address: Address, bytes: &mut [u8]) -> Result<(), Error> {
-        if self.stats.read_attempts % 2048 == 0 {
+        if self.stats.read_attempts.is_multiple_of(2048) {
             // log::debug!(target: "SPIFlash", "Stats: {} bytes read, {} erase attempts", self.stats.read_bytes, self.stats.erase_attempts);
             self.stats = Stats::default();
         }
@@ -430,7 +430,7 @@ where
         // Note: below this point, we must put spi to sleep before returning
         let (spi, addr, mode) = self.init_and_check_addr(address, len).await?;
 
-        if addr as usize % erase_size != 0 || len % erase_size != 0 {
+        if !(addr as usize).is_multiple_of(erase_size) || !len.is_multiple_of(erase_size) {
             self.flash.sleep().await;
             return Err(Error::Alignment);
         }
@@ -448,9 +448,10 @@ where
                 break;
             }
 
-            if let Err(_) = spi
+            if spi
                 .write(&cmd_and_addr(erase_cmd, addr + offset as u32, mode))
                 .await
+                .is_err()
             {
                 error = Err(Error::SPI);
                 break;

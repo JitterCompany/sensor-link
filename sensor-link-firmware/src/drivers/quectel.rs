@@ -348,13 +348,15 @@ where
 
         // Now we're pretty sure the baudrates agree. We can persist the settings
 
-        let cmd = general::StoreBaudrate;
-        if let Err(err) = self.client.send(&cmd).await.map_err(Error::Client) {
-            log::error!(target: "quectel","Failed to store baudrate: {err:?}");
-            // We can try again next power cycle.
-        }
+        if V::PERSIST_BAUDRATE {
+            let cmd = general::StoreBaudrate;
+            if let Err(err) = self.client.send(&cmd).await.map_err(Error::Client) {
+                log::error!(target: "quectel","Failed to store baudrate: {err:?}");
+                // We can try again next power cycle.
+            }
 
-        log::info!(target: "quectel","Baudrate stored in modem");
+            log::info!(target: "quectel","Baudrate stored in modem");
+        }
 
         Ok(())
     }
@@ -1241,6 +1243,13 @@ where
             return;
         }
         log::debug!(target: "quectel","Turning on modem...");
+
+        if !V::PERSIST_BAUDRATE {
+            // The modem boots at the default baudrate: renegotiate and
+            // listen for the boot URCs at the default rate.
+            self.baudrate_determined = None;
+            self.uart.set_baud_rate(DEFAULT_BAUDRATE);
+        }
 
         // Power-on pin sequence, including settling delays before resuming UART:
         // we want to be sure the modem is powered before we set TX high.

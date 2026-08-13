@@ -10,9 +10,14 @@ pub trait ModemVariant {
     /// Lowercase model prefix as reported by AT+CGMM (e.g. "ec2", "eg915").
     const MODEL_PREFIX: &'static str;
 
-    /// `Some(rate)`: negotiate to this baudrate via AT+IPR and persist with AT&W.
+    /// `Some(rate)`: negotiate to this baudrate via AT+IPR.
     /// `None`: stay at the modem's default baudrate, never send AT+IPR.
     const TARGET_BAUDRATE: Option<u32>;
+
+    /// Persist the negotiated baudrate in the modem with AT&W.
+    /// If false, the modem reverts to its default baudrate on power-cycle
+    /// and the driver re-negotiates after every power-on.
+    const PERSIST_BAUDRATE: bool;
 
     /// Best-effort check whether the modem is already powered.
     fn is_powered(&mut self) -> bool;
@@ -43,6 +48,7 @@ impl<EP: StatefulOutputPin, RP: OutputPin> MiniPcie<EP, RP> {
 impl<EP: StatefulOutputPin, RP: OutputPin> ModemVariant for MiniPcie<EP, RP> {
     const MODEL_PREFIX: &'static str = "ec2";
     const TARGET_BAUDRATE: Option<u32> = Some(3_000_000);
+    const PERSIST_BAUDRATE: bool = true;
 
     fn is_powered(&mut self) -> bool {
         self.enable.is_set_high().unwrap_or(false)
@@ -90,7 +96,10 @@ impl<EP: StatefulOutputPin, PK: OutputPin, RP: OutputPin, SP: InputPin> ModemVar
     for Eg915<EP, PK, RP, SP>
 {
     const MODEL_PREFIX: &'static str = "eg915";
-    const TARGET_BAUDRATE: Option<u32> = None;
+    /// Maximum supported by the EG915N main UART
+    const TARGET_BAUDRATE: Option<u32> = Some(1_000_000);
+    /// Volatile: the modem falls back to 115200 on every power-cycle
+    const PERSIST_BAUDRATE: bool = false;
 
     fn is_powered(&mut self) -> bool {
         self.enable.is_set_high().unwrap_or(false)

@@ -5,7 +5,7 @@ use atat::{atat_derive::AtatResp, serde_at::de::length_delimited::LengthDelimite
 use heapless::String;
 use num_enum::TryFromPrimitive;
 
-use crate::{drivers::ec2x::commands::URCParse, mqtt::Message};
+use crate::{drivers::quectel::commands::URCParse, mqtt::Message};
 use sensor_link_protocol::{MAX_MESSAGE_LEN, MAX_TOPIC_LEN};
 
 /// 3.2.2 Open result URC

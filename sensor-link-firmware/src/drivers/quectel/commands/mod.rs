@@ -1,4 +1,4 @@
-//! AT Commands for Quectel EC2X
+//! AT Commands for Quectel modems (EC2x/EG915N)
 //!
 //! Commands are structured according to the quectel command manuals.
 //! Each module defines commands, responses and URCs.
@@ -245,7 +245,7 @@ impl Urc {
 mod test {
 
     use super::*;
-    use crate::{drivers::ec2x::ContextId, utils::LossyStr};
+    use crate::{drivers::quectel::ContextId, utils::LossyStr};
     use atat::{AtatCmd, DefaultDigester, DigestResult, Digester};
 
     #[test]

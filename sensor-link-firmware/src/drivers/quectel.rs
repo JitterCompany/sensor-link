@@ -1,4 +1,4 @@
-//! Quectel EC2X driver
+//! Quectel modem driver (EC21/EC25/EG915N)
 
 mod apn;
 mod commands;
@@ -23,7 +23,7 @@ use sensor_link_protocol::{
 use static_cell::StaticCell;
 
 use crate::{
-    drivers::{ec2x::commands::mqtt::urc::MQTTReceive, ATClient},
+    drivers::{quectel::commands::mqtt::urc::MQTTReceive, ATClient},
     monotonic_time::{delay_ms, FutureTimeout},
     mqtt::{Event, FileError, MqttClient, Will},
     traits::{BaudRateControl, ErrorReport, Split, Suspend, Suspendable},
@@ -39,7 +39,7 @@ use self::mqtt::urc::MqttAck;
 const INGRESS_BUF_SIZE: usize = 2048;
 const URC_CAPACITY: usize = 128;
 const URC_SUBSCRIBERS: usize = 1;
-const URC_QUEUE_LEN: usize = 6; // EC2X has 5 slots for receiving mqtt messages.
+const URC_QUEUE_LEN: usize = 6; // EC2x and EG915N have 5 slots (0-4) for receiving mqtt messages.
 const MQTT_CONTEXT: ContextId = ContextId(1);
 const TLS_CONTEXT: ContextId = ContextId(2);
 const HTTP_CONTEXT: ContextId = ContextId(3);
@@ -71,7 +71,7 @@ pub struct Credentials {
 }
 
 /// Driver for Quectel EC21 and EC25 modems.
-pub struct EC2x<
+pub struct Quectel<
     W: Write,
     R: Read + ErrorReport + Suspendable,
     EP: StatefulOutputPin,
@@ -115,7 +115,7 @@ pub struct EC2x<
     urc: Option<Urc>,
 }
 
-pub struct EC2xBackend<R: Read + ErrorReport + Suspendable> {
+pub struct QuectelBackend<R: Read + ErrorReport + Suspendable> {
     ingress: Ingress<
         'static,
         DefaultDigester<Urc>,
@@ -127,7 +127,7 @@ pub struct EC2xBackend<R: Read + ErrorReport + Suspendable> {
     rx: R,
 }
 
-impl<W, R, EP, RP, U> EC2x<W, R, EP, RP, U>
+impl<W, R, EP, RP, U> Quectel<W, R, EP, RP, U>
 where
     W: Write,
     EP: StatefulOutputPin,
@@ -141,7 +141,7 @@ where
         rst: RP,
         config: Config,
         credentials: Credentials,
-    ) -> (Self, EC2xBackend<R>) {
+    ) -> (Self, QuectelBackend<R>) {
         let ingress = Ingress::new(
             DefaultDigester::<Urc>::default(),
             INGRESS_BUF.init([0; INGRESS_BUF_SIZE]),
@@ -177,7 +177,7 @@ where
                 file_handle: None,
                 urc: None,
             },
-            EC2xBackend { ingress, rx },
+            QuectelBackend { ingress, rx },
         )
     }
 
@@ -186,14 +186,14 @@ where
         self.turn_on().await;
 
         if let Some(baudrate) = self.baudrate_determined {
-            log::debug!(target: "EC2X","Set baudrate to {baudrate}");
+            log::debug!(target: "quectel","Set baudrate to {baudrate}");
             self.uart.set_baud_rate(baudrate);
             delay_ms(1).await;
 
             let cmd = general::AT;
             let _ = self.client.send(&cmd).await;
             if self.client.send(&cmd).await.is_err() {
-                log::error!(target: "EC2X","AT failed");
+                log::error!(target: "quectel","AT failed");
                 return Err(Error::TimeOut);
             }
         } else {
@@ -203,7 +203,7 @@ where
             {
                 Ok(_) => self.baudrate_determined = Some(TARGET_BAUDRATE),
                 Err(_) => {
-                    log::warn!(target: "EC2X","Baudrate not as expected. Back to default");
+                    log::warn!(target: "quectel","Baudrate not as expected. Back to default");
                     self.baudrate_determined = Some(DEFAULT_BAUDRATE);
                     self.uart.set_baud_rate(DEFAULT_BAUDRATE);
                     return Err(Error::TimeOut);
@@ -216,11 +216,11 @@ where
 
         // let cmd = general::GetManufacturerId;
         // let manuf_id = self.client.send(&cmd).await.map_err(Error::Client)?;
-        // log::debug!(target: "EC2X","ID: {manuf_id:?}");
+        // log::debug!(target: "quectel","ID: {manuf_id:?}");
 
         // let cmd = general::GetSoftwareVersion;
         // let version = self.client.send(&cmd).await.map_err(Error::Client)?;
-        // log::debug!(target: "EC2X","Software version: {version:?}");
+        // log::debug!(target: "quectel","Software version: {version:?}");
 
         let cpin_cmd = general::CPIN;
         let mut retries = 20; // Manual says to reboot after 20 secs
@@ -251,7 +251,7 @@ where
                             model.make_ascii_lowercase();
 
                             if !model.contains("ec2") {
-                                log::warn!(target: "EC2X", "provisioning failed (modem model detected as '{model}')");
+                                log::warn!(target: "quectel", "provisioning failed (modem model detected as '{model}')");
                                 return Err(orig_error);
                             }
                         }
@@ -280,7 +280,7 @@ where
         default_baudrate: u32,
     ) -> Result<(), Error<atat::Error>> {
         // Try to communicate at the target baudrate
-        log::debug!(target: "EC2X","Negotiate baudrate");
+        log::debug!(target: "quectel","Negotiate baudrate");
         self.uart.set_baud_rate(target_baudrate);
 
         delay_ms(1).await;
@@ -290,14 +290,14 @@ where
         let _ = self.client.send(&cmd).await;
 
         if self.client.send(&cmd).await.is_ok() {
-            log::debug!(target: "EC2X","Baudrate negotiated to {target_baudrate}");
+            log::debug!(target: "quectel","Baudrate negotiated to {target_baudrate}");
             return Ok(());
         } else {
-            log::warn!(target: "EC2X","Baudrate not as expected");
+            log::warn!(target: "quectel","Baudrate not as expected");
         };
 
         // Maybe modem is still at default baudrate.
-        log::debug!(target: "EC2X","Set baudrate to default ({default_baudrate})");
+        log::debug!(target: "quectel","Set baudrate to default ({default_baudrate})");
         self.uart.set_baud_rate(default_baudrate);
         delay_ms(1).await;
 
@@ -306,9 +306,9 @@ where
         let _ = self.client.send(&cmd).await;
 
         if self.client.send(&cmd).await.is_ok() {
-            log::debug!(target: "EC2X","Baudrate currently {default_baudrate}");
+            log::debug!(target: "quectel","Baudrate currently {default_baudrate}");
         } else {
-            log::error!(target: "EC2X","Failed to negotiate baudrate");
+            log::error!(target: "quectel","Failed to negotiate baudrate");
             return Err(Error::TimeOut);
         };
 
@@ -316,7 +316,7 @@ where
             rate: target_baudrate,
         };
         if self.client.send(&cmd).await.is_ok() {
-            log::debug!(target: "EC2X","Try setting Baudrate to {target_baudrate}");
+            log::debug!(target: "quectel","Try setting Baudrate to {target_baudrate}");
             self.uart.set_baud_rate(target_baudrate);
         }
 
@@ -332,16 +332,16 @@ where
             // Extra check
             let cmd = general::GetModelId;
             let model_id = self.client.send(&cmd).await.map_err(Error::Client)?;
-            log::info!(target: "EC2X","ID: {model_id:?}");
+            log::info!(target: "quectel","ID: {model_id:?}");
 
             // Verify id.
             if !model_id.id.starts_with("EC2") {
-                log::error!(target: "EC2X","Failed to negotiate baudrate 2");
+                log::error!(target: "quectel","Failed to negotiate baudrate 2");
                 return Err(Error::TimeOut); // TODO Timeout Error is not super correct
             }
-            log::debug!(target: "EC2X","Baudrate negotiated to {target_baudrate}");
+            log::debug!(target: "quectel","Baudrate negotiated to {target_baudrate}");
         } else {
-            log::error!(target: "EC2X","Failed to negotiate baudrate 1");
+            log::error!(target: "quectel","Failed to negotiate baudrate 1");
             return Err(Error::TimeOut);
         };
 
@@ -351,11 +351,11 @@ where
 
         let cmd = general::StoreBaudrate;
         if let Err(err) = self.client.send(&cmd).await.map_err(Error::Client) {
-            log::error!(target: "EC2X","Failed to store baudrate: {err:?}");
+            log::error!(target: "quectel","Failed to store baudrate: {err:?}");
             // We can try again next power cycle.
         }
 
-        log::info!(target: "EC2X","Baudrate stored in modem");
+        log::info!(target: "quectel","Baudrate stored in modem");
 
         Ok(())
     }
@@ -394,7 +394,7 @@ where
         reference_content: &[u8],
     ) -> Result<(), Error<atat::Error>> {
         if reference_content.is_empty() {
-            log::debug!(target: "EC2X","Skipping provisioning of {filename}: is empty");
+            log::debug!(target: "quectel","Skipping provisioning of {filename}: is empty");
             return Ok(()); // skip
         }
         // Check if file needs updating
@@ -426,11 +426,11 @@ where
         let _ = self.close_file().await;
 
         if needs_update {
-            log::debug!(target: "EC2X","Updating {filename}");
+            log::debug!(target: "quectel","Updating {filename}");
             let _ = self.delete_file(filename).await;
             self.upload_file(filename, reference_content).await?;
         } else {
-            log::debug!(target: "EC2X","{filename} is up to date");
+            log::debug!(target: "quectel","{filename} is up to date");
         }
 
         Ok(())
@@ -447,7 +447,7 @@ where
         filename: &str,
         contents: &[u8],
     ) -> Result<(), Error<atat::Error>> {
-        log::debug!(target: "EC2X","Upload file: {}", filename);
+        log::debug!(target: "quectel","Upload file: {}", filename);
         let filename = String::try_from(filename).map_err(|_| Error::Serialize)?;
 
         let cmd = file::UploadInit {
@@ -455,7 +455,7 @@ where
             file_size: contents.len() as u32,
             timeout: 60,
         };
-        log::debug!(target: "EC2X","Wait for CONNECT");
+        log::debug!(target: "quectel","Wait for CONNECT");
         self.client.send(&cmd).await.map_err(Error::Client)?;
 
         let upload_result: Upload = self
@@ -467,7 +467,7 @@ where
             return Err(Error::Serialize);
         }
 
-        log::debug!(target: "EC2X","File upload done");
+        log::debug!(target: "quectel","File upload done");
 
         Ok(())
     }
@@ -495,7 +495,7 @@ where
         while retries > 0 {
             match self.client.send(&cmd).await {
                 Ok(resp) if resp.stat == 1 || resp.stat == 5 => {
-                    log::debug!(target: "EC2X","Network registered");
+                    log::debug!(target: "quectel","Network registered");
                     break;
                 }
                 _ => {
@@ -511,7 +511,7 @@ where
         while retries > 0 {
             match self.client.send(&cmd).await {
                 Ok(resp) if resp.stat == 1 || resp.stat == 5 => {
-                    log::debug!(target: "EC2X","LTE registered");
+                    log::debug!(target: "quectel","LTE registered");
                     break;
                 }
                 _ => {
@@ -551,7 +551,7 @@ where
             .await
             .map_err(Error::Client)?;
 
-        log::debug!(target: "EC2X","URL Ok");
+        log::debug!(target: "quectel","URL Ok");
 
         let cmd = http::GET { timeout: 10 };
         self.client.send(&cmd).await.map_err(Error::Client)?;
@@ -559,19 +559,19 @@ where
         if let Some(Urc::HTTPGet(resp)) = self.await_urc(UrcVariant::HTTPGet).await {
             match resp.resp {
                 Some(200) => {
-                    log::debug!(target: "EC2X","GET Ok");
+                    log::debug!(target: "quectel","GET Ok");
                 }
                 Some(code) => {
-                    log::error!(target: "EC2X","GET Error: {}", code);
+                    log::error!(target: "quectel","GET Error: {}", code);
                     return Err(Error::Serialize); // todo better error
                 }
                 None => {
-                    log::error!(target: "EC2X","GET Error: {}", resp.err);
+                    log::error!(target: "quectel","GET Error: {}", resp.err);
                     return Err(Error::Serialize); // todo better error
                 }
             }
         } else {
-            log::error!(target: "EC2X","GET URC not received");
+            log::error!(target: "quectel","GET URC not received");
         }
 
         let cmd = http::ReadFile {
@@ -580,16 +580,16 @@ where
         };
 
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","Read to file: {:?}", resp);
+        log::debug!(target: "quectel","Read to file: {:?}", resp);
 
         if let Some(Urc::HTTPReadFile(resp)) = self.await_urc(UrcVariant::HTTPReadFile).await {
             if resp.err == 0 {
-                log::debug!(target: "EC2X","Read to File Ok: {:?}", resp);
+                log::debug!(target: "quectel","Read to File Ok: {:?}", resp);
             } else {
-                log::error!(target: "EC2X","Read to File Error: {:?}", resp);
+                log::error!(target: "quectel","Read to File Error: {:?}", resp);
             }
         } else {
-            log::error!(target: "EC2X","Read to File URC not received");
+            log::error!(target: "quectel","Read to File URC not received");
         }
 
         // We're done, deactivate this context.
@@ -599,12 +599,12 @@ where
             .await
             .map(|_| ())
             .map_err(|err| {
-                log::error!(target: "EC2X","Failed to deactivate context: {err:?}");
+                log::error!(target: "quectel","Failed to deactivate context: {err:?}");
                 Error::MQTT("Deactivate Context")
             })
     }
 
-    /// Read a file chunk from the EC2X device.
+    /// Read a file chunk from the modem filesystem.
     /// Opens the file if it is not already open.
     /// Subsequent calls will read from the same file from the next offset.
     /// File should be closed manually by calling `close_file()`
@@ -621,7 +621,7 @@ where
             let cmd = file::Open { filename, mode: 0 };
             let resp = self.client.send(&cmd).await.map_err(Error::Client)?; // Todo FileNotFound error
             self.file_handle = Some(resp.handle);
-            log::debug!(target: "EC2X","File open OK");
+            log::debug!(target: "quectel","File open OK");
 
             let cmd = file::Seek {
                 handle: resp.handle,
@@ -629,7 +629,7 @@ where
                 position: 0,
             };
             self.client.send(&cmd).await.map_err(Error::Client)?;
-            log::debug!(target: "EC2X","File seek OK");
+            log::debug!(target: "quectel","File seek OK");
         }
 
         // If we have a file_handle we assume the file is open.
@@ -641,7 +641,7 @@ where
 
             match self.client.send(&cmd).await {
                 Ok(resp) => {
-                    log::debug!(target: "EC2X","File read OK: {:?}", resp.bytes.len());
+                    log::debug!(target: "quectel","File read OK: {:?}", resp.bytes.len());
                     let mut new_vec = Vec::new();
                     // Todo: We cannot into() the bytes because of an old version of heapless-bytes
                     // See https://github.com/ycrypto/heapless-bytes/pull/3.
@@ -668,7 +668,7 @@ where
 
     /// Deletes a file. NB: File must be closed.
     async fn delete_file(&mut self, filename: &str) -> Result<(), Error<atat::Error>> {
-        log::debug!(target: "EC2X","Delete file: {}", filename);
+        log::debug!(target: "quectel","Delete file: {}", filename);
         let filename = String::try_from(filename).map_err(|_| Error::Serialize)?;
         let cmd = file::Delete { filename };
         self.client.send(&cmd).await.map_err(Error::Client)?;
@@ -676,7 +676,7 @@ where
     }
 
     pub async fn test_http_get(&mut self) -> Result<(), Error<atat::Error>> {
-        log::debug!(target: "EC2X","Start http commands");
+        log::debug!(target: "quectel","Start http commands");
         let cmd = http::ConfigContext::pdp(1);
         self.client.send(&cmd).await.map_err(Error::Client)?;
 
@@ -697,7 +697,7 @@ where
         while retries > 0 {
             match self.client.send(&cmd).await {
                 Ok(resp) if resp.stat == 1 || resp.stat == 5 => {
-                    log::debug!(target: "EC2X","Network registered");
+                    log::debug!(target: "quectel","Network registered");
                     break;
                 }
                 _ => {
@@ -713,7 +713,7 @@ where
         while retries > 0 {
             match self.client.send(&cmd).await {
                 Ok(resp) if resp.stat == 1 || resp.stat == 5 => {
-                    log::debug!(target: "EC2X","LTE registered");
+                    log::debug!(target: "quectel","LTE registered");
                     break;
                 }
                 _ => {
@@ -756,19 +756,19 @@ where
             .await
             .map_err(Error::Client)?;
 
-        log::debug!(target: "EC2X","URL Ok");
+        log::debug!(target: "quectel","URL Ok");
 
         let cmd = http::GET { timeout: 10 };
         self.client.send(&cmd).await.map_err(Error::Client)?;
 
         if let Some(Urc::HTTPGet(resp)) = self.await_urc(UrcVariant::HTTPGet).await {
             if resp.err == 0 {
-                log::debug!(target: "EC2X","GET Ok: {:?}", resp);
+                log::debug!(target: "quectel","GET Ok: {:?}", resp);
             } else {
-                log::error!(target: "EC2X","GET Error: {:?}", resp);
+                log::error!(target: "quectel","GET Error: {:?}", resp);
             }
         } else {
-            log::error!(target: "EC2X","GET URC not received");
+            log::error!(target: "quectel","GET URC not received");
         }
 
         let cmd = http::ReadFile {
@@ -777,31 +777,31 @@ where
         };
 
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","Read to file: {:?}", resp);
+        log::debug!(target: "quectel","Read to file: {:?}", resp);
 
         if let Some(Urc::HTTPReadFile(resp)) = self.await_urc(UrcVariant::HTTPReadFile).await {
             if resp.err == 0 {
-                log::debug!(target: "EC2X","Read to File Ok: {:?}", resp);
+                log::debug!(target: "quectel","Read to File Ok: {:?}", resp);
             } else {
-                log::error!(target: "EC2X","Read to File Error: {:?}", resp);
+                log::error!(target: "quectel","Read to File Error: {:?}", resp);
             }
         } else {
-            log::error!(target: "EC2X","Read to File URC not received");
+            log::error!(target: "quectel","Read to File URC not received");
         }
 
         let cmd = file::List {
             pattern: String::try_from("RAM:testget.txt").unwrap(),
         };
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","File list: {:?}", resp);
+        log::debug!(target: "quectel","File list: {:?}", resp);
 
-        log::debug!(target: "EC2X","Demo done!");
+        log::debug!(target: "quectel","Demo done!");
 
         Ok(())
     }
 
     pub async fn test_read_file(&mut self) -> Result<(), Error<atat::Error>> {
-        log::debug!(target: "EC2X","Start file commands");
+        log::debug!(target: "quectel","Start file commands");
 
         delay_ms(3000).await;
 
@@ -809,19 +809,19 @@ where
             pattern: String::try_from("UFS").unwrap(),
         };
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","UFS: {:?}", resp);
+        log::debug!(target: "quectel","UFS: {:?}", resp);
 
         let cmd = file::Space {
             pattern: String::try_from("RAM").unwrap(),
         };
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","RAM: {:?}", resp);
+        log::debug!(target: "quectel","RAM: {:?}", resp);
 
         let cmd = file::List {
             pattern: String::try_from(CLIENT_CERT_FILE).unwrap(),
         };
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","File list: {:?}", resp);
+        log::debug!(target: "quectel","File list: {:?}", resp);
 
         let file_size = resp.file_size;
 
@@ -831,7 +831,7 @@ where
         };
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
         let file_id = resp.handle;
-        log::debug!(target: "EC2X","File open OK");
+        log::debug!(target: "quectel","File open OK");
 
         let cmd = file::Seek {
             handle: file_id,
@@ -839,7 +839,7 @@ where
             position: 0,
         };
         self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","File seek OK");
+        log::debug!(target: "quectel","File seek OK");
 
         // Read file in chunk of max 1000 bytes.
         let mut remaining_file_size = file_size;
@@ -851,11 +851,11 @@ where
             };
 
             let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-            log::debug!(target: "EC2X","File read OK: {:?}", resp.bytes.len());
+            log::debug!(target: "quectel","File read OK: {:?}", resp.bytes.len());
 
             remaining_file_size = remaining_file_size.saturating_sub(resp.bytes.len() as u32);
             if remaining_file_size == 1 && resp.bytes.len() < chunk_size as usize {
-                log::debug!(target: "EC2X","Remaining file size: {}", remaining_file_size);
+                log::debug!(target: "quectel","Remaining file size: {}", remaining_file_size);
                 break; // we are done
             }
         }
@@ -863,13 +863,13 @@ where
         let cmd = file::Close { handle: file_id };
 
         self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","File close OK");
+        log::debug!(target: "quectel","File close OK");
 
         // Upload a new file
 
         // First try delete
 
-        log::debug!(target: "EC2X","Prepare file upload");
+        log::debug!(target: "quectel","Prepare file upload");
         let cmd = file::Delete {
             filename: String::try_from("UFS:test_file.txt").unwrap(),
         };
@@ -880,7 +880,7 @@ where
             file_size: TEST_FILE.len() as u32,
             timeout: 60,
         };
-        log::debug!(target: "EC2X","Wait for CONNECT");
+        log::debug!(target: "quectel","Wait for CONNECT");
         self.client.send(&cmd).await.map_err(Error::Client)?;
 
         let upload_result: Upload = self
@@ -891,7 +891,7 @@ where
         if TEST_FILE.len() != upload_result.size as usize {
             return Err(Error::Serialize);
         }
-        log::debug!(target: "EC2X","File upload done");
+        log::debug!(target: "quectel","File upload done");
 
         let cmd = file::Open {
             filename: String::try_from("UFS:test_file.txt").unwrap(),
@@ -899,7 +899,7 @@ where
         };
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
         let file_id = resp.handle;
-        log::debug!(target: "EC2X","File open OK");
+        log::debug!(target: "quectel","File open OK");
 
         let cmd = file::Seek {
             handle: file_id,
@@ -907,7 +907,7 @@ where
             position: 0,
         };
         self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","File seek OK");
+        log::debug!(target: "quectel","File seek OK");
 
         let cmd = file::Read {
             handle: file_id,
@@ -915,7 +915,7 @@ where
         };
 
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "EC2X","File read OK: {:?}", resp);
+        log::debug!(target: "quectel","File read OK: {:?}", resp);
 
         Ok(())
     }
@@ -938,7 +938,7 @@ where
         while retries > 0 {
             match self.client.send(&cmd).await {
                 Ok(resp) if resp.stat == 1 || resp.stat == 5 => {
-                    log::debug!(target: "EC2X","Network registered");
+                    log::debug!(target: "quectel","Network registered");
                     break;
                 }
                 _ => {
@@ -954,7 +954,7 @@ where
         while retries > 0 {
             match self.client.send(&cmd).await {
                 Ok(resp) if resp.stat == 1 || resp.stat == 5 => {
-                    log::debug!(target: "EC2X","LTE registered");
+                    log::debug!(target: "quectel","LTE registered");
                     break;
                 }
                 _ => {
@@ -978,7 +978,7 @@ where
         // Set up the will
         let cmd = mqtt::ConfigWill::new(MQTT_CONTEXT, 1, 1, 1, will.topic, will.payload);
         if let Err(err) = self.client.send(&cmd).await.map_err(Error::Client) {
-            log::error!(target: "EC2X","Failed to set will: {err:?}");
+            log::error!(target: "quectel","Failed to set will: {err:?}");
         }
 
         self.connect_mqtt(true).await
@@ -1002,8 +1002,8 @@ where
             .await_acked_with_timeout(UrcVariant::MQTTSubscribe, msg_id, Error::MQTT("Subscribe"))
             .await;
         match &result {
-            Ok(_) => log::debug!(target: "EC2X","Subscribed to {topic}"),
-            Err(err) => log::error!(target: "EC2X","Failed to subscribe: {err:?}"),
+            Ok(_) => log::debug!(target: "quectel","Subscribed to {topic}"),
+            Err(err) => log::error!(target: "quectel","Failed to subscribe: {err:?}"),
         }
         result
     }
@@ -1029,8 +1029,8 @@ where
             )
             .await;
         match &result {
-            Ok(_) => log::debug!(target: "EC2X","Unsubscribed to {topic}"),
-            Err(err) => log::error!(target: "EC2X","Failed to unsubscribe: {err:?}"),
+            Ok(_) => log::debug!(target: "quectel","Unsubscribed to {topic}"),
+            Err(err) => log::error!(target: "quectel","Failed to unsubscribe: {err:?}"),
         }
         result
     }
@@ -1074,8 +1074,8 @@ where
             .await_acked_with_timeout(UrcVariant::MQTTPublish, msg_id, Error::MQTT("Publish"))
             .await;
         match &result {
-            Ok(_) => log::debug!(target: "EC2X","Mqtt published to {topic:?}"),
-            Err(err) => log::error!(target: "EC2X","Failed to publish: {err:?}"),
+            Ok(_) => log::debug!(target: "quectel","Mqtt published to {topic:?}"),
+            Err(err) => log::error!(target: "quectel","Failed to publish: {err:?}"),
         }
         result
     }
@@ -1100,7 +1100,7 @@ where
             match resp.parse() {
                 mqtt::urc::MQTTOpenResult::Success => {}
                 err => {
-                    log::error!(target: "EC2X","Error during MQTTOpen: {err:?}");
+                    log::error!(target: "quectel","Error during MQTTOpen: {err:?}");
                     return Err(Error::MQTT("Open"));
                 }
             }
@@ -1118,11 +1118,11 @@ where
         if let Some(Urc::MQTTConnect(resp)) = self.await_urc(UrcVariant::MQTTConnect).await {
             match resp.parse() {
                 mqtt::urc::MQTTConnectResult::Accepted => {
-                    log::debug!(target: "EC2X","Mqtt connected");
+                    log::debug!(target: "quectel","Mqtt connected");
                     Ok(())
                 }
                 err => {
-                    log::error!(target: "EC2X","Failed to connect mqtt: {err:?}");
+                    log::error!(target: "quectel","Failed to connect mqtt: {err:?}");
                     Err(Error::MQTT("Connect"))
                 }
             }
@@ -1145,14 +1145,14 @@ where
                     match resp.parse() {
                         mqtt::urc::MQTTResult::Success => {}
                         mqtt::urc::MQTTResult::Failed => {
-                            log::error!(target: "EC2X","Mqtt disconnect failed (urc)")
+                            log::error!(target: "quectel","Mqtt disconnect failed (urc)")
                         }
                     }
                 } else {
-                    log::error!(target: "EC2X","Mqtt disconnect failed (urc timeout)")
+                    log::error!(target: "quectel","Mqtt disconnect failed (urc timeout)")
                 }
             }
-            Err(err) => log::error!(target: "EC2X","Error mqtt disconnect: {err:?}"),
+            Err(err) => log::error!(target: "quectel","Error mqtt disconnect: {err:?}"),
         };
 
         // Try to close MQTT TCP connection, just in case (after MQTT disconnect the connection is often already closed)
@@ -1169,15 +1169,15 @@ where
                     match resp.parse() {
                         mqtt::urc::MQTTResult::Success => {}
                         mqtt::urc::MQTTResult::Failed => {
-                            log::warn!(target: "EC2X","MQTT close failed: unexpected result")
+                            log::warn!(target: "quectel","MQTT close failed: unexpected result")
                         }
                     }
                 } else {
-                    log::warn!(target: "EC2X","MQTT close failed: timeout")
+                    log::warn!(target: "quectel","MQTT close failed: timeout")
                 }
             }
             Err(_) => {
-                log::warn!(target: "EC2X","MQTT close failed")
+                log::warn!(target: "quectel","MQTT close failed")
             }
         }
 
@@ -1197,7 +1197,7 @@ where
             .await
             .map(|_| ())
             .map_err(|err| {
-                log::error!(target: "EC2X","Failed to deactivate context: {err:?}");
+                log::error!(target: "quectel","Failed to deactivate context: {err:?}");
                 Error::MQTT("Deactivate Context")
             })
     }
@@ -1205,21 +1205,21 @@ where
     /// Turns off the modem
     ///
     /// Note: after this, it is best to construct a new EC25 instance before re-initializing.
-    /// There may be residual state that is not properly reset such as in the EC25Backend..
+    /// There may be residual state that is not properly reset such as in the QuectelBackend..
     pub async fn deinitialize(&mut self) {
         match self.client.send(&general::PowerDown::new()).await {
             Ok(_) => {
-                log::debug!(target: "EC2X","Send PowerDown OK");
+                log::debug!(target: "quectel","Send PowerDown OK");
                 match self.await_urc(UrcVariant::ModemOff).await {
                     Some(Urc::ModemOff) => {
-                        log::debug!(target: "EC2X","Modem is off!")
+                        log::debug!(target: "quectel","Modem is off!")
                     }
                     _unexpected => {
-                        log::warn!(target: "EC2X","Failed to detect modem off:  {:?}", _unexpected)
+                        log::warn!(target: "quectel","Failed to detect modem off:  {:?}", _unexpected)
                     }
                 }
             }
-            Err(_) => log::error!(target: "EC2X","Send PowerDown Failed"),
+            Err(_) => log::error!(target: "quectel","Send PowerDown Failed"),
         }
 
         delay_ms(1_000).await;
@@ -1229,9 +1229,9 @@ where
 
         self.enable_pin.set_low().ok();
         self.reset_pin.set_low().ok();
-        log::debug!(target: "EC2X","Modem fully powered down!");
+        log::debug!(target: "quectel","Modem fully powered down!");
 
-        // Flush queues. Note that we cant control the EC25Backend, which might still contain half-parsed stuff...
+        // Flush queues. Note that we cant control the QuectelBackend, which might still contain half-parsed stuff...
         while let Some(_) = self.urc_subscription.try_next_message() {}
         while let Some(_) = self.unexpected_urc_queue.dequeue() {}
     }
@@ -1242,7 +1242,7 @@ where
             self.uart.resume();
             return;
         }
-        log::debug!(target: "EC2X","Turning on modem...");
+        log::debug!(target: "quectel","Turning on modem...");
 
         // Enable power to modem & wait for supply to settle
         self.enable_pin.set_high().ok();
@@ -1262,10 +1262,10 @@ where
         // This parsing could be made stricter if we don't support the devkit..
         match self.await_urc(UrcVariant::ModemReady).await {
             Some(Urc::ModemReady) => {
-                log::debug!(target: "EC2X","Modem is on");
+                log::debug!(target: "quectel","Modem is on");
             }
             _unexpected => {
-                log::debug!(target: "EC2X","Got {:?}, modem is probably (still?) on?", _unexpected)
+                log::debug!(target: "quectel","Got {:?}, modem is probably (still?) on?", _unexpected)
             }
         }
     }
@@ -1315,7 +1315,7 @@ where
 
     fn unexpected_urc(&mut self, urc: Urc) {
         if let Err(_err) = self.unexpected_urc_queue.enqueue(urc) {
-            log::error!(target: "EC2X","URC queue overflow");
+            log::error!(target: "quectel","URC queue overflow");
         }
     }
 
@@ -1370,7 +1370,7 @@ where
                     // Retransmission URC alwasy have msg_id 0 which will mismatch (as 0 is not valid for normal use in QOS>0)
                     // (this is because msg_id is normally set by broker but on retransmission it is made up by the modem instead)
                     Err(mqtt::urc::MQTTPacketResult::Retransmission) => {
-                        log::warn!(target: "EC2X","Retransmission");
+                        log::warn!(target: "quectel","Retransmission");
                         // Modem will automatically retransmit and send another URC later
                     }
 
@@ -1394,7 +1394,7 @@ where
         if recv_id == 4 {
             // We might have missed packets as slot 4 (of 0-4) is used.
             self.packets_missed = true;
-            log::debug!(target: "EC2X","Missed packets: slot 4");
+            log::debug!(target: "quectel","Missed packets: slot 4");
         }
         let cmd = mqtt::Receive {
             client_idx: MQTT_CONTEXT,
@@ -1411,10 +1411,10 @@ where
         match urc {
             Urc::MQTTReceive(urc) => match self.read_message(urc.recv_id).await {
                 Ok(message) => {
-                    log::debug!(target: "EC2X","MQTT message on: {:?}", message.topic);
+                    log::debug!(target: "quectel","MQTT message on: {:?}", message.topic);
                     // If last_rx_msg_id == 0 we do not check to prevent false positives.
                     if self.last_rx_msg_id > 0 && (message.msg_id > self.last_rx_msg_id + 1) {
-                        log::debug!(target: "EC2X",
+                        log::debug!(target: "quectel",
                             "Missed packets: {} > {}",
                             message.msg_id,
                             self.last_rx_msg_id + 1
@@ -1427,27 +1427,27 @@ where
                     return Ok(Event::ReceivedMessage(message.into()));
                 }
                 Err(err) => {
-                    log::error!(target: "EC2X","Failed to read message: {err:?}");
+                    log::error!(target: "quectel","Failed to read message: {err:?}");
                     return Err(());
                 }
             },
             Urc::MQTTStatus(status) => match status.parse() {
                 mqtt::urc::MQTTStatusResult::ConnectionClosed => return Ok(Event::Disconnected),
                 stat => {
-                    log::warn!(target: "EC2X","MQTT status: {stat:?}");
+                    log::warn!(target: "quectel","MQTT status: {stat:?}");
                     return Err(());
                 }
             },
             Urc::QIURC(res) => {
-                log::warn!(target: "EC2X","Received unexpected tcp URC: {:?}", res);
+                log::warn!(target: "quectel","Received unexpected tcp URC: {:?}", res);
                 return Err(());
             }
             Urc::CREG(creg) => {
-                log::debug!(target: "EC2X","Got creg status: {creg:?}");
+                log::debug!(target: "quectel","Got creg status: {creg:?}");
                 return Err(());
             }
             Urc::EREG(creg) => {
-                log::debug!(target: "EC2X","Got ereg status: {creg:?}");
+                log::debug!(target: "quectel","Got ereg status: {creg:?}");
                 return Err(());
             }
             Urc::MQTTOpen(_) => return Err(()),
@@ -1476,7 +1476,7 @@ where
     }
 }
 
-impl<R: Read + ErrorReport + Suspendable> EC2xBackend<R> {
+impl<R: Read + ErrorReport + Suspendable> QuectelBackend<R> {
     /// Reads and processes incoming data over uart.
     pub async fn read_incoming(&mut self) {
         loop {
@@ -1488,16 +1488,16 @@ impl<R: Read + ErrorReport + Suspendable> EC2xBackend<R> {
                     }
                 }
                 Err(err) => {
-                    log::debug!(target: "EC2X","Uart read error: {err:?}");
+                    log::debug!(target: "quectel","Uart read error: {err:?}");
                     if self.rx.error_occurred() {
                         ERROR_OCCURRED.store(true, Ordering::Relaxed);
                         self.ingress.clear();
                         self.rx.reset_error();
                     }
                     if self.rx.is_suspended() {
-                        log::debug!(target: "EC2X","modem_rx wait for resume");
+                        log::debug!(target: "quectel","modem_rx wait for resume");
                         self.rx.await_resume().await;
-                        log::debug!(target: "EC2X","modem_rx resumed");
+                        log::debug!(target: "quectel","modem_rx resumed");
                     }
                 }
             }
@@ -1505,7 +1505,7 @@ impl<R: Read + ErrorReport + Suspendable> EC2xBackend<R> {
     }
 }
 
-impl<W, R, EP, RP, U> MqttClient for EC2x<W, R, EP, RP, U>
+impl<W, R, EP, RP, U> MqttClient for Quectel<W, R, EP, RP, U>
 where
     W: Write,
     R: Read + ErrorReport + Suspendable,
@@ -1565,7 +1565,7 @@ where
 
     async fn await_response(&mut self, timeout_s: u32) -> Result<(), Self::PollError> {
         if ERROR_OCCURRED.load(Ordering::Relaxed) == true {
-            log::error!(target: "EC2X","EC25 error occurred in uart Rx");
+            log::error!(target: "quectel","EC25 error occurred in uart Rx");
             // Reset state after 'reporting'
             ERROR_OCCURRED.store(false, Ordering::Relaxed);
             return Err(());
@@ -1636,7 +1636,7 @@ where
         let model_id = match self.client.send(&cmd).await.map_err(Error::Client) {
             Ok(v) => v.id,
             Err(e) => {
-                log::error!(target: "EC2X","Error getting modem model: {e:?}");
+                log::error!(target: "quectel","Error getting modem model: {e:?}");
                 return VersionString::new();
             }
         };
@@ -1649,7 +1649,7 @@ where
         let version = match self.client.send(&cmd).await.map_err(Error::Client) {
             Ok(v) => v.id,
             Err(e) => {
-                log::error!(target: "EC2X","Error getting modem fw version: {e:?}");
+                log::error!(target: "quectel","Error getting modem fw version: {e:?}");
                 return VersionString::new();
             }
         };

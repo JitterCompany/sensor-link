@@ -15,7 +15,7 @@ use nom::{
     IResult,
 };
 
-use crate::drivers::ec2x::NoResponse;
+use crate::drivers::quectel::NoResponse;
 
 use responses::*;
 

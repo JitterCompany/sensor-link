@@ -4,7 +4,7 @@ mod atclient;
 pub mod ads124s08;
 pub mod boot_stats;
 pub mod bq25672;
-pub mod ec2x;
+pub mod quectel;
 pub mod rtd;
 pub mod spi_flash;
 pub mod time;

@@ -237,21 +237,18 @@ where
                 // Provisioning succesfull: toggle flag to skip it next time
                 Ok(_) => self.first_boot = false,
 
+                // Timeout: try to detect if the modem is still in usable state. If so,
+                // ignore and assume the provisioning was probably succesfull sometime
+                // earlier. Other errors are ignored on the same assumption.
                 Err(orig_error) => {
-                    match orig_error {
-                        // Timeout: try to detect if the modem is still in usable state.
-                        // If so, ignore and assume the provisioning was probably succesfull sometime earlier.
-                        Error::Client(atat::Error::Timeout) => {
-                            let mut model = self.modem_model().await;
-                            model.make_ascii_lowercase();
+                    if let Error::Client(atat::Error::Timeout) = orig_error {
+                        let mut model = self.modem_model().await;
+                        model.make_ascii_lowercase();
 
-                            if !model.contains(V::MODEL_PREFIX) {
-                                log::warn!(target: "quectel", "provisioning failed (modem model detected as '{model}')");
-                                return Err(orig_error);
-                            }
+                        if !model.contains(V::MODEL_PREFIX) {
+                            log::warn!(target: "quectel", "provisioning failed (modem model detected as '{model}')");
+                            return Err(orig_error);
                         }
-                        // Ignore errors, assume provisioning probably succeeded some time earlier
-                        _ => {}
                     }
                 }
             }
@@ -1232,8 +1229,8 @@ where
         log::debug!(target: "quectel","Modem fully powered down!");
 
         // Flush queues. Note that we cant control the QuectelBackend, which might still contain half-parsed stuff...
-        while let Some(_) = self.urc_subscription.try_next_message() {}
-        while let Some(_) = self.unexpected_urc_queue.dequeue() {}
+        while self.urc_subscription.try_next_message().is_some() {}
+        while self.unexpected_urc_queue.dequeue().is_some() {}
     }
 
     async fn turn_on(&mut self) {
@@ -1425,43 +1422,43 @@ where
                     }
                     self.last_rx_msg_id = message.msg_id;
 
-                    return Ok(Event::ReceivedMessage(message.into()));
+                    Ok(Event::ReceivedMessage(message.into()))
                 }
                 Err(err) => {
                     log::error!(target: "quectel","Failed to read message: {err:?}");
-                    return Err(());
+                    Err(())
                 }
             },
             Urc::MQTTStatus(status) => match status.parse() {
-                mqtt::urc::MQTTStatusResult::ConnectionClosed => return Ok(Event::Disconnected),
+                mqtt::urc::MQTTStatusResult::ConnectionClosed => Ok(Event::Disconnected),
                 stat => {
                     log::warn!(target: "quectel","MQTT status: {stat:?}");
-                    return Err(());
+                    Err(())
                 }
             },
             Urc::QIURC(res) => {
                 log::warn!(target: "quectel","Received unexpected tcp URC: {:?}", res);
-                return Err(());
+                Err(())
             }
             Urc::CREG(creg) => {
                 log::debug!(target: "quectel","Got creg status: {creg:?}");
-                return Err(());
+                Err(())
             }
             Urc::EREG(creg) => {
                 log::debug!(target: "quectel","Got ereg status: {creg:?}");
-                return Err(());
+                Err(())
             }
-            Urc::MQTTOpen(_) => return Err(()),
-            Urc::MQTTClose(_) => return Err(()),
-            Urc::MQTTConnect(_) => return Err(()),
-            Urc::MQTTDisconnect(_) => return Err(()),
-            Urc::MQTTSubscribe(_) => return Err(()),
-            Urc::MQTTUnsubscribe(_) => return Err(()),
-            Urc::MQTTPublish(_) => return Err(()),
-            Urc::ModemReady => return Err(()),
-            Urc::ModemOff => return Err(()),
-            Urc::HTTPGet(_) => return Err(()),
-            Urc::HTTPReadFile(_) => return Err(()),
+            Urc::MQTTOpen(_)
+            | Urc::MQTTClose(_)
+            | Urc::MQTTConnect(_)
+            | Urc::MQTTDisconnect(_)
+            | Urc::MQTTSubscribe(_)
+            | Urc::MQTTUnsubscribe(_)
+            | Urc::MQTTPublish(_)
+            | Urc::ModemReady
+            | Urc::ModemOff
+            | Urc::HTTPGet(_)
+            | Urc::HTTPReadFile(_) => Err(()),
         }
     }
 
@@ -1564,7 +1561,7 @@ where
     }
 
     async fn await_response(&mut self, timeout_s: u32) -> Result<(), Self::PollError> {
-        if ERROR_OCCURRED.load(Ordering::Relaxed) == true {
+        if ERROR_OCCURRED.load(Ordering::Relaxed) {
             log::error!(target: "quectel","EC25 error occurred in uart Rx");
             // Reset state after 'reporting'
             ERROR_OCCURRED.store(false, Ordering::Relaxed);
@@ -1592,7 +1589,7 @@ where
         {
             Some(urc) => {
                 self.urc = Some(urc);
-                return Ok(());
+                Ok(())
             }
             None => {
                 // Timeout

@@ -93,6 +93,7 @@ pub struct Read {
 
 fn parse_read(bytes: &[u8]) -> Result<FileRead, ()> {
     // Parser for +QFREAD response
+    #[allow(clippy::type_complexity)]
     fn parser(i: &[u8]) -> IResult<&[u8], (&[u8], &[u8], &[u8])> {
         tuple((tag("CONNECT "), digit1, line_ending))(i)
     }

@@ -272,7 +272,7 @@ impl From<MQTTReceive> for Message {
     fn from(value: MQTTReceive) -> Self {
         Self {
             topic: value.topic,
-            payload: value.payload.bytes.into_iter().map(|x| x).collect(),
+            payload: value.payload.bytes.into_iter().collect(),
         }
     }
 }

@@ -3,6 +3,9 @@
 //! Commands are structured according to the quectel command manuals.
 //! Each module defines commands, responses and URCs.
 
+// Types are named after the AT commands they represent (CREG, QIURC, ...)
+#![allow(clippy::upper_case_acronyms)]
+
 pub mod file;
 pub mod general;
 pub mod http;
@@ -125,28 +128,24 @@ impl atat::AtatUrc for Urc {
     type Response = Urc;
 
     fn parse(resp: &[u8]) -> Option<Self::Response> {
-        if let Some(urc) = <DefaultUrc as atat::AtatUrc>::parse(resp) {
-            Some(match urc {
-                DefaultUrc::ModemReady => Urc::ModemReady,
-                DefaultUrc::ModemOff => Urc::ModemOff,
-                DefaultUrc::MQTTOpen(urc) => Urc::MQTTOpen(urc),
-                DefaultUrc::MQTTClose(urc) => Urc::MQTTClose(urc),
-                DefaultUrc::MQTTConnect(urc) => Urc::MQTTConnect(urc),
-                DefaultUrc::MQTTDisconnect(urc) => Urc::MQTTDisconnect(urc),
-                DefaultUrc::MQTTSubscribe(urc) => Urc::MQTTSubscribe(urc),
-                DefaultUrc::MQTTUnsubscribe(urc) => Urc::MQTTUnsubscribe(urc),
-                DefaultUrc::MQTTPublish(urc) => Urc::MQTTPublish(urc),
-                DefaultUrc::MQTTStatus(urc) => Urc::MQTTStatus(urc),
-                DefaultUrc::QIURC(urc) => Urc::QIURC(urc),
-                DefaultUrc::CREG(urc) => Urc::CREG(urc),
-                DefaultUrc::EREG(urc) => Urc::EREG(urc),
-                DefaultUrc::MQTTReceive(urc) => Urc::MQTTReceive(urc),
-                DefaultUrc::HTTPGet(urc) => Urc::HTTPGet(urc),
-                DefaultUrc::HTTPReadFile(urc) => Urc::HTTPReadFile(urc),
-            })
-        } else {
-            None
-        }
+        <DefaultUrc as atat::AtatUrc>::parse(resp).map(|urc| match urc {
+            DefaultUrc::ModemReady => Urc::ModemReady,
+            DefaultUrc::ModemOff => Urc::ModemOff,
+            DefaultUrc::MQTTOpen(urc) => Urc::MQTTOpen(urc),
+            DefaultUrc::MQTTClose(urc) => Urc::MQTTClose(urc),
+            DefaultUrc::MQTTConnect(urc) => Urc::MQTTConnect(urc),
+            DefaultUrc::MQTTDisconnect(urc) => Urc::MQTTDisconnect(urc),
+            DefaultUrc::MQTTSubscribe(urc) => Urc::MQTTSubscribe(urc),
+            DefaultUrc::MQTTUnsubscribe(urc) => Urc::MQTTUnsubscribe(urc),
+            DefaultUrc::MQTTPublish(urc) => Urc::MQTTPublish(urc),
+            DefaultUrc::MQTTStatus(urc) => Urc::MQTTStatus(urc),
+            DefaultUrc::QIURC(urc) => Urc::QIURC(urc),
+            DefaultUrc::CREG(urc) => Urc::CREG(urc),
+            DefaultUrc::EREG(urc) => Urc::EREG(urc),
+            DefaultUrc::MQTTReceive(urc) => Urc::MQTTReceive(urc),
+            DefaultUrc::HTTPGet(urc) => Urc::HTTPGet(urc),
+            DefaultUrc::HTTPReadFile(urc) => Urc::HTTPReadFile(urc),
+        })
     }
 }
 

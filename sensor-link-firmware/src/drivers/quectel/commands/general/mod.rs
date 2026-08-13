@@ -87,6 +87,7 @@ impl CEREG {
     value_sep = false,
     termination = "\r"
 )]
+#[allow(dead_code)] // unused command, kept for reference
 pub struct IdentificationInformation;
 
 /// 2.5 Manufacturer identification +CGMI
@@ -94,6 +95,7 @@ pub struct IdentificationInformation;
 /// Text string identifying the manufacturer.
 #[derive(Debug, Clone, AtatCmd)]
 #[at_cmd("+CGMI", ManufacturerId, termination = "\r")]
+#[allow(dead_code)] // unused command, kept for reference
 pub struct GetManufacturerId;
 
 /// 2.6 Model identification +CGMM

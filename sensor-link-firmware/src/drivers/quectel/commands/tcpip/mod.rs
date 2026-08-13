@@ -42,6 +42,7 @@ pub struct DeactivateContext {
 /// Format: AT+QPING=1,"8.8.8.8",5,5
 #[derive(Debug, Clone, AtatCmd)]
 #[at_cmd("+QPING", NoResponse, termination = "\r")]
+#[allow(dead_code)] // unused command, kept for reference
 pub struct Ping {
     #[at_arg(position = 0)]
     pub cid: ContextId,

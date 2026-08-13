@@ -735,8 +735,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
-    use std::vec::Vec;
+    use std::{collections::VecDeque, vec::Vec};
 
     /// Mock SpiDevice: records the written bytes of every transaction and
     /// answers Read operations from a scripted queue (default: 0x02, which

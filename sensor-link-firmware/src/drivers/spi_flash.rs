@@ -25,6 +25,7 @@ use crate::{
 pub struct FlashDescriptor {
     pub page_size: usize,
     pub erase_size: usize,
+    /// Also selects the addressing mode: chips >16MB are switched to 4-byte addressing
     pub total_size: usize,
 
     /// Maximum time the chip takes to program a page
@@ -83,6 +84,8 @@ impl<const MAX_ERASE_SIZE: usize> Deref for ValidFlashDescriptor<MAX_ERASE_SIZE>
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, TryFromPrimitive)]
 pub enum Manufacturer {
+    /// Infineon (formerly Cypress/Spansion), e.g. S25FL064L
+    InfineonCypress = 0x01,
     /// Winbond (formerly Nexcom?)
     WinBondNexcom = 0xEF,
 }
@@ -144,8 +147,7 @@ impl From<u32> for Address {
     }
 }
 
-#[allow(unused)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
     B24, // 24-bit address mode. Suitable up to 16MByte
     B32, // 32-bit address mode. Suitable up to 4GByte
@@ -237,8 +239,12 @@ where
 }
 
 trait LowlevelFlash {
-    async fn program_page(&mut self, timeout_us: u32, addr: u32, bytes: &[u8])
-        -> Result<(), Error>;
+    async fn program_page(
+        &mut self,
+        timeout_us: u32,
+        cmd_addr: &[u8],
+        bytes: &[u8],
+    ) -> Result<(), Error>;
 
     async fn is_ready(&mut self, timeout_us: u32) -> Result<(), Error>;
     async fn status(&mut self) -> Result<Status, Error>;
@@ -258,13 +264,13 @@ where
     async fn program_page(
         &mut self,
         timeout_us: u32,
-        addr: u32,
+        cmd_addr: &[u8],
         bytes: &[u8],
     ) -> Result<(), Error> {
         self.write_enable().await?;
 
         self.transaction(&mut [
-            spi::Operation::Write(&cmd_and_addr(Command::ProgramPage, addr)),
+            spi::Operation::Write(cmd_addr),
             spi::Operation::Write(bytes),
         ])
         .await
@@ -389,11 +395,11 @@ where
         }
         self.stats.read_attempts += 1;
 
-        let (spi, addr) = self.init_and_check_addr(address, bytes.len()).await?;
+        let (spi, addr, mode) = self.init_and_check_addr(address, bytes.len()).await?;
 
         let result = spi
             .transaction(&mut [
-                spi::Operation::Write(&cmd_and_addr(Command::Read, addr)),
+                spi::Operation::Write(&cmd_and_addr(Command::Read, addr, mode)),
                 spi::Operation::Read(bytes),
             ])
             .await
@@ -422,12 +428,18 @@ where
         self.stats.erase_attempts += 1;
 
         // Note: below this point, we must put spi to sleep before returning
-        let (spi, addr) = self.init_and_check_addr(address, len).await?;
+        let (spi, addr, mode) = self.init_and_check_addr(address, len).await?;
 
         if addr as usize % erase_size != 0 || len % erase_size != 0 {
             self.flash.sleep().await;
             return Err(Error::Alignment);
         }
+
+        // In B32 mode, keep the explicitly-4-byte erase opcode
+        let erase_cmd = match mode {
+            Mode::B24 => Command::EraseSector,
+            Mode::B32 => Command::EraseSector4B,
+        };
 
         let mut error = Ok(());
         for offset in (0..len).step_by(erase_size) {
@@ -437,7 +449,7 @@ where
             }
 
             if let Err(_) = spi
-                .write(&cmd_and_addr(Command::EraseSector, addr + offset as u32))
+                .write(&cmd_and_addr(erase_cmd, addr + offset as u32, mode))
                 .await
             {
                 error = Err(Error::SPI);
@@ -469,7 +481,7 @@ where
         let program_size = self.descriptor().page_size;
 
         // Note: below this point, we must put spi to sleep before returning
-        let (spi, addr) = self.init_and_check_addr(address, bytes.len()).await?;
+        let (spi, addr, mode) = self.init_and_check_addr(address, bytes.len()).await?;
 
         let mut block_offset: usize = 0;
         let result = loop {
@@ -485,7 +497,7 @@ where
             if let Err(err) = spi
                 .program_page(
                     page_timeout_us,
-                    block_address as u32,
+                    &cmd_and_addr(Command::ProgramPage, block_address, mode),
                     &bytes[block_offset..block_offset + bytes_to_program],
                 )
                 .await
@@ -506,7 +518,7 @@ where
         &mut self,
         addr: Address,
         len: usize,
-    ) -> Result<(&mut DEV, u32), Error> {
+    ) -> Result<(&mut DEV, u32, Mode), Error> {
         let addr = bounds_check(addr, len, 0, self.cfg.total_size)?;
 
         match self.mode {
@@ -531,14 +543,38 @@ where
             }
         }
 
-        Ok((self.flash.wakeup().await?, addr))
+        let mode = self.mode;
+        Ok((self.flash.wakeup().await?, addr, mode))
+    }
+}
+
+/// Command + address wire frame: 3 address bytes in [Mode::B24], 4 in [Mode::B32]
+struct CmdAddr {
+    buf: [u8; 5],
+    len: usize,
+}
+
+impl Deref for CmdAddr {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.buf[..self.len]
     }
 }
 
 /// Helper function to combine command + address to byte array
-fn cmd_and_addr(cmd: Command, addr: u32) -> [u8; 5] {
+fn cmd_and_addr(cmd: Command, addr: u32, mode: Mode) -> CmdAddr {
     let addr = addr.to_be_bytes();
-    [cmd as u8, addr[0], addr[1], addr[2], addr[3]]
+    match mode {
+        // Top address byte is dropped: bounds_check guarantees addr < total_size <= 16MB
+        Mode::B24 => CmdAddr {
+            buf: [cmd as u8, addr[1], addr[2], addr[3], 0],
+            len: 4,
+        },
+        Mode::B32 => CmdAddr {
+            buf: [cmd as u8, addr[0], addr[1], addr[2], addr[3]],
+            len: 5,
+        },
+    }
 }
 
 fn bounds_check(address: Address, len: usize, min_addr: u32, max_len: usize) -> Result<u32, Error> {
@@ -611,6 +647,7 @@ where
 }
 
 #[allow(unused)]
+#[derive(Clone, Copy)]
 enum Command {
     Wakeup = 0xAB,
     Sleep = 0xB9,
@@ -627,7 +664,10 @@ enum Command {
     WriteEnable = 0x06,
     WriteDisable = 0x04,
 
-    EraseSector = 0x21,
+    // Sector erase with 3-byte address (in B24 mode) / 4-byte address (in B32 mode)
+    EraseSector = 0x20,
+    // Sector erase with 4-byte address, regardless of mode
+    EraseSector4B = 0x21,
 
     ProgramPage = 0x02,
 }
@@ -688,5 +728,166 @@ where
 
     async fn write(&mut self, address: u32, bytes: &[u8]) -> Result<(), Self::Error> {
         self.program(Address::from(address), bytes).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::vec::Vec;
+
+    /// Mock SpiDevice: records the written bytes of every transaction and
+    /// answers Read operations from a scripted queue (default: 0x02, which
+    /// reads as "WEL set, not busy" when polled as a status register).
+    struct MockSpi {
+        transactions: Vec<Vec<u8>>,
+        read_responses: VecDeque<Vec<u8>>,
+    }
+
+    impl MockSpi {
+        fn new() -> Self {
+            Self {
+                transactions: Vec::new(),
+                read_responses: VecDeque::new(),
+            }
+        }
+
+        fn respond(&mut self, bytes: &[u8]) {
+            self.read_responses.push_back(bytes.to_vec());
+        }
+
+        /// All recorded transactions that start with `cmd`
+        fn sent(&self, cmd: u8) -> Vec<&Vec<u8>> {
+            self.transactions
+                .iter()
+                .filter(|t| t.first() == Some(&cmd))
+                .collect()
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockError;
+    impl spi::Error for MockError {
+        fn kind(&self) -> spi::ErrorKind {
+            spi::ErrorKind::Other
+        }
+    }
+    impl spi::ErrorType for MockSpi {
+        type Error = MockError;
+    }
+
+    impl spi::SpiDevice for MockSpi {
+        async fn transaction(
+            &mut self,
+            operations: &mut [spi::Operation<'_, u8>],
+        ) -> Result<(), MockError> {
+            let mut written = Vec::new();
+            for op in operations.iter_mut() {
+                match op {
+                    spi::Operation::Write(bytes) => written.extend_from_slice(bytes),
+                    spi::Operation::Read(buf) => {
+                        let response = self.read_responses.pop_front().unwrap_or_default();
+                        for (i, b) in buf.iter_mut().enumerate() {
+                            *b = response.get(i).copied().unwrap_or(0x02);
+                        }
+                    }
+                    _ => unimplemented!(),
+                }
+            }
+            self.transactions.push(written);
+            Ok(())
+        }
+    }
+
+    impl Suspend for MockSpi {
+        fn suspend(&mut self) {}
+        fn resume(&mut self) {}
+        fn is_suspended(&self) -> bool {
+            false
+        }
+    }
+
+    fn flash(total_size: usize) -> SPIFlash<MockSpi, 4096> {
+        let descriptor = FlashDescriptor {
+            page_size: 256,
+            erase_size: 4096,
+            total_size,
+            program_timeout_us: 1_000,
+            erase_timeout_us: 1_000,
+            sleep_timeout_us: 1,
+        }
+        .validate()
+        .expect("valid descriptor");
+        SPIFlash::new(MockSpi::new(), descriptor)
+    }
+
+    const MB: usize = 1024 * 1024;
+
+    #[tokio::test]
+    async fn b24_read_sends_3_address_bytes() {
+        let mut flash = flash(8 * MB);
+
+        let mut buf = [0; 4];
+        flash.read(0x123456.into(), &mut buf).await.unwrap();
+
+        let spi = &flash.flash.device;
+        assert_eq!(spi.sent(0x03), [&vec![0x03, 0x12, 0x34, 0x56]]);
+        assert!(spi.sent(0xB7).is_empty(), "must not enter 4-byte mode");
+    }
+
+    #[tokio::test]
+    async fn b24_erase_sends_0x20_with_3_address_bytes() {
+        let mut flash = flash(8 * MB);
+
+        flash.erase(0x5000.into(), 2 * 4096).await.unwrap();
+
+        let spi = &flash.flash.device;
+        assert_eq!(
+            spi.sent(0x20),
+            [&vec![0x20, 0x00, 0x50, 0x00], &vec![0x20, 0x00, 0x60, 0x00]]
+        );
+        assert!(spi.sent(0x21).is_empty());
+    }
+
+    #[tokio::test]
+    async fn b24_program_sends_3_address_bytes() {
+        let mut flash = flash(8 * MB);
+
+        let mut range = flash.erase(0x5000.into(), 4096).await.unwrap();
+        range
+            .write(0x5000.into(), &[0xDE, 0xAD, 0xBE, 0xEF])
+            .await
+            .unwrap();
+
+        let spi = &flash.flash.device;
+        assert_eq!(
+            spi.sent(0x02),
+            [&vec![0x02, 0x00, 0x50, 0x00, 0xDE, 0xAD, 0xBE, 0xEF]]
+        );
+    }
+
+    #[tokio::test]
+    async fn b32_enters_4_byte_mode_and_sends_4_address_bytes() {
+        let mut flash = flash(32 * MB);
+
+        let mut buf = [0; 4];
+        flash.read(0x0112_3456.into(), &mut buf).await.unwrap();
+        flash.erase(0x0100_0000.into(), 4096).await.unwrap();
+
+        let spi = &flash.flash.device;
+        assert_eq!(spi.sent(0xB7).len(), 1, "enter 4-byte mode exactly once");
+        assert_eq!(spi.sent(0x03), [&vec![0x03, 0x01, 0x12, 0x34, 0x56]]);
+        assert_eq!(spi.sent(0x21), [&vec![0x21, 0x01, 0x00, 0x00, 0x00]]);
+        assert!(spi.sent(0x20).is_empty());
+    }
+
+    #[tokio::test]
+    async fn detect_type_recognizes_infineon() {
+        let mut flash = flash(8 * MB);
+
+        // JEDEC ID of the S25FL064L: manufacturer 0x01, density 2^0x17 = 8MB
+        flash.flash.device.respond(&[0x01, 0x60, 0x17]);
+        assert_eq!(flash.detect_type().await, Ok(Manufacturer::InfineonCypress));
     }
 }

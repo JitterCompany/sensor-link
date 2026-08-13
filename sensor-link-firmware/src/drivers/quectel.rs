@@ -4,6 +4,7 @@ mod apn;
 mod commands;
 mod config;
 mod types;
+mod variant;
 
 use core::{
     marker::PhantomData,
@@ -13,7 +14,6 @@ use core::{
 use atat::{
     asynch::AtatClient, AtatIngress, DefaultDigester, Ingress, UrcChannel, UrcSubscription,
 };
-use embedded_hal::digital::{OutputPin, StatefulOutputPin};
 use embedded_io_async::{Read, Write};
 use heapless::{spsc, String, Vec};
 use sensor_link_protocol::{
@@ -33,6 +33,7 @@ use commands::{file::responses::Upload, *};
 use types::*;
 
 pub use config::Config;
+pub use variant::{Eg915, MiniPcie, ModemVariant};
 
 use self::mqtt::urc::MqttAck;
 
@@ -61,8 +62,7 @@ static ERROR_OCCURRED: AtomicBool = AtomicBool::new(false);
 static INGRESS_BUF: StaticCell<[u8; INGRESS_BUF_SIZE]> = StaticCell::new();
 static CMD_BUF: StaticCell<[u8; CMD_BUF_SIZE]> = StaticCell::new();
 
-const TARGET_BAUDRATE: u32 = 3000000;
-const DEFAULT_BAUDRATE: u32 = 115200;
+pub const DEFAULT_BAUDRATE: u32 = 115200;
 
 pub struct Credentials {
     pub ca_cert: &'static str,
@@ -70,21 +70,14 @@ pub struct Credentials {
     pub client_key: &'static [u8],
 }
 
-/// Driver for Quectel EC21 and EC25 modems.
-pub struct Quectel<
-    W: Write,
-    R: Read + ErrorReport + Suspendable,
-    EP: StatefulOutputPin,
-    RP: OutputPin,
-    U: Suspend,
-> {
+/// Driver for Quectel EC21/EC25/EG915N modems.
+pub struct Quectel<W: Write, R: Read + ErrorReport + Suspendable, V: ModemVariant, U: Suspend> {
     _phantom: PhantomData<R>,
     client: ATClient<'static, W, INGRESS_BUF_SIZE>,
     urc_subscription: UrcSubscription<'static, Urc, URC_CAPACITY, URC_SUBSCRIBERS>,
     unexpected_urc_queue: spsc::Queue<Urc, URC_QUEUE_LEN>,
 
-    enable_pin: EP,
-    reset_pin: RP,
+    power: V,
     uart: U,
     config: Config,
     /// During first boot we need to do some
@@ -127,18 +120,18 @@ pub struct QuectelBackend<R: Read + ErrorReport + Suspendable> {
     rx: R,
 }
 
-impl<W, R, EP, RP, U> Quectel<W, R, EP, RP, U>
+impl<W, R, V, U> Quectel<W, R, V, U>
 where
     W: Write,
-    EP: StatefulOutputPin,
-    RP: OutputPin,
+    V: ModemVariant,
     R: Read + ErrorReport + Suspendable,
     U: Suspend + BaudRateControl,
 {
+    /// Note: only a single instance per firmware image is supported,
+    /// as the atat buffers and channels are statically allocated.
     pub fn new(
         uart: impl Split<W, R, U>,
-        en: EP,
-        rst: RP,
+        power: V,
         config: Config,
         credentials: Credentials,
     ) -> (Self, QuectelBackend<R>) {
@@ -162,13 +155,17 @@ where
                 urc_subscription,
                 unexpected_urc_queue: spsc::Queue::new(),
 
-                enable_pin: en,
-                reset_pin: rst,
+                power,
                 config,
                 uart,
                 first_boot: true,
                 apn: apn::FALLBACK,
-                baudrate_determined: None,
+                baudrate_determined: if V::TARGET_BAUDRATE.is_none() {
+                    // No negotiation for this variant: stay at the default baudrate
+                    Some(DEFAULT_BAUDRATE)
+                } else {
+                    None
+                },
                 credentials,
 
                 packets_missed: false,
@@ -197,11 +194,9 @@ where
                 return Err(Error::TimeOut);
             }
         } else {
-            match self
-                .negotiate_baudrate(TARGET_BAUDRATE, DEFAULT_BAUDRATE)
-                .await
-            {
-                Ok(_) => self.baudrate_determined = Some(TARGET_BAUDRATE),
+            let target = V::TARGET_BAUDRATE.unwrap_or(DEFAULT_BAUDRATE);
+            match self.negotiate_baudrate(target, DEFAULT_BAUDRATE).await {
+                Ok(_) => self.baudrate_determined = Some(target),
                 Err(_) => {
                     log::warn!(target: "quectel","Baudrate not as expected. Back to default");
                     self.baudrate_determined = Some(DEFAULT_BAUDRATE);
@@ -250,7 +245,7 @@ where
                             let mut model = self.modem_model().await;
                             model.make_ascii_lowercase();
 
-                            if !model.contains("ec2") {
+                            if !model.contains(V::MODEL_PREFIX) {
                                 log::warn!(target: "quectel", "provisioning failed (modem model detected as '{model}')");
                                 return Err(orig_error);
                             }
@@ -335,7 +330,11 @@ where
             log::info!(target: "quectel","ID: {model_id:?}");
 
             // Verify id.
-            if !model_id.id.starts_with("EC2") {
+            let matches_model = model_id
+                .id
+                .get(..V::MODEL_PREFIX.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(V::MODEL_PREFIX));
+            if !matches_model {
                 log::error!(target: "quectel","Failed to negotiate baudrate 2");
                 return Err(Error::TimeOut); // TODO Timeout Error is not super correct
             }
@@ -1227,8 +1226,7 @@ where
         // Suspend UART before modem power down
         self.uart.suspend();
 
-        self.enable_pin.set_low().ok();
-        self.reset_pin.set_low().ok();
+        self.power.power_off();
         log::debug!(target: "quectel","Modem fully powered down!");
 
         // Flush queues. Note that we cant control the QuectelBackend, which might still contain half-parsed stuff...
@@ -1238,24 +1236,18 @@ where
 
     async fn turn_on(&mut self) {
         // Already turned on? Make sure uart is resumend and skip the rest
-        if let Ok(true) = self.enable_pin.is_set_high() {
+        if self.power.is_powered() {
             self.uart.resume();
             return;
         }
         log::debug!(target: "quectel","Turning on modem...");
 
-        // Enable power to modem & wait for supply to settle
-        self.enable_pin.set_high().ok();
-
-        // Note: reset pulse is not necessary for miniPCIE version. Just keep the !reset pin high
-        self.reset_pin.set_high().ok();
-
-        // PSU settling delay before resuming UART
-        // We want to be sure the modem is powered before we set TX high.
+        // Power-on pin sequence, including settling delays before resuming UART:
+        // we want to be sure the modem is powered before we set TX high.
 
         // If this delay ever gives issues in the future, we could split resume into two stages:
         // resume_rx(), then enable modem, then resume_tx().
-        delay_ms(2).await;
+        self.power.power_on().await;
         self.uart.resume();
 
         // If we hit the timeout or receive unexpected URC data, the modem was probably already on?
@@ -1505,12 +1497,11 @@ impl<R: Read + ErrorReport + Suspendable> QuectelBackend<R> {
     }
 }
 
-impl<W, R, EP, RP, U> MqttClient for Quectel<W, R, EP, RP, U>
+impl<W, R, V, U> MqttClient for Quectel<W, R, V, U>
 where
     W: Write,
     R: Read + ErrorReport + Suspendable,
-    EP: StatefulOutputPin,
-    RP: OutputPin,
+    V: ModemVariant,
     U: Suspend + BaudRateControl,
 {
     type ClientError = atat::Error;

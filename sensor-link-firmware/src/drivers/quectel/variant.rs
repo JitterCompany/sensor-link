@@ -111,8 +111,9 @@ impl<EP: StatefulOutputPin, PK: OutputPin, RP: OutputPin, SP: InputPin> ModemVar
         self.pwrkey.set_low().ok();
 
         self.enable.set_high().ok();
-        // VBAT must be stable >= 30 ms before asserting PWRKEY
-        delay_ms(30).await;
+        // VBAT must be stable >= 30 ms before asserting PWRKEY.
+        // The rail stabilizes ~2 ms after enable (measured on the 5101 board).
+        delay_ms(32).await;
 
         // PWRKEY low (asserted) >= 500 ms turns the module on
         self.pwrkey.set_high().ok();

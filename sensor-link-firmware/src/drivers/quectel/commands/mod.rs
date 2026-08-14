@@ -1,7 +1,10 @@
-//! AT Commands for Quectel EC2X
+//! AT Commands for Quectel modems (EC2x/EG915N)
 //!
 //! Commands are structured according to the quectel command manuals.
 //! Each module defines commands, responses and URCs.
+
+// Types are named after the AT commands they represent (CREG, QIURC, ...)
+#![allow(clippy::upper_case_acronyms)]
 
 pub mod file;
 pub mod general;
@@ -125,36 +128,59 @@ impl atat::AtatUrc for Urc {
     type Response = Urc;
 
     fn parse(resp: &[u8]) -> Option<Self::Response> {
-        if let Some(urc) = <DefaultUrc as atat::AtatUrc>::parse(resp) {
-            Some(match urc {
-                DefaultUrc::ModemReady => Urc::ModemReady,
-                DefaultUrc::ModemOff => Urc::ModemOff,
-                DefaultUrc::MQTTOpen(urc) => Urc::MQTTOpen(urc),
-                DefaultUrc::MQTTClose(urc) => Urc::MQTTClose(urc),
-                DefaultUrc::MQTTConnect(urc) => Urc::MQTTConnect(urc),
-                DefaultUrc::MQTTDisconnect(urc) => Urc::MQTTDisconnect(urc),
-                DefaultUrc::MQTTSubscribe(urc) => Urc::MQTTSubscribe(urc),
-                DefaultUrc::MQTTUnsubscribe(urc) => Urc::MQTTUnsubscribe(urc),
-                DefaultUrc::MQTTPublish(urc) => Urc::MQTTPublish(urc),
-                DefaultUrc::MQTTStatus(urc) => Urc::MQTTStatus(urc),
-                DefaultUrc::QIURC(urc) => Urc::QIURC(urc),
-                DefaultUrc::CREG(urc) => Urc::CREG(urc),
-                DefaultUrc::EREG(urc) => Urc::EREG(urc),
-                DefaultUrc::MQTTReceive(urc) => Urc::MQTTReceive(urc),
-                DefaultUrc::HTTPGet(urc) => Urc::HTTPGet(urc),
-                DefaultUrc::HTTPReadFile(urc) => Urc::HTTPReadFile(urc),
-            })
-        } else {
-            None
-        }
+        <DefaultUrc as atat::AtatUrc>::parse(resp).map(|urc| match urc {
+            DefaultUrc::ModemReady => Urc::ModemReady,
+            DefaultUrc::ModemOff => Urc::ModemOff,
+            DefaultUrc::MQTTOpen(urc) => Urc::MQTTOpen(urc),
+            DefaultUrc::MQTTClose(urc) => Urc::MQTTClose(urc),
+            DefaultUrc::MQTTConnect(urc) => Urc::MQTTConnect(urc),
+            DefaultUrc::MQTTDisconnect(urc) => Urc::MQTTDisconnect(urc),
+            DefaultUrc::MQTTSubscribe(urc) => Urc::MQTTSubscribe(urc),
+            DefaultUrc::MQTTUnsubscribe(urc) => Urc::MQTTUnsubscribe(urc),
+            DefaultUrc::MQTTPublish(urc) => Urc::MQTTPublish(urc),
+            DefaultUrc::MQTTStatus(urc) => Urc::MQTTStatus(urc),
+            DefaultUrc::QIURC(urc) => Urc::QIURC(urc),
+            DefaultUrc::CREG(urc) => Urc::CREG(urc),
+            DefaultUrc::EREG(urc) => Urc::EREG(urc),
+            DefaultUrc::MQTTReceive(urc) => Urc::MQTTReceive(urc),
+            DefaultUrc::HTTPGet(urc) => Urc::HTTPGet(urc),
+            DefaultUrc::HTTPReadFile(urc) => Urc::HTTPReadFile(urc),
+        })
     }
 }
 
 impl atat::Parser for Urc {
     fn parse(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::ParseError> {
-        <DefaultUrc as atat::Parser>::parse(buf)
-            .or_else(|_| <CustomUrc as atat::Parser>::parse(buf))
+        let (line, len) = <DefaultUrc as atat::Parser>::parse(buf)
+            .or_else(|_| <CustomUrc as atat::Parser>::parse(buf))?;
+
+        // Only the short "+QMTRECV: <client_idx>,<recv_id>" notification is a
+        // URC. Payload-carrying "+QMTRECV:" lines are responses to an
+        // AT+QMTRECV read command and must be left for the response parser.
+        // The digester cannot tell them apart by position: depending on UART
+        // chunking, a response may sit at the start of the ingress buffer
+        // just like a URC does.
+        if line.starts_with(b"+QMTRECV") && !is_qmtrecv_notification(line) {
+            return Err(atat::digest::ParseError::NoMatch);
+        }
+        Ok((line, len))
     }
+}
+
+/// Matches "+QMTRECV: <int>,<int>" with nothing after it.
+fn is_qmtrecv_notification(line: &[u8]) -> bool {
+    let Some(rest) = line.strip_prefix(b"+QMTRECV:") else {
+        return false;
+    };
+    let mut commas = 0;
+    rest.iter().all(|&c| match c {
+        b'0'..=b'9' | b' ' => true,
+        b',' => {
+            commas += 1;
+            true
+        }
+        _ => false,
+    }) && commas == 1
 }
 
 pub trait URCParse<T: Debug + Default> {
@@ -245,7 +271,7 @@ impl Urc {
 mod test {
 
     use super::*;
-    use crate::{drivers::ec2x::ContextId, utils::LossyStr};
+    use crate::{drivers::quectel::ContextId, utils::LossyStr};
     use atat::{AtatCmd, DefaultDigester, DigestResult, Digester};
 
     #[test]
@@ -333,5 +359,49 @@ mod test {
         assert_eq!(serialized.len(), 73);
         assert_eq!(mqtt::PublishPrepare::LEN, 66);
         assert!(mqtt::PublishPrepare::MAX_LEN > serialized.len());
+    }
+}
+
+#[cfg(test)]
+mod qmtrecv_classification {
+    use super::*;
+    use atat::{DefaultDigester, DigestResult, Digester};
+
+    /// A payload-carrying +QMTRECV line at the start of the ingress buffer
+    /// (as the EG915N delivers it) must classify as a response, not a URC,
+    /// and deserialize including the quote-wrapped payload.
+    #[test]
+    fn test_qmtrecv_read_response_at_buffer_start() {
+        let mut digester = DefaultDigester::<Urc>::new();
+        // Exact line captured from an EG915N in response to AT+QMTRECV=1,1
+        let input = "\r\n+QMTRECV: 1,1,\"server/status\",4,\"\"ok\"\"\r\n\r\nOK\r\n";
+        let res = digester.digest(input.as_bytes());
+        match res {
+            (DigestResult::Response(Ok(bytes)), _) => {
+                let resp = atat::serde_at::from_slice::<mqtt::urc::MQTTReceive>(bytes)
+                    .expect("deserialize");
+                assert_eq!(resp.msg_id, 1);
+                assert_eq!(resp.topic.as_str(), "server/status");
+                assert_eq!(resp.payload.bytes.as_slice(), b"\"ok\"");
+            }
+            res => panic!("not a response: {res:?}"),
+        }
+    }
+
+    /// The short notification form must still be detected as a URC.
+    #[test]
+    fn test_qmtrecv_notification_still_urc() {
+        let mut digester = DefaultDigester::<Urc>::new();
+        let input = "\r\n+QMTRECV: 1,3\r\n";
+        match digester.digest(input.as_bytes()) {
+            (DigestResult::Urc(line), _) => {
+                let urc = <Urc as atat::AtatUrc>::parse(line).expect("parse URC");
+                let Urc::MQTTReceive(notify) = urc else {
+                    panic!("wrong URC variant");
+                };
+                assert_eq!(notify.recv_id, 3);
+            }
+            res => panic!("not a URC: {res:?}"),
+        }
     }
 }

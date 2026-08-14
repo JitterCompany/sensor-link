@@ -93,7 +93,7 @@ impl SignalQualityReport {
     /// Signal strength mapped to a percentage
     pub fn signal_strength(&self) -> i16 {
         let dbm = rssi_to_dbm(self.rssi);
-        dbm.map(|dbm| dbm_to_percentage(dbm)).unwrap_or(-2)
+        dbm.map(dbm_to_percentage).unwrap_or(-2)
     }
 }
 
@@ -117,16 +117,14 @@ fn rssi_to_dbm(rssi: i16) -> Option<i16> {
 /// -25 dBm = 100%
 /// -116 dBm = 0%
 fn dbm_to_percentage(dbm: i16) -> i16 {
-    let percentage = if dbm < -116 {
+    if dbm < -116 {
         0 // Less than -116 dBm
     } else if dbm > -25 {
         100 // Greater than -25 dBm
     } else {
         // Linear mapping from -116 dBm to -25 dBm
         ((dbm + 116) * 100) / 91 // -116 to -25 is a range of 91 dBm
-    };
-
-    percentage as i16
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ pub mod responses;
 use atat::atat_derive::AtatCmd;
 use heapless::String;
 
-use crate::drivers::ec2x::ContextId;
+use crate::drivers::quectel::ContextId;
 
 use super::{file::Filename, NoResponse};
 

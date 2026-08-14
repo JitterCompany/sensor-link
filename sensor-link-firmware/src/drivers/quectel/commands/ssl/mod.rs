@@ -97,6 +97,7 @@ impl SSLCFG {
 /// is implemented.
 #[derive(Debug, Clone, AtatCmd)]
 #[at_cmd("+QSSLCFG", NoResponse, timeout_ms = 300, termination = "\r")]
+#[allow(dead_code)] // unused command, kept for reference (see NOTE above)
 pub struct SSLCFGCiphersuite {
     #[at_arg(position = 0)]
     /// should be "ciphersuite"

@@ -1,4 +1,4 @@
-/// EC2x Config options
+/// Quectel modem config options
 pub struct Config {
     /// URL to the broker
     pub host: &'static str,

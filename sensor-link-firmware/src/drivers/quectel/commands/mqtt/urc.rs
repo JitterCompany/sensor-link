@@ -5,7 +5,7 @@ use atat::{atat_derive::AtatResp, serde_at::de::length_delimited::LengthDelimite
 use heapless::String;
 use num_enum::TryFromPrimitive;
 
-use crate::{drivers::ec2x::commands::URCParse, mqtt::Message};
+use crate::{drivers::quectel::commands::URCParse, mqtt::Message};
 use sensor_link_protocol::{MAX_MESSAGE_LEN, MAX_TOPIC_LEN};
 
 /// 3.2.2 Open result URC
@@ -20,7 +20,7 @@ pub struct MQTTOpen {
 /// Result codes for the MQTTOpen URC
 /// 3.2.2
 #[repr(i8)]
-#[derive(Debug, TryFromPrimitive)]
+#[derive(Debug, Default, TryFromPrimitive)]
 pub enum MQTTOpenResult {
     /// Failed to open network
     FailedToOpen = -1,
@@ -37,13 +37,8 @@ pub enum MQTTOpenResult {
     /// Network connection error
     NetworkConnectionError = 5,
     /// Unexpected result, check specs.
+    #[default]
     Unknown = 99,
-}
-
-impl Default for MQTTOpenResult {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl URCParse<MQTTOpenResult> for MQTTOpen {
@@ -68,7 +63,7 @@ pub struct MQTTConnect {
 
 /// Result codes for the MQTTConnect URC
 #[repr(u8)]
-#[derive(Debug, TryFromPrimitive)]
+#[derive(Debug, Default, TryFromPrimitive)]
 pub enum MQTTConnectResult {
     /// Connection Accepted
     Accepted = 0,
@@ -83,13 +78,8 @@ pub enum MQTTConnectResult {
     /// Connection Refused: Not Authorized
     NotAuthorized = 5,
     /// Unexpected result
+    #[default]
     Unknown = 99,
-}
-
-impl Default for MQTTConnectResult {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl URCParse<MQTTConnectResult> for MQTTConnect {
@@ -112,16 +102,11 @@ pub struct MQTTDisconnect {
 /// Result codes for the MQTT URCs that only respond with two options:
 /// - succes or fail.
 #[repr(i8)]
-#[derive(Debug, TryFromPrimitive)]
+#[derive(Debug, Default, TryFromPrimitive)]
 pub enum MQTTResult {
     Success = 0,
+    #[default]
     Failed = -1,
-}
-
-impl Default for MQTTResult {
-    fn default() -> Self {
-        Self::Failed
-    }
 }
 
 impl URCParse<MQTTResult> for MQTTDisconnect {
@@ -151,7 +136,7 @@ impl URCParse<MQTTResult> for MQTTClose {
 
 /// Result codes for URCs that may resend packets
 #[repr(u8)]
-#[derive(Debug, TryFromPrimitive)]
+#[derive(Debug, Default, TryFromPrimitive)]
 pub enum MQTTPacketResult {
     /// Sent packet successfully and received ACK from server
     Success = 0,
@@ -160,13 +145,8 @@ pub enum MQTTPacketResult {
     /// Failed to send packet
     Failed = 2,
     /// Unexpecteed result: check specs.
+    #[default]
     Unknown = 99,
-}
-
-impl Default for MQTTPacketResult {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// 3.2.6 Subscribe result URC
@@ -272,7 +252,7 @@ impl From<MQTTReceive> for Message {
     fn from(value: MQTTReceive) -> Self {
         Self {
             topic: value.topic,
-            payload: value.payload.bytes.into_iter().map(|x| x).collect(),
+            payload: value.payload.bytes.into_iter().collect(),
         }
     }
 }
@@ -335,7 +315,7 @@ pub struct MQTTStatus {
 
 /// See 4.1
 #[repr(u8)]
-#[derive(Debug, TryFromPrimitive)]
+#[derive(Debug, Default, TryFromPrimitive)]
 pub enum MQTTStatusResult {
     /// Connection is closed or reset by peer.
     ConnectionClosed = 1,
@@ -362,13 +342,8 @@ pub enum MQTTStatusResult {
     ServerUnavailable = 7,
 
     /// Unexpecteed result: check specs.
+    #[default]
     Unknown = 99,
-}
-
-impl Default for MQTTStatusResult {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl URCParse<MQTTStatusResult> for MQTTStatus {

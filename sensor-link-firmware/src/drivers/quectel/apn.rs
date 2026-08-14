@@ -1,3 +1,5 @@
+// Named after the AT concept it represents
+#[allow(clippy::upper_case_acronyms)]
 pub type APN = &'static str;
 
 pub const FALLBACK: APN = "internet";

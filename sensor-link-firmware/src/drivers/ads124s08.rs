@@ -519,7 +519,8 @@ where
         self.configure_ref(Default::default()).await
     }
 
-    /// parse STATUS + conversion result
+    /// parse STATUS + conversion result.
+    /// panics if slice length < 1 + V::DATA_BYTES
     fn parse(&self, rx: &[u8]) -> Result<(RefStatus, i32), Error> {
         let status = rx[0];
         // 1. Status: check for error flags

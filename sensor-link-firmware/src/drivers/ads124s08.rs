@@ -1,4 +1,7 @@
-//! TI ADS124S08 Driver: 24-bit multiplexed ADC with integrated PGA
+//! TI ADS1x4S08 Driver: 24-bit (ADS124S08) / 16-bit (ADS114S08)
+//! multiplexed ADC with integrated PGA
+
+use core::marker::PhantomData;
 
 use embedded_hal::digital::OutputPin;
 use embedded_hal_async::spi;
@@ -23,7 +26,43 @@ pub const INTERNAL_VREF: f32 = 2.5;
 /// Internal mux resistance in Ohm (estimated, not in datasheet)
 pub const INTERNAL_MUX_R: f32 = 570.0;
 
-/// ADS124S08 Driver: 24-bit ADC with integrated PGA
+/// Chip variant within the ADS1x4S08 family.
+///
+/// The variants share the register map and command set; they differ
+/// in device ID and conversion word width.
+pub trait Variant {
+    /// Expected DEV_ID[2:0] value of the ID register
+    const DEV_ID: u8;
+
+    /// Conversion result size in bytes
+    const DATA_BYTES: usize;
+
+    /// Full scale of the ADC: scale factor = gain * raw value/FULL_SCALE * reference voltage
+    const FULL_SCALE: i32;
+
+    /// Chip name, for log messages
+    const NAME: &'static str;
+}
+
+/// ADS124S08: 24-bit, 12 channels
+pub struct Variant124S08;
+impl Variant for Variant124S08 {
+    const DEV_ID: u8 = 0b000;
+    const DATA_BYTES: usize = 3;
+    const FULL_SCALE: i32 = 0x7F_FFFF;
+    const NAME: &'static str = "ADS124S08";
+}
+
+/// ADS114S08: 16-bit, 12 channels
+pub struct Variant114S08;
+impl Variant for Variant114S08 {
+    const DEV_ID: u8 = 0b100;
+    const DATA_BYTES: usize = 2;
+    const FULL_SCALE: i32 = 0x7FFF;
+    const NAME: &'static str = "ADS114S08";
+}
+
+/// ADS1x4S08 Driver: multiplexed ADC with integrated PGA
 ///
 /// This driver is optimized for quick switching between
 /// input channels (single shot conversions).
@@ -31,7 +70,8 @@ pub const INTERNAL_MUX_R: f32 = 570.0;
 /// To generate a stable sample frequency, the driver does
 /// not issue start commands but assumes the hardware generates
 /// a stable SYNC pulse directly wired to the ADC.
-pub struct ADS124S08<DEV, OP, INT> {
+/// Boards without such a SYNC signal can use [Ads1x4s08::read_now()].
+pub struct Ads1x4s08<V, DEV, OP, INT> {
     spi: DEV,
 
     reset_inv: OP,
@@ -40,7 +80,15 @@ pub struct ADS124S08<DEV, OP, INT> {
     // set to true once the input has been configured.
     // prevents sampling from undefined inputs
     input_configured: bool,
+
+    _variant: PhantomData<V>,
 }
+
+/// TI ADS124S08: 24-bit multiplexed ADC with integrated PGA
+pub type ADS124S08<DEV, OP, INT> = Ads1x4s08<Variant124S08, DEV, OP, INT>;
+
+/// TI ADS114S08: 16-bit multiplexed ADC with integrated PGA
+pub type ADS114S08<DEV, OP, INT> = Ads1x4s08<Variant114S08, DEV, OP, INT>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ReadError {
@@ -73,7 +121,7 @@ pub enum Error {
     ConfigReadback,
 
     /// Attempted to sample without specifying input config (bug in caller code)
-    /// See [ADS124S08::configure_input()]
+    /// See [Ads1x4s08::configure_input()]
     NoInputConfig,
 
     /// Hardware API is not compatible
@@ -83,7 +131,7 @@ pub enum Error {
     Read(ReadError),
 }
 
-/// Diagnostics info about the ADS124S08 and its supply voltages
+/// Diagnostics info about the ADS1x4S08 and its supply voltages
 ///
 /// Intended as a health-check / manufacturing verification
 #[derive(Debug)]
@@ -113,14 +161,15 @@ pub enum RefStatus {
     BelowSupplyDiv3,
 }
 
-impl<DEV, OP, INT> ADS124S08<DEV, OP, INT>
+impl<V, DEV, OP, INT> Ads1x4s08<V, DEV, OP, INT>
 where
+    V: Variant,
     DEV: spi::SpiDevice + traits::CRC8Receiver + traits::Suspend,
     OP: OutputPin,
     INT: Trigger,
 {
     /// Full scale of the ADC: scale factor = gain * raw value/FULL_SCALE * reference voltage
-    pub const FULL_SCALE: i32 = FULL_SCALE;
+    pub const FULL_SCALE: i32 = V::FULL_SCALE;
 
     /// Internal reference voltage in V
     pub const INTERNAL_VREF: f32 = INTERNAL_VREF;
@@ -134,13 +183,14 @@ where
         | register::SYS::TIMEOUT::Disabled as u8
         | register::SYS::CAL_SAMP::Avg8 as u8;
 
-    /// Create an ADS124S08. Requires an SPI device, !RESET pin and DRDY trigger
+    /// Create an ADS1x4S08. Requires an SPI device, !RESET pin and DRDY trigger
     pub fn new(spi_device: DEV, reset_inv: OP, ready: INT) -> Self {
         Self {
             spi: spi_device,
             reset_inv,
             ready,
             input_configured: false,
+            _variant: PhantomData,
         }
     }
 
@@ -156,7 +206,7 @@ where
         if (self.read_reg(Register::STATUS, &mut rx).await?[0] & (register::STATUS::NOTRDY as u8))
             != 0
         {
-            log::warn!(target: "ADS124S08", "Not ready?: {rx:02X?}");
+            log::warn!(target: "ADS1x4S08", "Not ready?: {rx:02X?}");
             if self.sensor_detect_after_reset().await.is_ok() {
                 return Err(Error::NotReady);
             }
@@ -182,7 +232,7 @@ where
     /// Perform diagnostics measurements.
     ///
     /// Note 1: the SYNC pulse must be disabled (or running at f < 50 Hz) while running diagnostics
-    /// Note 2: this resets any config that may have been applied before (like [ADS124S08::enable()])
+    /// Note 2: this resets any config that may have been applied before (like [Ads1x4s08::enable()])
     pub async fn diagnostics(&mut self) -> Result<Diagnostics, Error> {
         if self.spi.is_suspended() {
             return Err(Error::NotEnabled);
@@ -199,7 +249,7 @@ where
             pga: Some(Gain::G1),
             datarate: DataRate::FS_100,
         };
-        self.configure_input(&input_cfg).await?;
+        self.configure_input(input_cfg).await?;
 
         let analog_supply_volt = {
             self.write_reg_and_verify(
@@ -267,7 +317,7 @@ where
     /// (re-)configure the input for the next measurement
     ///
     /// Note: readout of measurement data + configuring input for the next measurement can
-    /// be combined in one. See [ADS124S08::read_and_reconfigure_input()]
+    /// be combined in one. See [Ads1x4s08::read_and_reconfigure_input()]
     pub async fn configure_input(&mut self, cfg: &InputConfig) -> Result<(), Error> {
         if self.spi.is_suspended() {
             return Err(Error::NotEnabled);
@@ -330,15 +380,16 @@ where
             return Err(Error::NoInputConfig);
         }
         let mut rx = [0_u8; 5];
+        let n = 2 + V::DATA_BYTES;
 
         // Wait for DRDY falling edge if it has not occured yet
         self.ready.wait_untill_any_edge().await;
 
         // Full duplex transfer:
         // - Write: configuration for next sample
-        // - Read: last sample (STATUS + 24-bit ADC value + CRC8)
+        // - Read: last sample (STATUS + ADC value + CRC8)
         self.spi
-            .transfer(&mut rx, tx)
+            .transfer(&mut rx[..n], tx)
             .await
             .map_err(|_| Error::Bus)?;
 
@@ -348,7 +399,7 @@ where
             return Err(Error::Read(ReadError::CRCMismatch));
         }
 
-        self.parse(rx)
+        self.parse(&rx[..n])
     }
 
     /// Read a sample from the ADC immediately
@@ -357,7 +408,7 @@ where
     /// even if DRDY signal does not trigger.
     /// This assumes a valid input & reference config was already done, and that
     /// SYNC is either disabled or running slow enough for the current input config.
-    async fn read_now(&mut self, millis: u32) -> Result<(RefStatus, i32), Error> {
+    pub async fn read_now(&mut self, millis: u32) -> Result<(RefStatus, i32), Error> {
         if !self.input_configured {
             return Err(Error::NoInputConfig);
         }
@@ -374,10 +425,11 @@ where
 
         let cmd = [Cmd::RData.as_u8()];
         let mut result = [0; 5];
+        let n = 2 + V::DATA_BYTES;
         self.spi
             .transaction(&mut [
                 spi::Operation::Write(&cmd),
-                spi::Operation::Read(&mut result),
+                spi::Operation::Read(&mut result[..n]),
             ])
             .await
             .map_err(|_| Error::Bus)?;
@@ -392,7 +444,7 @@ where
             return Err(Error::Read(ReadError::CRCMismatch));
         }
 
-        self.parse(result)
+        self.parse(&result[..n])
     }
 
     /// Apply configuration related to reference & IDAC current sources
@@ -405,6 +457,14 @@ where
         .await
     }
 
+    /// Read the raw ID register. DEV_ID[2:0] identifies the chip variant,
+    /// the 5 high bits are undefined.
+    pub async fn read_id(&mut self) -> Result<u8, Error> {
+        let mut rx = [0];
+        self.read_reg(Register::ID, &mut rx).await?;
+        Ok(rx[0])
+    }
+
     /// Detect sensor by checking default register values
     ///
     /// Note: only use this after a reset. If registers have been reconfigured,
@@ -413,17 +473,18 @@ where
         let mut rx = [0];
 
         // 1. check ID register. Unfortunately the 5 high bits are undefined, so we can only
-        // check the lower 3 bits, for which the expected value is 0 (1 would be ADS124S06).
+        // check the lower 3 bits (DEV_ID) against the expected chip variant.
         // This is hard to distinguish from a disconnected/miswired/shorted SPI bus.
-        if (self.read_reg(Register::ID, &mut rx).await?[0] & 0b111) != 0 {
-            log::error!(target: "ADS124S08", "Not an ADS124S08: is this a 6-channel variant?: {rx:02X?}");
+        let id = self.read_id().await?;
+        if (id & 0b111) != V::DEV_ID {
+            log::error!(target: "ADS1x4S08", "Not an {}: unexpected DEV_ID: {id:02X}", V::NAME);
             return Err(Error::SensorDetect);
         }
 
         // 2. Extra check: readback another register that is clearly different
         // from 0x00 or 0xFF (the most common SPI bus failure modes).
         if 0x14 != self.read_reg(Register::DATARATE, &mut rx).await?[0] {
-            log::error!(target: "ADS124S08", "Expected 0x14, got: {rx:02X?}");
+            log::error!(target: "ADS1x4S08", "Expected 0x14, got: {rx:02X?}");
             return Err(Error::SensorDetect);
         }
         Ok(())
@@ -458,8 +519,9 @@ where
         self.configure_ref(Default::default()).await
     }
 
-    /// parse STATUS + 24-bit result
-    fn parse(&self, rx: [u8; 5]) -> Result<(RefStatus, i32), Error> {
+    /// parse STATUS + conversion result.
+    /// panics if slice length < 1 + V::DATA_BYTES
+    fn parse(&self, rx: &[u8]) -> Result<(RefStatus, i32), Error> {
         let status = rx[0];
         // 1. Status: check for error flags
         if status
@@ -492,11 +554,13 @@ where
             RefStatus::OK
         };
 
-        // 24-bit big-endian to i32
-        Ok((
-            ref_status,
-            i32::from_be_bytes([rx[1], rx[2], rx[3], 0]) >> 8,
-        ))
+        // big-endian to sign-extended i32
+        let mut value: u32 = 0;
+        for byte in &rx[1..1 + V::DATA_BYTES] {
+            value = (value << 8) | *byte as u32;
+        }
+        let shift = 32 - 8 * V::DATA_BYTES;
+        Ok((ref_status, ((value << shift) as i32) >> shift))
     }
 
     async fn read_reg<'r>(
@@ -504,7 +568,7 @@ where
         reg: Register,
         result: &'r mut [u8],
     ) -> Result<&'r [u8], Error> {
-        if result.len() == 0 {
+        if result.is_empty() {
             return Ok(&[]);
         }
 
@@ -513,12 +577,12 @@ where
 
         // RREG: [0b001rrrrr, n] where r = register address triggers an (n+1) byte read
         let cmd: [u8; 2] = [Cmd::ReadReg(reg).as_u8(), (len - 1) as u8];
-        let mut result = &mut result[..len];
+        let result = &mut result[..len];
 
         self.spi
             .transaction(&mut [
                 spi::Operation::Write(&cmd),
-                spi::Operation::Read(&mut result),
+                spi::Operation::Read(&mut result[..]),
             ])
             .await
             .map_err(|_| Error::Bus)?;
@@ -526,8 +590,8 @@ where
         Ok(result)
     }
 
-    async fn write_reg<'r>(&mut self, reg: Register, data: &[u8]) -> Result<(), Error> {
-        if data.len() == 0 {
+    async fn write_reg(&mut self, reg: Register, data: &[u8]) -> Result<(), Error> {
+        if data.is_empty() {
             return Ok(());
         }
 
@@ -539,7 +603,7 @@ where
         let data = &data[..len];
 
         self.spi
-            .transaction(&mut [spi::Operation::Write(&cmd), spi::Operation::Write(&data)])
+            .transaction(&mut [spi::Operation::Write(&cmd), spi::Operation::Write(data)])
             .await
             .map_err(|_| Error::Bus)?;
 
@@ -547,7 +611,7 @@ where
     }
 
     /// Write a set of registers and verify they read back exactly as written
-    async fn write_reg_and_verify<'r>(&mut self, reg: Register, data: &[u8]) -> Result<(), Error> {
+    async fn write_reg_and_verify(&mut self, reg: Register, data: &[u8]) -> Result<(), Error> {
         self.write_reg(reg, data).await?;
         let mut read_buff = [0_u8; 0x12];
         let read_buff = &mut read_buff[..data.len().min(0x12)];
@@ -567,7 +631,7 @@ where
     }
 }
 
-/// SPI commands for ADS124S08
+/// SPI commands for ADS1x4S08
 enum Cmd {
     ReadReg(Register),
     WriteReg(Register),
@@ -576,10 +640,10 @@ enum Cmd {
 }
 
 impl Cmd {
-    pub fn as_u8(self) -> u8 {
+    pub fn as_u8(&self) -> u8 {
         match self {
-            Cmd::WriteReg(register) => 0b0100_0000 | (register as u8),
-            Cmd::ReadReg(register) => 0b0010_0000 | (register as u8),
+            Cmd::WriteReg(register) => 0b0100_0000 | (*register as u8),
+            Cmd::ReadReg(register) => 0b0010_0000 | (*register as u8),
             Cmd::Start => 0b0000_1000,
             Cmd::RData => 0b0001_0010,
         }

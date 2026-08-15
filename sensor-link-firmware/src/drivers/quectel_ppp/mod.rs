@@ -11,10 +11,10 @@
 //! `MqttClient` boundary.
 
 pub mod mqtt_core;
+pub mod pem;
+pub mod tls;
 
 // Submodules land per work package:
-// mod pem;          WP2 — PEM→DER for the provisioned credentials
-// mod tls;          WP2 — CryptoProvider (RNG + pinned-CA verifier + P-256 signer)
 // mod uart_adapter; WP3 — eia-0.6 UART halves → eia-0.7 BufRead+Write for PPP
 // mod at_bringup;   WP5 — power/baud/APN/registration/dial/escape
 // mod session;      WP7 — reusable session buffer pool

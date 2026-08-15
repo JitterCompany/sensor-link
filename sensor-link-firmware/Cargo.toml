@@ -20,6 +20,8 @@ quectel-ppp = [
     "dep:rust-mqtt",
     "dep:embedded-io-async-07",
     "dep:heapless09",
+    "dep:base64",
+    "p256/pkcs8",
 ]
 
 [dependencies]
@@ -60,10 +62,11 @@ sensor-link-protocol = { path = "../sensor-link-protocol" }
 # to `drivers::quectel_ppp`.
 embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "tcp", "dns", "medium-ip"], optional = true }
 embassy-net-ppp = { version = "0.3.0", optional = true }
-embedded-tls = { version = "0.19.0", default-features = false, features = ["rustpki"], optional = true }
+embedded-tls = { version = "0.19.0", default-features = false, features = ["rustpki", "log"], optional = true }
 rust-mqtt = { version = "0.5.1", default-features = false, features = ["v5", "bump", "log-level-info"], optional = true }
 embedded-io-async-07 = { package = "embedded-io-async", version = "0.7.0", optional = true }
 heapless09 = { package = "heapless", version = "0.9.2", default-features = false, optional = true }
+base64 = { version = "0.22.1", default-features = false, optional = true }
 
 # Use fork until our changes get merged in if ever.
 [dependencies.atat]
@@ -78,3 +81,4 @@ assert_float_eq = "1.1"
 # Host-side transport for the quectel-ppp MQTT core integration tests.
 embedded-io-adapters = { version = "0.7.0", features = ["tokio-1"] }
 rand = "0.9"
+rand_core = { version = "0.6", features = ["getrandom"] }

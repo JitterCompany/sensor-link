@@ -12,6 +12,7 @@
 
 pub(crate) mod at_bringup;
 pub mod mqtt_core;
+pub mod ota;
 pub mod pem;
 mod session;
 pub mod tls;
@@ -139,6 +140,7 @@ where
             material,
             rng,
             session: None,
+            ota: None,
         },
         QuectelPppBackend {
             tx,
@@ -339,6 +341,7 @@ pub struct QuectelPpp<RNG> {
     material: TlsMaterial,
     rng: RNG,
     session: Option<MqttCore<'static, Transport>>,
+    ota: Option<ota::HttpBody<TcpSocket<'static>>>,
 }
 
 impl<RNG: CryptoRngCore> QuectelPpp<RNG> {
@@ -351,24 +354,39 @@ impl<RNG: CryptoRngCore> QuectelPpp<RNG> {
         }
     }
 
+    /// Resolves a host name or IPv4 literal.
+    async fn resolve(&self, host: &str) -> Result<embassy_net::IpAddress, Error<DriverError>> {
+        match Ipv4Addr::from_str(host) {
+            Ok(ip) => Ok(embassy_net::IpAddress::Ipv4(ip)),
+            Err(_) => {
+                let addresses = self
+                    .stack
+                    .dns_query(host, embassy_net::dns::DnsQueryType::A)
+                    .with_timeout_ms(STEP_TIMEOUT_MS)
+                    .await
+                    .ok_or(Error::TimeOut)?
+                    .map_err(|_| Error::Client(DriverError::Dns))?;
+                addresses
+                    .first()
+                    .copied()
+                    .ok_or(Error::Client(DriverError::Dns))
+            }
+        }
+    }
+
+    fn drop_ota(&mut self) {
+        if self.ota.take().is_some() {
+            // Safety: the OTA socket/body reader was just dropped.
+            unsafe { session::release_ota() };
+        }
+    }
+
     /// Opens TCP (+ TLS) using the buffers of an already-taken lease.
     async fn open_transport(
         &mut self,
         lease: session::SessionLease,
     ) -> Result<Transport, Error<DriverError>> {
-        let address = match Ipv4Addr::from_str(self.config.host) {
-            Ok(ip) => embassy_net::IpAddress::Ipv4(ip),
-            Err(_) => {
-                let addresses = self
-                    .stack
-                    .dns_query(self.config.host, embassy_net::dns::DnsQueryType::A)
-                    .with_timeout_ms(STEP_TIMEOUT_MS)
-                    .await
-                    .ok_or(Error::TimeOut)?
-                    .map_err(|_| Error::Client(DriverError::Dns))?;
-                *addresses.first().ok_or(Error::Client(DriverError::Dns))?
-            }
-        };
+        let address = self.resolve(self.config.host).await?;
 
         let mut socket = TcpSocket::new(self.stack, lease.tcp_rx, lease.tcp_tx);
         socket
@@ -514,16 +532,78 @@ impl<RNG: CryptoRngCore> MqttClient for QuectelPpp<RNG> {
         Err(())
     }
 
-    async fn download_file(&mut self, _url: &str) -> Result<(), Error<DriverError>> {
-        // Streaming OTA over the own stack lands in a follow-up work package.
-        Err(Error::MQTT("OTA download not implemented on PPP driver"))
+    async fn download_file(&mut self, url: &str) -> Result<(), Error<DriverError>> {
+        self.drop_ota();
+
+        let parsed = ota::parse_url(url).map_err(|e| {
+            log::error!(target: "quectel-ppp", "OTA url rejected: {e:?}");
+            Error::MQTT("unsupported OTA url")
+        })?;
+        let address = self.resolve(parsed.host).await?;
+
+        let lease = session::take_ota();
+        let mut socket = TcpSocket::new(self.stack, lease.rx, lease.tx);
+        let connected = socket
+            .connect((address, parsed.port))
+            .with_timeout_ms(STEP_TIMEOUT_MS)
+            .await;
+        let opened = match connected {
+            Some(Ok(())) => {
+                ota::HttpBody::open(socket, parsed.host, parsed.path)
+                    .with_timeout_ms(STEP_TIMEOUT_MS)
+                    .await
+            }
+            _ => None,
+        };
+        match opened {
+            Some(Ok(body)) => {
+                self.ota = Some(body);
+                Ok(())
+            }
+            other => {
+                let reason = match other {
+                    None => "timeout",
+                    Some(Err(_)) => "http error",
+                    Some(Ok(_)) => unreachable!(),
+                };
+                log::error!(target: "quectel-ppp", "OTA download failed to start: {reason}");
+                unsafe { session::release_ota() };
+                Err(Error::MQTT("OTA download failed"))
+            }
+        }
     }
 
     async fn read_file_chunk(
         &mut self,
-        _chunk_size: usize,
+        chunk_size: usize,
     ) -> Result<heapless::Vec<u8, MAX_FILE_CHUNK_LEN>, FileError> {
-        Err(FileError::FileNotFound)
+        // Long downloads must not starve the MQTT keepalive.
+        if let Some(core) = self.session.as_mut() {
+            let _ = core.maybe_ping().await;
+        }
+
+        let Some(body) = self.ota.as_mut() else {
+            return Err(FileError::FileNotFound);
+        };
+        let mut chunk = heapless::Vec::new();
+        let len = chunk_size.min(MAX_FILE_CHUNK_LEN);
+        chunk.resize(len, 0).map_err(|_| FileError::ReadError)?;
+
+        match body.read(&mut chunk[..]).await {
+            Ok(0) => {
+                self.drop_ota();
+                Err(FileError::EndOfFile)
+            }
+            Ok(n) => {
+                chunk.truncate(n);
+                Ok(chunk)
+            }
+            Err(e) => {
+                log::error!(target: "quectel-ppp", "OTA read failed: {e:?}");
+                self.drop_ota();
+                Err(FileError::ReadError)
+            }
+        }
     }
 
     async fn signal_quality(&mut self) -> Option<i16> {

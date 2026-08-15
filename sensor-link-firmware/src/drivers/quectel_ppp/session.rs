@@ -59,6 +59,40 @@ pub(crate) fn take() -> SessionLease {
     }
 }
 
+pub(crate) const OTA_RX_LEN: usize = 4096;
+pub(crate) const OTA_TX_LEN: usize = 1024;
+
+static OTA_TAKEN: AtomicBool = AtomicBool::new(false);
+static mut OTA_RX: [u8; OTA_RX_LEN] = [0; OTA_RX_LEN];
+static mut OTA_TX: [u8; OTA_TX_LEN] = [0; OTA_TX_LEN];
+
+pub(crate) struct OtaLease {
+    pub rx: &'static mut [u8; OTA_RX_LEN],
+    pub tx: &'static mut [u8; OTA_TX_LEN],
+}
+
+/// OTA download socket buffers; same discipline as the session lease.
+pub(crate) fn take_ota() -> OtaLease {
+    assert!(
+        !OTA_TAKEN.swap(true, Ordering::AcqRel),
+        "OTA buffers taken twice"
+    );
+    unsafe {
+        OtaLease {
+            rx: &mut *core::ptr::addr_of_mut!(OTA_RX),
+            tx: &mut *core::ptr::addr_of_mut!(OTA_TX),
+        }
+    }
+}
+
+/// # Safety
+///
+/// Every reference derived from the matching [`take_ota`] (including the
+/// OTA socket and body reader) must have been dropped.
+pub(crate) unsafe fn release_ota() {
+    OTA_TAKEN.store(false, Ordering::Release);
+}
+
 /// Re-borrows the bump-buffer slot of the current lease (the lease's own
 /// reference may have been consumed separately from the other buffers).
 ///

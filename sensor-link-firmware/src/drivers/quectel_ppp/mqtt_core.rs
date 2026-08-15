@@ -252,6 +252,17 @@ impl<'c, T: embedded_io_async_07::Read + embedded_io_async_07::Write> MqttCore<'
         core::mem::take(&mut self.lost)
     }
 
+    /// Sends a keepalive ping if one is due. Used during long OTA downloads
+    /// when the normal `await_event` loop is not running; the PINGRESPs are
+    /// drained when polling resumes.
+    pub async fn maybe_ping(&mut self) -> Result<(), CoreError> {
+        if self.last_tx.elapsed_us() / 1_000_000 >= PING_AFTER_S {
+            self.client.ping().await.map_err(|e| self.on_send_error(e))?;
+            self.mark_tx();
+        }
+        Ok(())
+    }
+
     pub async fn disconnect(&mut self) {
         let _ = self
             .client

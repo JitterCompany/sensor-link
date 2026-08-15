@@ -37,3 +37,7 @@ strum = { version = "0.27.1", features = ["derive"] }
 task-supervisor = { path = "server/task-supervisor" }
 thiserror = "2"
 utoipa = { version = "5.4.0", features = ["chrono"] }
+
+# Local atat fork with embassy-time 0.5 (required for quectel-ppp; see that branch)
+[patch."https://github.com/JitterCompany/atat.git"]
+atat = { path = "../atat/atat" }

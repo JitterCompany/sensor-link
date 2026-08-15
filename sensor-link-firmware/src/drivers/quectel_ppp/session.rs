@@ -34,7 +34,6 @@ pub(crate) struct SessionLease {
     pub tcp_tx: &'static mut [u8; TCP_TX_LEN],
     pub tls_rx: &'static mut [u8; TLS_RX_BUF_LEN],
     pub tls_tx: &'static mut [u8; TLS_TX_BUF_LEN],
-    pub mqtt_bump: &'static mut ReceiveBuffer<'static>,
 }
 
 /// Hands out the session buffers. Panics if the previous lease was not
@@ -47,6 +46,7 @@ pub(crate) fn take() -> SessionLease {
     // Safety: the taken flag guarantees no other reference exists; see the
     // module invariant for the release side.
     unsafe {
+        // Prepare the bump slot; accessed separately via [`bump`].
         let bump_slot = &mut *core::ptr::addr_of_mut!(MQTT_BUMP);
         *bump_slot = Some(ReceiveBuffer::new(&mut *core::ptr::addr_of_mut!(MQTT_RECV)));
         SessionLease {
@@ -54,7 +54,6 @@ pub(crate) fn take() -> SessionLease {
             tcp_tx: &mut *core::ptr::addr_of_mut!(TCP_TX),
             tls_rx: &mut *core::ptr::addr_of_mut!(TLS_RX),
             tls_tx: &mut *core::ptr::addr_of_mut!(TLS_TX),
-            mqtt_bump: bump_slot.as_mut().unwrap(),
         }
     }
 }

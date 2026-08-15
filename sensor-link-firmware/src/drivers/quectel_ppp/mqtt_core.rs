@@ -322,7 +322,7 @@ impl<'c, T: embedded_io_async_07::Read + embedded_io_async_07::Write> MqttCore<'
                 AckSeen::Unsuback(ack.packet_identifier, ack.reason_code)
             }
             Ok(MqttEvent::PublishAcknowledged(ack)) => AckSeen::Puback(ack.packet_identifier),
-            Ok(MqttEvent::PublishRejected(rej)) => AckSeen::Rejected(rej.packet_identifier),
+            Ok(MqttEvent::PublishRejected(_)) => AckSeen::Rejected,
             Ok(_) => AckSeen::None,
             Err(_) => {
                 self.lost = true;
@@ -370,7 +370,7 @@ impl<'c, T: embedded_io_async_07::Read + embedded_io_async_07::Write> MqttCore<'
                     }
                 }
                 (AckKind::Puback(want), AckSeen::Puback(got)) if got == want => return Ok(()),
-                (_, AckSeen::Rejected(_)) => return Err(CoreError::Rejected),
+                (_, AckSeen::Rejected) => return Err(CoreError::Rejected),
                 _ => {}
             }
         }
@@ -399,7 +399,7 @@ enum AckSeen {
     Suback(rust_mqtt::types::PacketIdentifier, rust_mqtt::types::ReasonCode),
     Unsuback(rust_mqtt::types::PacketIdentifier, rust_mqtt::types::ReasonCode),
     Puback(rust_mqtt::types::PacketIdentifier),
-    Rejected(rust_mqtt::types::PacketIdentifier),
+    Rejected,
 }
 
 /// Compile-time guarantees that the trait's bounds fit the queue types.

@@ -48,6 +48,9 @@ use uart_adapter::{PppIo, FILL_BUF_LEN};
 
 pub use crate::drivers::quectel::{Config, Credentials};
 
+/// Frontend + backend, as returned by [`new`].
+pub type DriverPair<W, R, V, U, RNG> = (QuectelPpp<RNG>, QuectelPppBackend<W, R, V, U>);
+
 /// PDP context used in `AT+CGDCONT`; PPP negotiation activates it.
 const PPP_CONTEXT_ID: u8 = 1;
 /// Waiting for the PPP link + IPCP after requesting the link up.
@@ -107,7 +110,7 @@ pub fn new<W, R, V, U, RNG>(
     config: Config,
     credentials: Credentials,
     mut rng: RNG,
-) -> Result<(QuectelPpp<RNG>, QuectelPppBackend<W, R, V, U>), InitError>
+) -> Result<DriverPair<W, R, V, U, RNG>, InitError>
 where
     W: Write,
     R: Read + ErrorReport + Suspendable,
@@ -289,6 +292,9 @@ fn ipv4_config(status: &embassy_net_ppp::Ipv4Status) -> ConfigV4 {
 // ---------------------------------------------------------------------------
 
 /// Either a TLS session or a plain TCP socket (`config.use_tls`).
+// The size difference is fine: exactly one Transport exists, in a static-
+// sized session slot; no alloc to box the large variant with.
+#[allow(clippy::large_enum_variant)]
 enum Transport {
     Tls(TlsConnection<'static, TcpSocket<'static>, CipherSuite>),
     Plain(TcpSocket<'static>),

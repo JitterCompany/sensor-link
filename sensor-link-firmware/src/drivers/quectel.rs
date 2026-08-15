@@ -1,10 +1,10 @@
 //! Quectel modem driver (EC21/EC25/EG915N)
 
-mod apn;
-mod commands;
+pub(crate) mod apn;
+pub(crate) mod commands;
 mod config;
 mod types;
-mod variant;
+pub(crate) mod variant;
 
 use core::{
     marker::PhantomData,

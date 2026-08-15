@@ -112,6 +112,15 @@ pub struct GetModelId;
 #[at_cmd("+CGMR", SoftwareVersion, termination = "\r")]
 pub struct GetSoftwareVersion;
 
+/// Set TE-TA local flow control: `AT+IFC=2,2` = hardware RTS/CTS in both
+/// directions (used by the PPP driver together with the UART's flow control).
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+IFC", NoResponse, timeout_ms = 300, termination = "\r")]
+pub struct SetFlowControl {
+    pub dce_by_dte: u8,
+    pub dte_by_dce: u8,
+}
+
 /// 2.16 Set Command Echo Mode
 ///
 /// value

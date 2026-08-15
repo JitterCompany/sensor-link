@@ -10,12 +10,12 @@
 //! types are used; conversions to the crate-wide 0.6 / 0.8 types happen at the
 //! `MqttClient` boundary.
 
+pub(crate) mod at_bringup;
 pub mod mqtt_core;
 pub mod pem;
 pub mod tls;
 pub mod uart_adapter;
 
 // Submodules land per work package:
-// mod at_bringup;   WP5 — power/baud/APN/registration/dial/escape
 // mod session;      WP7 — reusable session buffer pool
 // mod ota;          WP7 (stub) / WP9 (streaming HTTP)

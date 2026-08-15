@@ -11,6 +11,16 @@ alloc = ["p256/pkcs8", "elliptic-curve/pem"]
 # MonotonicInstant::test) instead of the rtic hardware timer. Enabled by
 # downstream test suites that drive monotonic time directly.
 test-mono = ["use-std"]
+# PPP-based modem driver: own TCP/IP (embassy-net over PPP), TLS (embedded-tls)
+# and MQTT (rust-mqtt) instead of the modem's QMT*/QSSL* application layer.
+quectel-ppp = [
+    "dep:embassy-net",
+    "dep:embassy-net-ppp",
+    "dep:embedded-tls",
+    "dep:rust-mqtt",
+    "dep:embedded-io-async-07",
+    "dep:heapless09",
+]
 
 [dependencies]
 heapless = {version = "0.8.0", default-features = false}
@@ -44,6 +54,16 @@ glob = { version = "0.3.1", optional = true }
 rustls-pemfile = { version = "2.1.0", optional = true }
 x509-parser = { version = "0.16", optional = true }
 sensor-link-protocol = { path = "../sensor-link-protocol" }
+
+# quectel-ppp stack. These live on embedded-io-async 0.7 / heapless 0.9, which
+# coexist with the 0.6 / 0.8 used elsewhere; the new-major types stay confined
+# to `drivers::quectel_ppp`.
+embassy-net = { version = "0.9.1", default-features = false, features = ["proto-ipv4", "tcp", "dns", "medium-ip"], optional = true }
+embassy-net-ppp = { version = "0.3.0", optional = true }
+embedded-tls = { version = "0.19.0", default-features = false, features = ["rustpki"], optional = true }
+rust-mqtt = { version = "0.5.1", default-features = false, features = ["v5", "log-level-info"], optional = true }
+embedded-io-async-07 = { package = "embedded-io-async", version = "0.7.0", optional = true }
+heapless09 = { package = "heapless", version = "0.9.2", default-features = false, optional = true }
 
 # Use fork until our changes get merged in if ever.
 [dependencies.atat]

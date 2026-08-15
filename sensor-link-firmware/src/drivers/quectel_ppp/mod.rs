@@ -324,6 +324,15 @@ impl embedded_io_async_07::Write for Transport {
     }
 }
 
+// Safety: embassy-net's Stack and rust-mqtt's receive buffer are !Send by
+// design (single-executor RefCell/raw-pointer state). The driver pair must
+// run at ONE RTIC priority level (the app runs `network` and the backend task
+// both at priority 2): tasks on the same priority never preempt each other,
+// which upholds the single-executor assumption RTIC's Send bound would
+// otherwise enforce.
+unsafe impl<RNG: Send> Send for QuectelPpp<RNG> {}
+unsafe impl<W: Send, R: Send, V: Send, U: Send> Send for QuectelPppBackend<W, R, V, U> {}
+
 pub struct QuectelPpp<RNG> {
     stack: Stack<'static>,
     config: Config,

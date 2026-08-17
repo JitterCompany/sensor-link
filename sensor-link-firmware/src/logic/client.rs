@@ -17,7 +17,7 @@ use crate::{
 use sensor_link_protocol::{
     cmd,
     fwupdate::{self, FWChunk, FWStatus, FWUpdateURL, B64_ENCODED_CHUNK_SIZE, FW_CHUNK_SIZE},
-    info::DeviceInfoV2,
+    info::DeviceInfoV3,
     online::Online,
     parse_json_payload, parse_system_topic, parse_topic_to_device,
     server_status::ServerStatus,
@@ -281,12 +281,12 @@ impl<M: MqttClient, S> Client<M, S> {
 
     pub async fn send_info<D: Serialize>(
         &mut self,
-        info: &DeviceInfoV2<D>,
+        info: &DeviceInfoV3<D>,
     ) -> Result<(), Error<M::ClientError>> {
         let s = info
             .serialize_topic_payload()
             .map_err(|_| Error::Serialize)?;
-        let topic = self.topic_name_pub(TopicFromDevice::DeviceInfoV2)?;
+        let topic = self.topic_name_pub(TopicFromDevice::DeviceInfoV3)?;
         self.driver.publish(topic, &s).await
     }
 

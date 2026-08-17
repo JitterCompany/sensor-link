@@ -9,7 +9,7 @@ use sensor_link_protocol::{
     cmd::CommandPayload,
     event::{Event, EventPayload},
     fwupdate::FWAnnounce,
-    info::DeviceInfoV2,
+    info::DeviceInfoV3,
     online::Online,
     samples::NChannelSamples,
     sms::{SMSRequest, SMSResponse},
@@ -36,7 +36,7 @@ pub enum DeviceControlOut {
 
 pub enum DeviceControlIn<D, S, EV = Event> {
     DeviceOnline(Online),
-    DeviceInfo(DeviceInfoV2<D>),
+    DeviceInfo(DeviceInfoV3<D>),
     DeviceStatus(S),
     Event(EventPayload<EV>),
 }

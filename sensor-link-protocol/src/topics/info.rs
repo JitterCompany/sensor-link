@@ -13,14 +13,16 @@ pub type VersionString = heapless::String<VERSION_STRING_MAX_LEN>;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub struct DeviceInfoV2<D> {
+pub struct DeviceInfoV3<D> {
     pub device_type: D,
-    /// Firmware version of the Frogwatch Device
+    /// Firmware version of the device
     pub fw_version: VersionString,
     /// Short git commit hash for the firmware
     pub fw_rev: VersionString,
-    /// Bootloader version of the Frogwatch Device
+    /// Bootloader version of the device
     pub bootloader_version: VersionString,
+    /// Hardware revision of the device
+    pub hw_rev: VersionString,
 
     /// Modem model
     pub modem_model: VersionString,
@@ -28,4 +30,4 @@ pub struct DeviceInfoV2<D> {
     pub modem_fw_version: VersionString,
 }
 
-impl<D: Serialize> TopicPayloadSerialize<MAX_MESSAGE_LEN> for DeviceInfoV2<D> {}
+impl<D: Serialize> TopicPayloadSerialize<MAX_MESSAGE_LEN> for DeviceInfoV3<D> {}

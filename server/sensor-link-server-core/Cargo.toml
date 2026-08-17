@@ -1,6 +1,7 @@
 [package]
 name = "sensor-link-server-core"
 edition = "2021"
+license.workspace = true
 
 [features]
 default = []

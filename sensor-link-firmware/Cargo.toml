@@ -2,6 +2,7 @@
 name = "sensor-link-firmware"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 
 [features]
 use-std = ["critical-section", "tokio", "glob", "rustls-pemfile", "x509-parser"]

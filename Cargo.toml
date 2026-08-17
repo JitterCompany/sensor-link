@@ -2,6 +2,9 @@
 members = ["server/*", "sensor-link-firmware", "sensor-link-protocol"]
 resolver = "2"
 
+[workspace.package]
+license = "MIT OR Apache-2.0"
+
 [workspace.dependencies]
 anyhow = "1.0"
 futures = "0.3"

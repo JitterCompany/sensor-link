@@ -3,7 +3,7 @@ name = "task-supervisor"
 version = "0.1.0"
 edition = "2021"
 description = "Supervised tokio background tasks: auto-restart on panic, graceful shutdown with timeout"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 repository = "https://github.com/JitterCompany/sensor-link"
 
 [dependencies]

@@ -18,7 +18,7 @@ pub trait DeviceMetaDataProvider {
     fn bootloader_version(&self) -> &'static str;
     fn git_rev() -> &'static str;
     fn fw_version() -> &'static str;
-    fn hw_rev() -> &'static str;
+    fn hw_rev(&self) -> &'static str;
     fn device_info(
         &self,
         modem_model: VersionString,
@@ -29,7 +29,7 @@ pub trait DeviceMetaDataProvider {
             fw_version: heapless::String::try_from(Self::fw_version()).unwrap(),
             fw_rev: heapless::String::try_from(Self::git_rev()).unwrap(),
             bootloader_version: heapless::String::try_from(self.bootloader_version()).unwrap(),
-            hw_rev: heapless::String::try_from(Self::hw_rev()).unwrap(),
+            hw_rev: heapless::String::try_from(self.hw_rev()).unwrap(),
             modem_model,
             modem_fw_version,
         }

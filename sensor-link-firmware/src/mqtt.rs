@@ -8,6 +8,9 @@ use sensor_link_protocol::{
 };
 
 /// Events the network client implementation can return
+// `ReceivedMessage` carries inline topic/payload buffers, which dwarf the empty `Disconnected`.
+// Boxing it is not an option: this crate is `no_std` with no global allocator.
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     ReceivedMessage(Message),
     Disconnected,

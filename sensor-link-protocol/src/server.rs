@@ -2,7 +2,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     event::EventPayload,
-    info::DeviceInfoV2,
+    info::DeviceInfoV3,
     online::Online,
     samples::{self, NChannelSamples},
 };
@@ -31,7 +31,7 @@ pub fn parse_event<E: DeserializeOwned>(bytes: &[u8]) -> Result<EventPayload<E>,
     serde_json::from_slice(bytes).map_err(|err| Error::Deserialize(err.to_string()))
 }
 
-pub fn parse_device_info_v2<D: DeserializeOwned>(bytes: &[u8]) -> Result<DeviceInfoV2<D>, Error> {
+pub fn parse_device_info_v3<D: DeserializeOwned>(bytes: &[u8]) -> Result<DeviceInfoV3<D>, Error> {
     serde_json::from_slice(bytes).map_err(|err| Error::Deserialize(err.to_string()))
 }
 
@@ -107,18 +107,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_device_info_v2() {
-        let info: DeviceInfoV2<String> = DeviceInfoV2 {
+    fn test_parse_device_info_v3() {
+        let info: DeviceInfoV3<String> = DeviceInfoV3 {
             device_type: "jitter".to_string(),
             fw_version: VersionString::try_from("1.2.3-4").unwrap(),
             fw_rev: VersionString::try_from("abcdef0").unwrap(),
             bootloader_version: VersionString::try_from("0.9.0").unwrap(),
+            hw_rev: VersionString::try_from("1.0").unwrap(),
             modem_model: VersionString::try_from("EC21").unwrap(),
             modem_fw_version: VersionString::try_from("EC21EFAR06").unwrap(),
         };
         let serialized = info.serialize_topic_payload().unwrap();
 
-        let parsed = parse_device_info_v2::<String>(&serialized).unwrap();
+        let parsed = parse_device_info_v3::<String>(&serialized).unwrap();
         assert_eq!(parsed, info);
     }
 

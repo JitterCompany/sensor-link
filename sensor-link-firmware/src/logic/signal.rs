@@ -96,6 +96,9 @@ pub struct Temperature {
 }
 
 /// Orchestrator signals produced by the generic protocol client.
+// `FirmwareChunk` carries an inline `FW_CHUNK_SIZE` buffer, which dwarfs the other variants.
+// Boxing it is not an option: this crate is `no_std` with no global allocator.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Signal {
     /// Network connection state changed.

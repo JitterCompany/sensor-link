@@ -26,6 +26,9 @@ use sensor_link_protocol::{
 };
 
 /// Events emitted by [Client].
+// `FWChunkReceived` carries an inline `FW_CHUNK_SIZE` buffer, which dwarfs the other variants.
+// Boxing it is not an option: this crate is `no_std` with no global allocator.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ClientEvent {
     CommandReceived(cmd::Cmd),

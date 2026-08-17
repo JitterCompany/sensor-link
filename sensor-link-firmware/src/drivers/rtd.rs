@@ -112,10 +112,10 @@ pub enum RangeError {
 /// Supported sensor types
 #[derive(Debug, Clone, Copy)]
 pub enum SupportedSensor {
-    /// PT100 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..210°C (R=80..180 Ohms)
+    /// PT100 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..250°C (R=80..194 Ohms)
     PT100,
 
-    /// PT1000 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..210°C (R=800..1800 Ohms)
+    /// PT1000 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..250°C (R=800..1941 Ohms)
     PT1000,
 }
 
@@ -158,14 +158,12 @@ impl SupportedSensor {
             Ok(SupportedSensor::PT1000)
 
         // Unsupported sensor
+        } else if resistance_f32 < *SupportedSensor::PT100.resistance_range().start() {
+            Err(ChannelFault::ShortCircuit(resistance))
+        } else if resistance_f32 > *SupportedSensor::PT1000.resistance_range().end() {
+            Err(ChannelFault::HighResistance(resistance))
         } else {
-            if resistance_f32 < *SupportedSensor::PT100.resistance_range().start() {
-                Err(ChannelFault::ShortCircuit(resistance))
-            } else if resistance_f32 > *SupportedSensor::PT1000.resistance_range().end() {
-                Err(ChannelFault::HighResistance(resistance))
-            } else {
-                Err(ChannelFault::UnexpectedResistance(resistance))
-            }
+            Err(ChannelFault::UnexpectedResistance(resistance))
         }
     }
 }
@@ -203,9 +201,9 @@ impl RTD {
     ///
     /// Call this periodically to autodetect the presence of a newly connected sensor
     /// or discover a disconnection or wiring issue with an RTD sensor.
-    pub async fn autodetect<'adc, DEV, OP, INT>(
+    pub async fn autodetect<DEV, OP, INT>(
         &mut self,
-        adc: &'adc mut ADS124S08<DEV, OP, INT>,
+        adc: &mut ADS124S08<DEV, OP, INT>,
     ) -> Result<(), Error>
     where
         DEV: spi::SpiDevice + traits::CRC8Receiver + traits::Suspend,
@@ -319,9 +317,9 @@ impl RTD {
     /// NB: if the SYNC pulse interval is too fast, this can have adverse side-effects:
     /// - faster than the ADC sampling time: this function never completes (ADC is continuously restarted and never finishes)
     /// - faster than the ADC sampling time + 0.5ms: analog filters may not have settled yet, leading to noise in the result
-    pub async fn read<'adc, DEV, OP, INT>(
+    pub async fn read<DEV, OP, INT>(
         &mut self,
-        adc: &'adc mut ADS124S08<DEV, OP, INT>,
+        adc: &mut ADS124S08<DEV, OP, INT>,
     ) -> Result<(SupportedSensor, f32), ReadError>
     where
         DEV: spi::SpiDevice + traits::CRC8Receiver + traits::Suspend,
@@ -394,9 +392,7 @@ impl RTD {
     ///
     /// Internal use only: called when channel is disconnected or faulted
     /// to keep the SYNC pulse interval constant for other channels
-    async fn dummy_read<'adc, DEV, OP, INT>(
-        adc: &'adc mut ADS124S08<DEV, OP, INT>,
-    ) -> Result<(), ReadError>
+    async fn dummy_read<DEV, OP, INT>(adc: &mut ADS124S08<DEV, OP, INT>) -> Result<(), ReadError>
     where
         DEV: spi::SpiDevice + traits::CRC8Receiver + traits::Suspend,
         OP: OutputPin,

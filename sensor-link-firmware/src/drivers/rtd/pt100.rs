@@ -6,7 +6,7 @@ pub const fn celsius_from_resistance(r: f32) -> f32 {
     PT100_LUT.lookup(r)
 }
 
-const PT100_LUT: Lut<261> = lut_from_reverse_mapping!(261, -50.0, 1.0, resistance_from_celsius);
+const PT100_LUT: Lut<301> = lut_from_reverse_mapping!(301, -50.0, 1.0, resistance_from_celsius);
 
 #[allow(dead_code)]
 pub const T_MIN: f32 = PT100_LUT.min().1;
@@ -17,7 +17,7 @@ pub const R_MIN: f32 = PT100_LUT.min().0;
 pub const R_MAX: f32 = PT100_LUT.max().0;
 
 const _: () = assert!(T_MIN == -50.0);
-const _: () = assert!(T_MAX == 210.0);
+const _: () = assert!(T_MAX == 250.0);
 
 pub const fn resistance_from_celsius(t_c: f64) -> f64 {
     const A: f64 = 3.9083e-3;
@@ -41,7 +41,7 @@ mod test {
     fn test_pt100_lut() {
         // Values at table endpoints
         assert_eq!(PT100_LUT.min(), (80.30628, -50.0));
-        assert_eq!(PT100_LUT.max(), (179.52753, 210.0));
+        assert_eq!(PT100_LUT.max(), (194.09813, 250.0));
 
         // Spot checks
         assert_float_absolute_eq!(PT100_LUT.lookup(108.9585), 23.000, 0.001);

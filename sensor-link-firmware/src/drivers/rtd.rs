@@ -112,10 +112,10 @@ pub enum RangeError {
 /// Supported sensor types
 #[derive(Debug, Clone, Copy)]
 pub enum SupportedSensor {
-    /// PT100 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..210°C (R=80..180 Ohms)
+    /// PT100 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..250°C (R=80..194 Ohms)
     PT100,
 
-    /// PT1000 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..210°C (R=800..1800 Ohms)
+    /// PT1000 sensor: assuming a DIN EN 60751 class A sensor. Supported range: -50°C..250°C (R=800..1941 Ohms)
     PT1000,
 }
 

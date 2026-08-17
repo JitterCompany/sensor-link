@@ -388,7 +388,7 @@ impl<M: MqttClient, S: NetworkStatus> NetworkClient for crate::logic::client::Cl
         };
         match Signal::try_from(event) {
             Ok(signal) => {
-                signal_queue.send(signal.into()).await.ok();
+                signal_queue.send(signal).await.ok();
                 ReadOutcome::Continue
             }
             Err(outcome) => outcome,

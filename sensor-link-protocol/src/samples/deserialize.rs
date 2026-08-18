@@ -76,7 +76,7 @@ pub fn parse_q15_to_nchannel<const N_CH: usize>(
 
     let data_bytes = &q15_bytes[1..]; // Skip num_samples byte
 
-    for ch_idx in 0..N_CH {
+    for (ch_idx, channel) in channels.iter_mut().enumerate() {
         let ch_start = ch_idx * bytes_per_channel;
         let ch_bytes = &data_bytes[ch_start..ch_start + bytes_per_channel];
 
@@ -103,7 +103,7 @@ pub fn parse_q15_to_nchannel<const N_CH: usize>(
                 return Err(ParseError::Invalid);
             }
 
-            channels[ch_idx].push(value);
+            channel.push(value);
         }
     }
 
@@ -126,6 +126,23 @@ pub fn parse_q15_to_nchannel<const N_CH: usize>(
 /// a compile-time MAX_N_SAMPLES constant, using dynamic allocation instead.
 pub fn parse_q15xl_to_nchannel<const N_CH: usize>(
     bytes: &[u8],
+) -> Result<super::NChannelSamples<N_CH>, ParseError> {
+    parse_q15xl_to_nchannel_impl::<N_CH>(bytes, false)
+}
+
+/// Parse Q15XL encoded data directly into NChannelSamples (std only)
+///
+/// Same as [`parse_q15xl_to_nchannel`], but samples encoded as NaN are kept as
+/// [`f32::NAN`] instead of rejecting the message.
+pub fn parse_q15xl_to_nchannel_allow_nan<const N_CH: usize>(
+    bytes: &[u8],
+) -> Result<super::NChannelSamples<N_CH>, ParseError> {
+    parse_q15xl_to_nchannel_impl::<N_CH>(bytes, true)
+}
+
+fn parse_q15xl_to_nchannel_impl<const N_CH: usize>(
+    bytes: &[u8],
+    allow_nan: bool,
 ) -> Result<super::NChannelSamples<N_CH>, ParseError> {
     use super::NChannelSamples;
 
@@ -196,7 +213,7 @@ pub fn parse_q15xl_to_nchannel<const N_CH: usize>(
 
     let data_bytes = &q15xl_bytes[2..]; // Skip 2-byte num_samples field
 
-    for ch_idx in 0..N_CH {
+    for (ch_idx, channel) in channels.iter_mut().enumerate() {
         let ch_start = ch_idx * bytes_per_channel;
         let ch_bytes = &data_bytes[ch_start..ch_start + bytes_per_channel];
 
@@ -219,11 +236,11 @@ pub fn parse_q15xl_to_nchannel<const N_CH: usize>(
             };
 
             // Verify the value
-            if value.is_nan() {
+            if value.is_nan() && !allow_nan {
                 return Err(ParseError::Invalid);
             }
 
-            channels[ch_idx].push(value);
+            channel.push(value);
         }
     }
 

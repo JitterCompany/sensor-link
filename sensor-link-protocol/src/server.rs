@@ -47,6 +47,16 @@ pub fn parse_uniform_samples<const N_CH: usize>(
     samples::deserialize::parse_q15xl_to_nchannel::<N_CH>(bytes).map_err(|e| e.into())
 }
 
+/// Parse data from topics sending uniform samples, allowing NaN samples.
+///
+/// Unlike [`parse_uniform_samples`], which rejects a message containing a NaN
+/// sample, NaN samples are kept as [`f32::NAN`] in the parsed result.
+pub fn parse_uniform_samples_allow_nan<const N_CH: usize>(
+    bytes: &[u8],
+) -> Result<NChannelSamples<N_CH>, Error> {
+    samples::deserialize::parse_q15xl_to_nchannel_allow_nan::<N_CH>(bytes).map_err(|e| e.into())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -146,5 +156,44 @@ mod tests {
         assert_eq!(parsed.fs, 1000.0);
         assert_eq!(parsed.t.len(), NUM_SAMPLES);
         assert_eq!(parsed.ch[0].len(), NUM_SAMPLES);
+    }
+
+    #[test]
+    fn test_parse_uniform_samples_allow_nan() {
+        const N_CH: usize = 2;
+        const NUM_SAMPLES: usize = 10;
+        const NAN_IDX: usize = 4;
+
+        let mut samples = UniformSamples::<N_CH, 255>::empty_at(1_000_000, 1000.0);
+        for i in 0..NUM_SAMPLES {
+            for ch in 0..N_CH {
+                let value = if ch == 1 && i == NAN_IDX {
+                    f32::NAN
+                } else {
+                    i as f32 / 100.0
+                };
+                samples.ch[ch].push(value).unwrap();
+            }
+        }
+
+        let q15xl = Uniform::<Q15XL<N_CH, 255>>::from_uniform(&samples);
+        let mut buffer = [0u8; 4096];
+        let bytes = q15xl.as_topic_data(&mut buffer).unwrap();
+
+        // The original function still rejects messages containing NaN.
+        assert!(matches!(
+            parse_uniform_samples::<N_CH>(bytes),
+            Err(Error::VerifyFailed)
+        ));
+
+        // The allow-NaN variant keeps the NaN sample as-is.
+        let parsed = parse_uniform_samples_allow_nan::<N_CH>(bytes).unwrap();
+        assert_eq!(parsed.t.len(), NUM_SAMPLES);
+        assert!(parsed.ch[1][NAN_IDX].is_nan());
+        assert!(parsed.ch[0].iter().all(|v| !v.is_nan()));
+        assert!(parsed.ch[1]
+            .iter()
+            .enumerate()
+            .all(|(i, v)| (i == NAN_IDX) == v.is_nan()));
     }
 }

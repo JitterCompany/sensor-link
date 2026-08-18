@@ -127,6 +127,23 @@ pub fn parse_q15_to_nchannel<const N_CH: usize>(
 pub fn parse_q15xl_to_nchannel<const N_CH: usize>(
     bytes: &[u8],
 ) -> Result<super::NChannelSamples<N_CH>, ParseError> {
+    parse_q15xl_to_nchannel_impl::<N_CH>(bytes, false)
+}
+
+/// Parse Q15XL encoded data directly into NChannelSamples (std only)
+///
+/// Same as [`parse_q15xl_to_nchannel`], but samples encoded as NaN are kept as
+/// [`f32::NAN`] instead of rejecting the message.
+pub fn parse_q15xl_to_nchannel_allow_nan<const N_CH: usize>(
+    bytes: &[u8],
+) -> Result<super::NChannelSamples<N_CH>, ParseError> {
+    parse_q15xl_to_nchannel_impl::<N_CH>(bytes, true)
+}
+
+fn parse_q15xl_to_nchannel_impl<const N_CH: usize>(
+    bytes: &[u8],
+    allow_nan: bool,
+) -> Result<super::NChannelSamples<N_CH>, ParseError> {
     use super::NChannelSamples;
 
     // Minimum size: timestamp (8) + fs (4)
@@ -219,7 +236,7 @@ pub fn parse_q15xl_to_nchannel<const N_CH: usize>(
             };
 
             // Verify the value
-            if value.is_nan() {
+            if value.is_nan() && !allow_nan {
                 return Err(ParseError::Invalid);
             }
 

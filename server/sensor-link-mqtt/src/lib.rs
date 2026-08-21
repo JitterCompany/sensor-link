@@ -8,7 +8,7 @@ pub use client::*;
 use sensor_link_protocol::{
     cmd::CommandPayload,
     event::{Event, EventPayload},
-    fwupdate::FWAnnounce,
+    fwupdate::{FWAnnounce, FWStatus},
     info::DeviceInfoV3,
     online::Online,
     samples::NChannelSamples,
@@ -39,6 +39,7 @@ pub enum DeviceControlIn<D, S, EV = Event> {
     DeviceInfo(DeviceInfoV3<D>),
     DeviceStatus(S),
     Event(EventPayload<EV>),
+    FirmwareUpdateStatus(FWStatus),
 }
 
 pub enum SystemMessageIn {

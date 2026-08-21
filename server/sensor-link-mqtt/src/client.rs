@@ -525,6 +525,16 @@ where
                         .await;
                     }
                 }
+                DeviceControlIn::FirmwareUpdateStatus(_) => {
+                    insert_sensor_server_log(
+                        db,
+                        msg.device_id.clone(),
+                        "info".to_string(),
+                        &publish.topic,
+                        String::from_utf8_lossy(&publish.payload).to_string(),
+                    )
+                    .await;
+                }
             }
 
             if device_tx.send(msg).await.is_err() {
@@ -702,6 +712,14 @@ where
                 Ok(ParsedMqttIn::Control(ControlMessageIn {
                     device_id,
                     payload: DeviceControlIn::Event(event_payload),
+                }))
+            }
+            TopicFromDevice::FWStatus => {
+                let fw_status = serde_json::from_slice(payload)
+                    .map_err(|err| format!("Parse FW update status: {err:?}"))?;
+                Ok(ParsedMqttIn::Control(ControlMessageIn {
+                    device_id,
+                    payload: DeviceControlIn::FirmwareUpdateStatus(fw_status),
                 }))
             }
             other => Err(format!("Unsupported topic: {other:?}")),

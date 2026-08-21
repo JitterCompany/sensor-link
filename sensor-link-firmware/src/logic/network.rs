@@ -41,6 +41,16 @@ pub enum ReadOutcome {
 /// Uploads are not a client concern: each upload item owns its send logic via
 /// [`NetworkUploadItem`], so the task only needs the generic
 /// [`send_sendable`](NetworkClient::send_sendable) primitive here.
+/// Result of starting a firmware download.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FirmwareDownloadStart {
+    /// The download started: firmware chunks will follow.
+    Started,
+
+    /// The download failed: no firmware chunks will follow.
+    Failed,
+}
+
 pub trait NetworkClient {
     /// Underlying driver/client error type.
     type ClientError: core::fmt::Debug;
@@ -69,7 +79,9 @@ pub trait NetworkClient {
     async fn await_response(&mut self, timeout_s: u32) -> Option<()>;
 
     /// Begin a firmware download.
-    async fn download_firmware_update(&mut self) -> Result<(), ()>;
+    ///
+    /// `Err` means the connection is broken; see [FirmwareDownloadStart] for the rest.
+    async fn download_firmware_update(&mut self) -> Result<FirmwareDownloadStart, ()>;
 
     /// Send a generic [`Sendable`].
     async fn send_sendable(
@@ -402,9 +414,19 @@ where
                 op_result = client.send_status(device_status).await;
             }
             Op::Action(NetworkAction::DownloadUpdate) => {
-                if client.download_firmware_update().await.is_err() {
-                    log::error!("Network: Failed to download update");
-                    break DisconnectReason::Error;
+                match client.download_firmware_update().await {
+                    Ok(FirmwareDownloadStart::Started) => {}
+                    // No chunks will follow, so no other signal will report this.
+                    Ok(FirmwareDownloadStart::Failed) => {
+                        signal_queue
+                            .send(Signal::FirmwareUpdateFailed.into())
+                            .await
+                            .ok();
+                    }
+                    Err(()) => {
+                        log::error!("Network: Failed to download update");
+                        break DisconnectReason::Error;
+                    }
                 }
             }
             Op::Upload(upload) => {
@@ -480,7 +502,7 @@ impl TryFrom<ClientEvent> for Signal {
             ClientEvent::FWChunkReceived(chunk) => Signal::FirmwareChunk(chunk),
             ClientEvent::FirmwareUpdateAnnounced => Signal::FirmwareUpdateAnnounced,
             ClientEvent::FWDownloadComplete => Signal::FirmwareUpdateComplete,
-            ClientEvent::FWDownloadFailed => return Err(ReadOutcome::Continue),
+            ClientEvent::FWDownloadFailed => Signal::FirmwareUpdateFailed,
             ClientEvent::Disconnected => return Err(ReadOutcome::Disconnected),
         })
     }

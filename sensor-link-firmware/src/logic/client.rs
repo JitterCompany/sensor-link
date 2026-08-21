@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::{
     logic::{
-        network::{NetworkClient, ReadOutcome},
+        network::{FirmwareDownloadStart, NetworkClient, ReadOutcome},
         signal::Signal,
         NetworkStatus, SendChannel,
     },
@@ -136,7 +136,7 @@ impl<M: MqttClient, S> Client<M, S> {
     ///
     /// The caller is responsible for unsubscribing from all product-specific topics first
     /// (this only handles the manufacturer-generic protocol steps: status publishing + download).
-    pub async fn download_firmware_update(&mut self) -> Result<(), ()> {
+    pub async fn download_firmware_update(&mut self) -> Result<FirmwareDownloadStart, ()> {
         if let Err(err) = self.send_firmware_update_status(FWStatus::Start).await {
             log::warn!("Failed to send firmware update status: {err:?}");
         }
@@ -152,12 +152,15 @@ impl<M: MqttClient, S> Client<M, S> {
                         log::warn!("Failed to send firmware update status: {err:?}");
                         return Err(());
                     }
+                    // Nothing was downloaded, so no chunks (and no FWDownloadFailed
+                    // event) will follow: the caller reports the failure instead.
+                    return Ok(FirmwareDownloadStart::Failed);
                 }
             }
             if let Err(err) = self.send_firmware_update_status(FWStatus::Received).await {
                 log::warn!("Failed to send firmware update status: {err:?}");
             }
-            Ok(())
+            Ok(FirmwareDownloadStart::Started)
         } else {
             Err(())
         }
@@ -368,7 +371,7 @@ impl<M: MqttClient, S: NetworkStatus> NetworkClient for crate::logic::client::Cl
         self.await_response(timeout_s).await
     }
 
-    async fn download_firmware_update(&mut self) -> Result<(), ()> {
+    async fn download_firmware_update(&mut self) -> Result<FirmwareDownloadStart, ()> {
         self.download_firmware_update().await
     }
 

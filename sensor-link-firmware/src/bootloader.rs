@@ -83,20 +83,34 @@ where
     S: FileStore<BLOCK_SIZE, F>,
 {
     let mut validator = Validator::new(pubkey.clone(), SecurityLevel::Signed, device_type);
-    if let Ok(file_handle) = store.file_handle(fw_file).await {
-        for frag in 0..fw_file.fragment_count() as u32 {
-            let mut buffer = [0; CHUNK_SIZE];
-            if let Ok(len) = store
-                .read_file_fragment(&file_handle, frag, &mut buffer)
-                .await
-            {
-                if validator.update(&buffer[..len]) {
-                    break;
+    match store.file_handle(fw_file).await {
+        Ok(file_handle) => {
+            let mut bytes_read = 0;
+            let mut complete = false;
+            for frag in 0..fw_file.fragment_count() as u32 {
+                let mut buffer = [0; CHUNK_SIZE];
+                match store
+                    .read_file_fragment(&file_handle, frag, &mut buffer)
+                    .await
+                {
+                    Ok(len) => {
+                        bytes_read += len;
+                        if validator.update(&buffer[..len]) {
+                            complete = true;
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        log::debug!(
+                            "Update candidate: fragment {frag} not readable ({err:?}) after {bytes_read} bytes"
+                        );
+                        break;
+                    }
                 }
-            } else {
-                break;
             }
+            log::debug!("Update candidate: read {bytes_read} bytes, complete: {complete}");
         }
+        Err(err) => log::debug!("Update candidate: no readable firmware file ({err:?})"),
     }
     validator
 }
@@ -121,6 +135,14 @@ where
         if let Ok(len) = store.read_file_fragment(&file_handle, 0, &mut buffer).await {
             new_unvalidated_header = H::try_from_bytes(&buffer[..len]).ok();
         }
+    }
+    match &new_unvalidated_header {
+        Some(header) => log::debug!(
+            "Update candidate header: {:?} bytes, min version {}",
+            header.length(),
+            header.anti_downgrade_version()
+        ),
+        None => log::debug!("Update candidate: no valid header"),
     }
 
     // validate existing firmware

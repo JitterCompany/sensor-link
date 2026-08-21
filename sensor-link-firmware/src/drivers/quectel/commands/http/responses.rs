@@ -10,7 +10,6 @@ pub struct GetResponse {
     pub resp: Option<u16>,
 
     /// The length of HTTP(S) response body. Unit: byte.
-    #[allow(dead_code)]
     pub content_length: Option<u32>,
 }
 

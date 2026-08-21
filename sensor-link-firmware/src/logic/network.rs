@@ -240,13 +240,13 @@ pub async fn network_task<
 
                 // Handle network traffic as long as the connection is open
                 let disconnect_reason =
-                    handle_connection::<SignalTx, ActionList, MsgRx, C, T, U, P>(
+                    handle_connection::<SignalTx, ActionList, MsgRx, C, U, P>(
                         &mut state,
                         signal_queue,
                         client,
                         &action_list,
                         msg_qeue,
-                        &provider,
+                        provider,
                     )
                     .await;
 
@@ -322,7 +322,6 @@ async fn handle_connection<
     ActionList: NetworkActionNotifyReader<C::Status>,
     MsgRx: ReceiveChannel<Confirmable<U>> + DrainOnDisconnect<U>,
     C: NetworkClient,
-    T: MonotonicTime,
     U: NetworkUploadItem<C>,
     P: DeviceMetaDataProvider,
 >(

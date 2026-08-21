@@ -154,7 +154,7 @@ where
 
             // If the existing firmware is valid and its header (which includes embedded security level + signature/hash)
             // is the same, updating is pointless. This is a big speedup as we can minimize reading external flash
-            if new_unvalidated_header.map_or(false, |new| new == existing_header) {
+            if new_unvalidated_header.is_some_and(|new| new == existing_header) {
                 log::debug!("Existing firmware header matches available update");
                 AppStatus::UpToDate(existing_header)
             } else {
@@ -231,7 +231,7 @@ where
     {
         log::debug!("Erasing old application...");
         let mut flash_writer = unsafe { internal_flash.erase_application() }
-            .map_err(|erase_error| UpdateError::Erase(erase_error))?;
+            .map_err(UpdateError::Erase)?;
 
         // Copy firmware file to internal flash
         log::debug!("Writing new application...");
@@ -244,19 +244,19 @@ where
                 {
                     flash_writer
                         .append(&buffer[..len])
-                        .map_err(|w_error| UpdateError::Write(w_error))?;
+                        .map_err(UpdateError::Write)?;
                 }
             }
         }
         flash_writer
             .finalize()
-            .map_err(|w_error| UpdateError::Write(w_error))?;
+            .map_err(UpdateError::Write)?;
     }
 
     // Verify internal firmware after applying
     log::info!("Update complete. Verifying...");
     let header = validate_existing_firmware::<H, IF>(internal_flash, device_type, pubkey)
         .verify()
-        .map_err(|error| UpdateError::Validate(error))?;
+        .map_err(UpdateError::Validate)?;
     Ok(header)
 }

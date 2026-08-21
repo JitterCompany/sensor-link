@@ -230,8 +230,8 @@ where
     // Erase old firmware & copy new firmware from store
     {
         log::debug!("Erasing old application...");
-        let mut flash_writer = unsafe { internal_flash.erase_application() }
-            .map_err(UpdateError::Erase)?;
+        let mut flash_writer =
+            unsafe { internal_flash.erase_application() }.map_err(UpdateError::Erase)?;
 
         // Copy firmware file to internal flash
         log::debug!("Writing new application...");
@@ -248,9 +248,7 @@ where
                 }
             }
         }
-        flash_writer
-            .finalize()
-            .map_err(UpdateError::Write)?;
+        flash_writer.finalize().map_err(UpdateError::Write)?;
     }
 
     // Verify internal firmware after applying

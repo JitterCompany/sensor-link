@@ -239,16 +239,15 @@ pub async fn network_task<
                     .ok();
 
                 // Handle network traffic as long as the connection is open
-                let disconnect_reason =
-                    handle_connection::<SignalTx, ActionList, MsgRx, C, U, P>(
-                        &mut state,
-                        signal_queue,
-                        client,
-                        &action_list,
-                        msg_qeue,
-                        provider,
-                    )
-                    .await;
+                let disconnect_reason = handle_connection::<SignalTx, ActionList, MsgRx, C, U, P>(
+                    &mut state,
+                    signal_queue,
+                    client,
+                    &action_list,
+                    msg_qeue,
+                    provider,
+                )
+                .await;
 
                 // Make sure client is disconnected
                 match client.disconnect().await {

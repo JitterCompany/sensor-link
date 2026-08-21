@@ -136,7 +136,9 @@ impl<M: MqttClient, S> Client<M, S> {
     ///
     /// The caller is responsible for unsubscribing from all product-specific topics first
     /// (this only handles the manufacturer-generic protocol steps: status publishing + download).
-    pub async fn download_firmware_update(&mut self) -> Result<FirmwareDownloadStart, ()> {
+    pub async fn download_firmware_update(
+        &mut self,
+    ) -> Result<FirmwareDownloadStart, Error<M::ClientError>> {
         if let Err(err) = self.send_firmware_update_status(FWStatus::Start).await {
             log::warn!("Failed to send firmware update status: {err:?}");
         }
@@ -150,7 +152,7 @@ impl<M: MqttClient, S> Client<M, S> {
                     log::error!("Failed to download file");
                     if let Err(err) = self.send_firmware_update_status(FWStatus::Failed).await {
                         log::warn!("Failed to send firmware update status: {err:?}");
-                        return Err(());
+                        return Err(err);
                     }
                     // Nothing was downloaded, so no chunks (and no FWDownloadFailed
                     // event) will follow: the caller reports the failure instead.
@@ -162,7 +164,7 @@ impl<M: MqttClient, S> Client<M, S> {
             }
             Ok(FirmwareDownloadStart::Started)
         } else {
-            Err(())
+            Ok(FirmwareDownloadStart::Failed)
         }
     }
 
@@ -371,7 +373,9 @@ impl<M: MqttClient, S: NetworkStatus> NetworkClient for crate::logic::client::Cl
         self.await_response(timeout_s).await
     }
 
-    async fn download_firmware_update(&mut self) -> Result<FirmwareDownloadStart, ()> {
+    async fn download_firmware_update(
+        &mut self,
+    ) -> Result<FirmwareDownloadStart, Error<Self::ClientError>> {
         self.download_firmware_update().await
     }
 

@@ -81,7 +81,9 @@ pub trait NetworkClient {
     /// Begin a firmware download.
     ///
     /// `Err` means the connection is broken; see [FirmwareDownloadStart] for the rest.
-    async fn download_firmware_update(&mut self) -> Result<FirmwareDownloadStart, ()>;
+    async fn download_firmware_update(
+        &mut self,
+    ) -> Result<FirmwareDownloadStart, Error<Self::ClientError>>;
 
     /// Send a generic [`Sendable`].
     async fn send_sendable(
@@ -421,8 +423,8 @@ where
                             .await
                             .ok();
                     }
-                    Err(()) => {
-                        log::error!("Network: Failed to download update");
+                    Err(err) => {
+                        log::error!("Network: Failed to download update: {err:?}");
                         break DisconnectReason::Error;
                     }
                 }

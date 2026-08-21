@@ -7,6 +7,7 @@ mod types;
 mod variant;
 
 use core::{
+    fmt::Write as _,
     marker::PhantomData,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -46,7 +47,19 @@ const TLS_CONTEXT: ContextId = ContextId(2);
 const HTTP_CONTEXT: ContextId = ContextId(3);
 
 const TEST_FILE: &str = "Test File 123!\n";
-const RAM_TMP_FILE: &str = "RAM:tmp.file";
+const TMP_FILE: &str = "UFS:tmp.file";
+const TMP_FILE_STORAGE: &str = "UFS";
+
+/// Maximum number of bytes fetched per HTTP range request.
+/// The modem storage is far too small to hold a complete firmware image, so a download is
+/// fetched in slices that are read out (and deleted) one by one.
+const DOWNLOAD_SLICE_LEN: u32 = 16000;
+
+/// Maximum length of a download URL, matching the length of the announced firmware update URL.
+const MAX_URL_LEN: usize = 128;
+
+/// Maximum length of the request header sent with a ranged GET.
+const MAX_REQUEST_HEADER_LEN: usize = 512;
 const CA_FILE: &str = "UFS:cacert.pem";
 const CLIENT_CERT_FILE: &str = "UFS:client.crt";
 const CLIENT_KEY_FILE: &str = "UFS:client.key";
@@ -104,8 +117,37 @@ pub struct Quectel<W: Write, R: Read + ErrorReport + Suspendable, V: ModemVarian
 
     file_handle: Option<u32>,
 
+    /// Progress of the download in progress, if any.
+    download: Option<Download>,
+
     /// URC that needs to be handled
     urc: Option<Urc>,
+}
+
+/// Progress of a file download that is fetched in slices via HTTP range requests.
+struct Download {
+    url: String<MAX_URL_LEN>,
+
+    /// Offset of the first byte that has not been requested from the server yet.
+    next_offset: u32,
+
+    /// A slice is stored in [TMP_FILE], waiting to be read out.
+    slice_pending: bool,
+
+    /// The whole file has been requested: the last slice was shorter than requested.
+    complete: bool,
+}
+
+/// Split an `http(s)://host[:port]/path` URL into its host (including port) and path parts.
+fn split_url(url: &str) -> Option<(&str, &str)> {
+    let host_and_path = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+
+    Some(match host_and_path.find('/') {
+        Some(path_start) => host_and_path.split_at(path_start),
+        None => (host_and_path, "/"),
+    })
 }
 
 pub struct QuectelBackend<R: Read + ErrorReport + Suspendable> {
@@ -172,6 +214,7 @@ where
                 last_rx_msg_id: 0,
                 next_tx_msg_id: 0,
                 file_handle: None,
+                download: None,
                 urc: None,
             },
             QuectelBackend { ingress, rx },
@@ -470,13 +513,22 @@ where
         Ok(())
     }
 
-    /// Download a file with a new https context
+    /// Start downloading a file with a new https context.
+    ///
+    /// The file is fetched in slices of at most [DOWNLOAD_SLICE_LEN] bytes via HTTP range
+    /// requests, as the modem storage cannot hold a complete firmware image. The first slice is
+    /// stored in [TMP_FILE]; the next slice is fetched once the previous one is read out with
+    /// [read_download_chunk](method@Self::read_download_chunk).
     pub async fn download_file(&mut self, url: &str) -> Result<(), Error<atat::Error>> {
         let cmd = http::ConfigContext::pdp(HTTP_CONTEXT);
         self.client.send(&cmd).await.map_err(Error::Client)?;
 
         // Do not output HTTP response header.
         let cmd = http::ConfigResponseHeader::new(false);
+        self.client.send(&cmd).await.map_err(Error::Client)?;
+
+        // Send our own request header, so that a range can be requested.
+        let cmd = http::ConfigRequestHeader::new(true);
         self.client.send(&cmd).await.map_err(Error::Client)?;
 
         // Configure PDP context
@@ -551,47 +603,198 @@ where
 
         log::debug!(target: "quectel","URL Ok");
 
-        let cmd = http::GET { timeout: 10 };
-        self.client.send(&cmd).await.map_err(Error::Client)?;
+        // Fetching into a storage without room for the slice fails with an unspecific
+        // `+CME ERROR: 701` and no URC at all, so check up front.
+        if let Some(free_size) = self.storage_free_space(TMP_FILE_STORAGE).await {
+            log::debug!(target: "quectel","{TMP_FILE_STORAGE} free: {free_size} bytes, slice: {DOWNLOAD_SLICE_LEN}");
+            if free_size < DOWNLOAD_SLICE_LEN {
+                log::error!(target: "quectel","{TMP_FILE_STORAGE} has no room for a {DOWNLOAD_SLICE_LEN} byte slice");
+                self.deactivate_http_context().await?;
+                return Err(Error::MQTT("Download slice does not fit in storage"));
+            }
+        }
 
-        if let Some(Urc::HTTPGet(resp)) = self.await_urc(UrcVariant::HTTPGet).await {
-            match resp.resp {
-                Some(200) => {
-                    log::debug!(target: "quectel","GET Ok");
+        self.download = Some(Download {
+            url: String::try_from(url).map_err(|_| Error::Serialize)?,
+            next_offset: 0,
+            slice_pending: false,
+            complete: false,
+        });
+
+        self.fetch_next_slice().await
+    }
+
+    /// Fetch the next slice of the download in progress and store it in [TMP_FILE].
+    async fn fetch_next_slice(&mut self) -> Result<(), Error<atat::Error>> {
+        let Some(download) = self.download.as_ref() else {
+            return Err(Error::MQTT("No download in progress"));
+        };
+        let offset = download.next_offset;
+        let last_byte = offset + DOWNLOAD_SLICE_LEN - 1;
+
+        let (host, path) = split_url(&download.url).ok_or(Error::Serialize)?;
+        let mut header: String<MAX_REQUEST_HEADER_LEN> = String::new();
+        write!(
+            header,
+            "GET {path} HTTP/1.1\r\n\
+             Host: {host}\r\n\
+             Range: bytes={offset}-{last_byte}\r\n\
+             Accept: */*\r\n\
+             Connection: keep-alive\r\n\r\n"
+        )
+        .map_err(|_| Error::Serialize)?;
+
+        let cmd = http::GETWithHeader {
+            timeout: 10,
+            header_length: header.len() as u16,
+            input_time: 20,
+        };
+        self.client.send(&cmd).await.map_err(Error::Client)?;
+        self.client
+            .send_bytes::<NoResponse>(header.as_bytes(), 1000)
+            .await
+            .map_err(Error::Client)?;
+
+        let slice_len = match self.await_urc(UrcVariant::HTTPGet).await {
+            Some(Urc::HTTPGet(resp)) => match (resp.resp, resp.content_length) {
+                // Partial content: the requested range.
+                (Some(206), Some(slice_len)) => slice_len,
+                // The whole file, so the server ignored our range request. Only acceptable
+                // if it happens to fit in the first slice.
+                (Some(200), Some(slice_len)) if offset == 0 && slice_len <= DOWNLOAD_SLICE_LEN => {
+                    slice_len
                 }
-                Some(code) => {
+                (Some(200), Some(slice_len)) => {
+                    log::error!(target: "quectel","Range not supported by server: got {slice_len} bytes for range {offset}-{last_byte}");
+                    return Err(Error::MQTT("Range request not supported"));
+                }
+                // Range beyond the end of the file: we already have everything.
+                (Some(416), _) => 0,
+                (Some(code), _) => {
                     log::error!(target: "quectel","GET Error: {}", code);
                     return Err(Error::Serialize); // todo better error
                 }
-                None => {
+                (None, _) => {
                     log::error!(target: "quectel","GET Error: {}", resp.err);
                     return Err(Error::Serialize); // todo better error
                 }
+            },
+            _ => {
+                log::error!(target: "quectel","GET URC not received");
+                return Err(Error::TimeOut);
             }
-        } else {
-            log::error!(target: "quectel","GET URC not received");
+        };
+
+        if slice_len == 0 {
+            log::debug!(target: "quectel","Download complete at {offset} bytes");
+            // Unwrap: checked at the start of this function.
+            let download = self.download.as_mut().unwrap();
+            download.complete = true;
+            return Ok(());
         }
 
         let cmd = http::ReadFile {
-            file_name: String::try_from("RAM:tmp.file").unwrap(),
+            file_name: String::try_from(TMP_FILE).unwrap(),
             wait_time: 10,
         };
 
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
         log::debug!(target: "quectel","Read to file: {:?}", resp);
 
-        if let Some(Urc::HTTPReadFile(resp)) = self.await_urc(UrcVariant::HTTPReadFile).await {
-            if resp.err == 0 {
-                log::debug!(target: "quectel","Read to File Ok: {:?}", resp);
-            } else {
-                log::error!(target: "quectel","Read to File Error: {:?}", resp);
+        match self.await_urc(UrcVariant::HTTPReadFile).await {
+            Some(Urc::HTTPReadFile(resp)) if resp.err == 0 => {
+                log::debug!(target: "quectel","Slice {offset}..{} stored", offset + slice_len);
             }
-        } else {
-            log::error!(target: "quectel","Read to File URC not received");
+            Some(Urc::HTTPReadFile(resp)) => {
+                log::error!(target: "quectel","Read to File Error: {:?}", resp);
+                return Err(Error::MQTT("Read to File failed"));
+            }
+            // The modem acknowledges the command with `OK` and only then reports failure as an
+            // unsolicited `+CME ERROR`, which is not tied to any command and therefore only
+            // visible in the AT log.
+            _ => {
+                log::error!(target: "quectel","Read to File URC not received (check AT log for +CME ERROR)");
+                return Err(Error::TimeOut);
+            }
         }
 
-        // We're done, deactivate this context.
+        // Unwrap: checked at the start of this function.
+        let download = self.download.as_mut().unwrap();
+        download.next_offset += slice_len;
+        download.slice_pending = true;
+        // A short slice means the server had nothing more to give.
+        download.complete = slice_len < DOWNLOAD_SLICE_LEN;
 
+        Ok(())
+    }
+
+    /// Read the next chunk of the download in progress, fetching a new slice when the
+    /// current one is fully read. Returns an empty chunk when the whole file is read.
+    async fn read_download_chunk(
+        &mut self,
+        chunk_size: usize,
+    ) -> Result<Vec<u8, MAX_FILE_CHUNK_LEN>, Error<atat::Error>> {
+        let mut chunk = Vec::new();
+
+        // Chunks must be filled up across slice boundaries: the caller relies on every chunk
+        // but the last one having the requested size.
+        while chunk.len() < chunk_size {
+            if !self.download.as_ref().is_some_and(|d| d.slice_pending) {
+                match self.download.as_ref() {
+                    Some(download) if !download.complete => self.fetch_next_slice().await?,
+                    // Nothing left to read.
+                    _ => break,
+                }
+                if !self.download.as_ref().is_some_and(|d| d.slice_pending) {
+                    break;
+                }
+            }
+
+            let remaining = chunk_size - chunk.len();
+            match self.read_file_chunk(TMP_FILE, remaining).await? {
+                Some(part) if !part.is_empty() => {
+                    // Unwrap: never more than the requested `remaining` bytes.
+                    chunk.extend_from_slice(&part).unwrap();
+                }
+                // Slice fully read: discard it to make room for the next one.
+                _ => {
+                    self.close_file().await?;
+                    self.delete_file(TMP_FILE).await?;
+                    // Unwrap: only reached while a download is in progress.
+                    self.download.as_mut().unwrap().slice_pending = false;
+                }
+            }
+        }
+
+        Ok(chunk)
+    }
+
+    /// Clean up after a download, successful or not.
+    async fn finish_download(&mut self) {
+        let _ = self.close_file().await;
+        if self.download.as_ref().is_some_and(|d| d.slice_pending) {
+            let _ = self.delete_file(TMP_FILE).await;
+        }
+        self.download = None;
+        let _ = self.deactivate_http_context().await;
+    }
+
+    /// Free space in bytes of the given modem storage ("UFS", "RAM", "SD"),
+    /// or None if the modem does not report it.
+    async fn storage_free_space(&mut self, storage: &str) -> Option<u32> {
+        let cmd = file::Space {
+            pattern: String::try_from(storage).ok()?,
+        };
+        match self.client.send(&cmd).await {
+            Ok(space) => Some(space.free_size),
+            Err(err) => {
+                log::warn!(target: "quectel","Failed to query {storage} space: {err:?}");
+                None
+            }
+        }
+    }
+
+    async fn deactivate_http_context(&mut self) -> Result<(), Error<atat::Error>> {
         self.client
             .send(&tcpip::DeactivateContext { cid: HTTP_CONTEXT })
             .await
@@ -1603,8 +1806,12 @@ where
     async fn download_file(&mut self, url: &str) -> Result<(), Error<Self::ClientError>> {
         // Delete file if it exists
         let _ = self.close_file().await;
-        let _ = self.delete_file(RAM_TMP_FILE).await;
-        self.download_file(url).await
+        let _ = self.delete_file(TMP_FILE).await;
+        let result = self.download_file(url).await;
+        if result.is_err() {
+            self.finish_download().await;
+        }
+        result
     }
 
     /// Read chunks of the downloaded file. Returns None if everything is read or when there is no data.
@@ -1612,15 +1819,20 @@ where
         &mut self,
         chunk_size: usize,
     ) -> Result<Vec<u8, MAX_FILE_CHUNK_LEN>, FileError> {
-        match self.read_file_chunk(RAM_TMP_FILE, chunk_size).await {
-            Ok(Some(chunk)) => Ok(chunk),
-            Ok(None) => {
-                // Discard the file as we finished reading it.
-                let _ = self.close_file().await;
-                let _ = self.delete_file(RAM_TMP_FILE).await;
+        if chunk_size > MAX_FILE_CHUNK_LEN {
+            return Err(FileError::ReadError);
+        }
+        match self.read_download_chunk(chunk_size).await {
+            Ok(chunk) if !chunk.is_empty() => Ok(chunk),
+            Ok(_) => {
+                self.finish_download().await;
                 Err(FileError::EndOfFile)
             }
-            Err(_) => Err(FileError::ReadError),
+            Err(err) => {
+                log::error!(target: "quectel","Download read failed: {err:?}");
+                self.finish_download().await;
+                Err(FileError::ReadError)
+            }
         }
     }
 

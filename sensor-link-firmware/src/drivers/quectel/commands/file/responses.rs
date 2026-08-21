@@ -19,9 +19,9 @@ pub struct FileList {
 
 /// Response format +QFLDS: <free_size>,<total_size>
 #[derive(Clone, Debug, AtatResp)]
-#[allow(dead_code)]
 pub struct StorageSpace {
     pub free_size: u32,
+    #[allow(dead_code)]
     pub total_size: u32,
 }
 

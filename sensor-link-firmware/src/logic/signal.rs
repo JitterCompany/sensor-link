@@ -120,6 +120,9 @@ pub enum Signal {
     /// Firmware download is complete.
     FirmwareUpdateComplete,
 
+    /// Firmware download failed: no update will follow.
+    FirmwareUpdateFailed,
+
     /// Signal to delete firmware update from store
     FirmwareUpdateDelete,
 

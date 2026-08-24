@@ -48,6 +48,23 @@ impl ConfigResponseHeader {
 }
 
 #[derive(Debug, Clone, AtatCmd)]
+#[at_cmd("+QHTTPCFG", NoResponse, timeout_ms = 300, termination = "\r")]
+pub struct ConfigRequestHeader {
+    #[at_arg(position = 0)]
+    param: String<15>, // should be "requestheader",
+    enabled: u8,
+}
+
+impl ConfigRequestHeader {
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            param: String::try_from("requestheader").unwrap(),
+            enabled: enabled as u8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, AtatCmd)]
 #[at_cmd("+QHTTPURL", NoResponse, timeout_ms = 300, termination = "\r")]
 pub struct URL {
     #[at_arg(position = 0)]
@@ -65,6 +82,25 @@ pub struct GET {
     /// It is used to configure the timeout for the HTTP(S) GET response
     /// "+QHTTPGET: <err>[,<httprspcode>,<content_length>]" to be outputted after "OK" is returned.
     pub timeout: u16,
+}
+
+/// GET with a caller-supplied request header, which allows sending e.g. a `Range` header.
+/// Requires "requestheader" to be enabled, see [ConfigRequestHeader].
+/// The modem responds with "CONNECT", after which the header must be sent as raw bytes.
+/// Note: the modem can take well over a second to answer with "CONNECT", so this command needs
+/// a longer timeout than the other HTTP commands.
+#[derive(Debug, Clone, AtatCmd)]
+#[at_cmd("+QHTTPGET", NoResponse, timeout_ms = 5000, termination = "\r")]
+pub struct GETWithHeader {
+    /// The range is 1-65535, and the default value is 60. Unit: second.
+    /// It is used to configure the timeout for the HTTP(S) GET response
+    /// "+QHTTPGET: <err>[,<httprspcode>,<content_length>]" to be outputted after "OK" is returned.
+    pub timeout: u16,
+    /// The length of the request header to be sent. Unit: byte.
+    pub header_length: u16,
+    /// The maximum time for inputting the request header.
+    /// The range is 1-65535, and the default value is 60. Unit: second.
+    pub input_time: u16,
 }
 
 /// Write GET response to a file on the modem.

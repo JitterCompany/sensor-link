@@ -51,8 +51,7 @@ const TMP_FILE: &str = "UFS:tmp.file";
 const TMP_FILE_STORAGE: &str = "UFS";
 
 /// Maximum number of bytes fetched per HTTP range request.
-/// The modem storage is far too small to hold a complete firmware image, so a download is
-/// fetched in slices that are read out (and deleted) one by one.
+/// A download is fetched in slices that are read out (and deleted) one by one.
 const DOWNLOAD_SLICE_LEN: u32 = 16000;
 
 /// Maximum length of a download URL, matching the length of the announced firmware update URL.

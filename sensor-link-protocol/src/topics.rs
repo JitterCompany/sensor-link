@@ -90,6 +90,7 @@ pub enum TopicFromDevice {
     // Meta Topics
     Event,
     FWStatus,
+    DeviceInfoV2,
     DeviceInfoV3,
     Status,
 
@@ -119,6 +120,7 @@ impl TopicFromDevice {
             TopicFromDevice::Online => "online",
             TopicFromDevice::Event => "events",
             TopicFromDevice::FWStatus => "fw_update/status",
+            TopicFromDevice::DeviceInfoV2 => "info_v2",
             TopicFromDevice::DeviceInfoV3 => "info_v3",
             TopicFromDevice::Status => "status",
             TopicFromDevice::ChargerStatus => "charger_status",
@@ -286,6 +288,7 @@ pub fn parse_topic_from_device(
         "events" => TopicFromDevice::Event,
         "status" => TopicFromDevice::Status,
         "charger_status" => TopicFromDevice::ChargerStatus,
+        "info_v2" => TopicFromDevice::DeviceInfoV2,
         "info_v3" => TopicFromDevice::DeviceInfoV3,
         "fw_update/status" => TopicFromDevice::FWStatus,
         _ => return Err(TopicParseError::NoMatch),

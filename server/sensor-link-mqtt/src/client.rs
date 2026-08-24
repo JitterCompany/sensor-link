@@ -2,7 +2,7 @@ use chrono::Utc;
 use sensor_link_protocol::{
     event::{Event, EventPayload},
     parse_system_topic, parse_topic_from_device,
-    server::{parse_device_info_v3, parse_online},
+    server::{parse_device_info_v2, parse_device_info_v3, parse_online},
     server_status::ServerStatus,
     sms::{self, format_request, SMSResult},
     time::Timestamp,
@@ -525,6 +525,16 @@ where
                         .await;
                     }
                 }
+                DeviceControlIn::FirmwareUpdateStatus(_) => {
+                    insert_sensor_server_log(
+                        db,
+                        msg.device_id.clone(),
+                        "info".to_string(),
+                        &publish.topic,
+                        String::from_utf8_lossy(&publish.payload).to_string(),
+                    )
+                    .await;
+                }
             }
 
             if device_tx.send(msg).await.is_err() {
@@ -680,6 +690,14 @@ where
                     payload: DeviceControlIn::DeviceOnline(online),
                 }))
             }
+            TopicFromDevice::DeviceInfoV2 => {
+                let device_info = parse_device_info_v2(payload)
+                    .map_err(|err| format!("Parse Device Info v2: {err:?}"))?;
+                Ok(ParsedMqttIn::Control(ControlMessageIn {
+                    device_id,
+                    payload: DeviceControlIn::DeviceInfo(device_info.into()),
+                }))
+            }
             TopicFromDevice::DeviceInfoV3 => {
                 let device_info = parse_device_info_v3(payload)
                     .map_err(|err| format!("Parse Device Info v3: {err:?}"))?;
@@ -702,6 +720,14 @@ where
                 Ok(ParsedMqttIn::Control(ControlMessageIn {
                     device_id,
                     payload: DeviceControlIn::Event(event_payload),
+                }))
+            }
+            TopicFromDevice::FWStatus => {
+                let fw_status = serde_json::from_slice(payload)
+                    .map_err(|err| format!("Parse FW update status: {err:?}"))?;
+                Ok(ParsedMqttIn::Control(ControlMessageIn {
+                    device_id,
+                    payload: DeviceControlIn::FirmwareUpdateStatus(fw_status),
                 }))
             }
             other => Err(format!("Unsupported topic: {other:?}")),

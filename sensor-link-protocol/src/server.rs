@@ -2,7 +2,7 @@ use serde::de::DeserializeOwned;
 
 use crate::{
     event::EventPayload,
-    info::DeviceInfoV3,
+    info::{DeviceInfoV2, DeviceInfoV3},
     online::Online,
     samples::{self, NChannelSamples},
 };
@@ -28,6 +28,10 @@ impl From<samples::ParseError> for Error {
 }
 
 pub fn parse_event<E: DeserializeOwned>(bytes: &[u8]) -> Result<EventPayload<E>, Error> {
+    serde_json::from_slice(bytes).map_err(|err| Error::Deserialize(err.to_string()))
+}
+
+pub fn parse_device_info_v2<D: DeserializeOwned>(bytes: &[u8]) -> Result<DeviceInfoV2<D>, Error> {
     serde_json::from_slice(bytes).map_err(|err| Error::Deserialize(err.to_string()))
 }
 

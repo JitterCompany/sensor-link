@@ -85,7 +85,7 @@ impl<const N_AXES: usize, const CAPACITY: usize> SampleData<N_AXES, CAPACITY> {
             len,
 
             samples: core::array::from_fn(|i| {
-                let mut buf = [core::f32::NAN; CAPACITY];
+                let mut buf = [f32::NAN; CAPACITY];
                 buf[..len].copy_from_slice(&samples[i][..len]);
                 buf
             }),
@@ -121,10 +121,10 @@ impl<const N_AXES: usize, const MAX_INPUT_SIZE: usize> SerializingBuffer<N_AXES,
     /// Create an empty SerializingBuffer, assuming future samples will be at approximately `fs` Hz.
     ///
     /// * `fs`: Expected sampling frequency of the data stream. Used to detect discontinuities.
-    ///     If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
-    ///     to prevent inaccurate timestamps after deserialization.
+    ///   If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
+    ///   to prevent inaccurate timestamps after deserialization.
     /// * `timeout_us`: triggers `BufferStatus::Timeout` if the timerange of buffered data exceeds the timeout (in microseconds)
-    ///     Intended as a heuristic to trigger serialization with a well-defined maximum data latency.
+    ///   Intended as a heuristic to trigger serialization with a well-defined maximum data latency.
     pub fn empty(fs: f32, timeout_us: i64) -> Self {
         Self {
             sample_buffer: UniformSamples::empty(fs),
@@ -146,6 +146,10 @@ impl<const N_AXES: usize, const MAX_INPUT_SIZE: usize> SerializingBuffer<N_AXES,
         self.sample_buffer.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn is_full(&self) -> bool {
         self.len() == MAX_INPUT_SIZE
     }
@@ -162,7 +166,7 @@ impl<const N_AXES: usize, const MAX_INPUT_SIZE: usize> SerializingBuffer<N_AXES,
             return BufferStatus::NotEnoughSpace;
         }
 
-        if self.len() == 0 {
+        if self.is_empty() {
             self.sample_buffer.t = data.t;
             self.last_timestamp = data.t_last;
         }
@@ -258,11 +262,11 @@ where
     /// Create an BufferManager managing an empty SerializingBuffer.
     ///
     /// * `fs` - Expected sampling frequency of the data stream. Used to detect discontinuities.
-    ///     If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
-    ///     to prevent inaccurate timestamps after deserialization.
+    ///   If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
+    ///   to prevent inaccurate timestamps after deserialization.
     /// * `timeout_us` - maximum latency of buffered data [microseconds].
-    ///     This guarantees a maximum data latency by forcing serialization of the buffer
-    ///     if the timerange of buffered data (newest-oldest sample) exceeds the timeout.
+    ///   This guarantees a maximum data latency by forcing serialization of the buffer
+    ///   if the timerange of buffered data (newest-oldest sample) exceeds the timeout.
     pub fn new(fs: f32, serializer: S, timeout_us: i64) -> Self {
         Self {
             buffer: SerializingBuffer::empty(fs, timeout_us),
@@ -333,7 +337,7 @@ where
 
     /// Force serialization of current buffer contents (for timeouts)
     pub fn force_serialize(&mut self) -> Option<SerializedSendable<MAX_OUTPUT_SIZE, S::Topic>> {
-        if self.buffer.len() > 0 {
+        if !self.buffer.is_empty() {
             match self.serializer.serialize(&self.buffer.sample_buffer) {
                 Ok(serialized) => {
                     self.buffer.clear();
@@ -354,6 +358,11 @@ where
     #[allow(dead_code)]
     pub fn is_full(&self) -> bool {
         self.buffer.is_full()
+    }
+
+    /// Check if buffer is empty
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
     }
 
     /// Get current buffer length

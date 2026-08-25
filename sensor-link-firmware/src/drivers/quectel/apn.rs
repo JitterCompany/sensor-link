@@ -11,10 +11,11 @@ pub const FALLBACK: APN = "internet";
 // Note: PLMN ID is a combination of MCC and MNC.
 // This is the first 5 or 6 digits of the IMSI (MNC can be 2 or 3 digits)
 const TABLE: &[(&str, APN)] = &[
-    ("20408", "internet"), // KPN Mobiel Internet
-    ("20412", "internet"), // KPN Mobiel Internet
-    ("20469", "internet"), // KPN Lab Internet
-    ("23201", "Data0575"), // A1 via Simhuis
+    ("20408", "internet"),     // KPN Mobiel Internet
+    ("20412", "internet"),     // KPN Mobiel Internet
+    ("20469", "internet"),     // KPN Lab Internet
+    ("23201", "Data0575"),     // A1 via Simhuis
+    ("90140", "iot.1nce.net"), // 1NCE (Deutsche Telekom)
 ];
 
 pub fn lookup(imsi: &str) -> Result<APN, APN> {
@@ -37,6 +38,7 @@ mod tests {
     fn lookup_known_imsi() {
         // PLMN for this IMSI is in the table, should match
         assert_eq!("internet", lookup("204080000000000").unwrap());
+        assert_eq!("iot.1nce.net", lookup("901405123323855").unwrap());
     }
 
     #[test]

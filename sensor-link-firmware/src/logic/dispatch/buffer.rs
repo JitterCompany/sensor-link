@@ -40,6 +40,8 @@ pub struct SampleData<const N_AXES: usize, const CAPACITY: usize> {
     pub samples: [[f32; CAPACITY]; N_AXES],
     /// Timestamp of the last sample in the set.
     pub t_last: i64,
+    /// Sampling frequency [Hz] the samples were taken at.
+    pub fs: f32,
 }
 
 impl<const N_AXES: usize, const CAPACITY: usize> SampleData<N_AXES, CAPACITY> {
@@ -87,7 +89,7 @@ impl<const N_AXES: usize, const CAPACITY: usize> SampleData<N_AXES, CAPACITY> {
                 buf[..len].copy_from_slice(&samples[i][..len]);
                 buf
             }),
-            // fs: sampling_frequency, // TODO issue #609: add this field?
+            fs: sampling_frequency,
         }
     }
 }
@@ -427,6 +429,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: FS,
         };
 
         let from_slices = SampleData::from_slices(1000, FS, [&[1.0; L]]);
@@ -434,6 +437,7 @@ mod tests {
         assert_eq!(sample_data.len, from_slices.len);
         assert_eq!(sample_data.samples, from_slices.samples);
         assert_eq!(sample_data.t_last, from_slices.t_last);
+        assert_eq!(sample_data.fs, from_slices.fs);
     }
 
     #[test]
@@ -469,6 +473,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         // Should add data without serializing (buffer not full)
@@ -495,6 +500,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 5000,
+            fs: 1000.0,
         };
 
         // Should add data without serializing (buffer not full yet)
@@ -512,6 +518,7 @@ mod tests {
             len: 7,
             samples: [[2.0; 7]],
             t_last: 12000,
+            fs: 1000.0,
         };
 
         // Should serialize when buffer becomes full
@@ -540,6 +547,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -565,6 +573,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         const L2: usize = 3;
@@ -575,6 +584,7 @@ mod tests {
             len: L2,
             samples: [[1.0; L2]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         manager.push_data(&sample_data1);
@@ -588,6 +598,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 14000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data3) {
@@ -613,6 +624,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 5000,
+            fs: 1000.0,
         };
 
         // Add data first
@@ -630,6 +642,7 @@ mod tests {
             len: 2 * L,
             samples: [[2.0; 2 * L]],
             t_last: 6000,
+            fs: 1000.0,
         };
 
         // Should return SerializationFailed when serializer fails
@@ -656,6 +669,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         // Add some data
@@ -690,6 +704,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         let result = buffer.push(&sample_data);
@@ -710,6 +725,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         let result = buffer.push(&sample_data);
@@ -722,6 +738,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         let result = buffer.push(&sample_data);
@@ -743,6 +760,7 @@ mod tests {
             len: L,
             samples: [[1.0; L], [2.0; L], [3.0; L]],
             t_last: 3,
+            fs: 1000.0,
         };
 
         // This should compile and work without panicking
@@ -765,6 +783,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -780,6 +799,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 1000 + TIMEOUT_US + 1000, // Exceeds timeout from first timestamp
+            fs: 1000.0,
         };
 
         // Should trigger serialization due to timeout
@@ -811,6 +831,7 @@ mod tests {
             len: 2,
             samples: [[1.0; 2]],
             t_last: 1000 + INITIAL_TIMEOUT_US + 1000, // Would exceed old timeout but not new one
+            fs: 1000.0,
         };
 
         // Should not timeout with new timeout value
@@ -837,6 +858,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000, // Ends at 4000
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -853,6 +875,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 10000,
+            fs: 1000.0,
         };
 
         // Should trigger serialization due to non-contiguous timestamps
@@ -883,6 +906,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -898,6 +922,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 8000,
+            fs: 1000.0,
         };
 
         // Should add data without serialization since timestamps are contiguous

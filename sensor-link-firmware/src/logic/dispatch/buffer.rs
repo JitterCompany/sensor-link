@@ -40,6 +40,8 @@ pub struct SampleData<const N_AXES: usize, const CAPACITY: usize> {
     pub samples: [[f32; CAPACITY]; N_AXES],
     /// Timestamp of the last sample in the set.
     pub t_last: i64,
+    /// Sampling frequency [Hz] the samples were taken at.
+    pub fs: f32,
 }
 
 impl<const N_AXES: usize, const CAPACITY: usize> SampleData<N_AXES, CAPACITY> {
@@ -83,11 +85,11 @@ impl<const N_AXES: usize, const CAPACITY: usize> SampleData<N_AXES, CAPACITY> {
             len,
 
             samples: core::array::from_fn(|i| {
-                let mut buf = [core::f32::NAN; CAPACITY];
+                let mut buf = [f32::NAN; CAPACITY];
                 buf[..len].copy_from_slice(&samples[i][..len]);
                 buf
             }),
-            // fs: sampling_frequency, // TODO issue #609: add this field?
+            fs: sampling_frequency,
         }
     }
 }
@@ -119,10 +121,10 @@ impl<const N_AXES: usize, const MAX_INPUT_SIZE: usize> SerializingBuffer<N_AXES,
     /// Create an empty SerializingBuffer, assuming future samples will be at approximately `fs` Hz.
     ///
     /// * `fs`: Expected sampling frequency of the data stream. Used to detect discontinuities.
-    ///     If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
-    ///     to prevent inaccurate timestamps after deserialization.
+    ///   If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
+    ///   to prevent inaccurate timestamps after deserialization.
     /// * `timeout_us`: triggers `BufferStatus::Timeout` if the timerange of buffered data exceeds the timeout (in microseconds)
-    ///     Intended as a heuristic to trigger serialization with a well-defined maximum data latency.
+    ///   Intended as a heuristic to trigger serialization with a well-defined maximum data latency.
     pub fn empty(fs: f32, timeout_us: i64) -> Self {
         Self {
             sample_buffer: UniformSamples::empty(fs),
@@ -144,6 +146,10 @@ impl<const N_AXES: usize, const MAX_INPUT_SIZE: usize> SerializingBuffer<N_AXES,
         self.sample_buffer.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn is_full(&self) -> bool {
         self.len() == MAX_INPUT_SIZE
     }
@@ -160,7 +166,7 @@ impl<const N_AXES: usize, const MAX_INPUT_SIZE: usize> SerializingBuffer<N_AXES,
             return BufferStatus::NotEnoughSpace;
         }
 
-        if self.len() == 0 {
+        if self.is_empty() {
             self.sample_buffer.t = data.t;
             self.last_timestamp = data.t_last;
         }
@@ -256,11 +262,11 @@ where
     /// Create an BufferManager managing an empty SerializingBuffer.
     ///
     /// * `fs` - Expected sampling frequency of the data stream. Used to detect discontinuities.
-    ///     If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
-    ///     to prevent inaccurate timestamps after deserialization.
+    ///   If successive sample timestamps are more than two sample intervals apart, the buffer will be serialized
+    ///   to prevent inaccurate timestamps after deserialization.
     /// * `timeout_us` - maximum latency of buffered data [microseconds].
-    ///     This guarantees a maximum data latency by forcing serialization of the buffer
-    ///     if the timerange of buffered data (newest-oldest sample) exceeds the timeout.
+    ///   This guarantees a maximum data latency by forcing serialization of the buffer
+    ///   if the timerange of buffered data (newest-oldest sample) exceeds the timeout.
     pub fn new(fs: f32, serializer: S, timeout_us: i64) -> Self {
         Self {
             buffer: SerializingBuffer::empty(fs, timeout_us),
@@ -331,7 +337,7 @@ where
 
     /// Force serialization of current buffer contents (for timeouts)
     pub fn force_serialize(&mut self) -> Option<SerializedSendable<MAX_OUTPUT_SIZE, S::Topic>> {
-        if self.buffer.len() > 0 {
+        if !self.buffer.is_empty() {
             match self.serializer.serialize(&self.buffer.sample_buffer) {
                 Ok(serialized) => {
                     self.buffer.clear();
@@ -352,6 +358,11 @@ where
     #[allow(dead_code)]
     pub fn is_full(&self) -> bool {
         self.buffer.is_full()
+    }
+
+    /// Check if buffer is empty
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
     }
 
     /// Get current buffer length
@@ -427,6 +438,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: FS,
         };
 
         let from_slices = SampleData::from_slices(1000, FS, [&[1.0; L]]);
@@ -434,6 +446,7 @@ mod tests {
         assert_eq!(sample_data.len, from_slices.len);
         assert_eq!(sample_data.samples, from_slices.samples);
         assert_eq!(sample_data.t_last, from_slices.t_last);
+        assert_eq!(sample_data.fs, from_slices.fs);
     }
 
     #[test]
@@ -469,6 +482,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         // Should add data without serializing (buffer not full)
@@ -495,6 +509,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 5000,
+            fs: 1000.0,
         };
 
         // Should add data without serializing (buffer not full yet)
@@ -512,6 +527,7 @@ mod tests {
             len: 7,
             samples: [[2.0; 7]],
             t_last: 12000,
+            fs: 1000.0,
         };
 
         // Should serialize when buffer becomes full
@@ -540,6 +556,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -565,6 +582,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         const L2: usize = 3;
@@ -575,6 +593,7 @@ mod tests {
             len: L2,
             samples: [[1.0; L2]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         manager.push_data(&sample_data1);
@@ -588,6 +607,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 14000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data3) {
@@ -613,6 +633,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 5000,
+            fs: 1000.0,
         };
 
         // Add data first
@@ -630,6 +651,7 @@ mod tests {
             len: 2 * L,
             samples: [[2.0; 2 * L]],
             t_last: 6000,
+            fs: 1000.0,
         };
 
         // Should return SerializationFailed when serializer fails
@@ -656,6 +678,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         // Add some data
@@ -690,6 +713,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         let result = buffer.push(&sample_data);
@@ -710,6 +734,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         let result = buffer.push(&sample_data);
@@ -722,6 +747,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         let result = buffer.push(&sample_data);
@@ -743,6 +769,7 @@ mod tests {
             len: L,
             samples: [[1.0; L], [2.0; L], [3.0; L]],
             t_last: 3,
+            fs: 1000.0,
         };
 
         // This should compile and work without panicking
@@ -765,6 +792,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 3000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -780,6 +808,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 1000 + TIMEOUT_US + 1000, // Exceeds timeout from first timestamp
+            fs: 1000.0,
         };
 
         // Should trigger serialization due to timeout
@@ -811,6 +840,7 @@ mod tests {
             len: 2,
             samples: [[1.0; 2]],
             t_last: 1000 + INITIAL_TIMEOUT_US + 1000, // Would exceed old timeout but not new one
+            fs: 1000.0,
         };
 
         // Should not timeout with new timeout value
@@ -837,6 +867,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000, // Ends at 4000
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -853,6 +884,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 10000,
+            fs: 1000.0,
         };
 
         // Should trigger serialization due to non-contiguous timestamps
@@ -883,6 +915,7 @@ mod tests {
             len: L,
             samples: [[1.0; L]],
             t_last: 4000,
+            fs: 1000.0,
         };
 
         match manager.push_data(&sample_data1) {
@@ -898,6 +931,7 @@ mod tests {
             len: L,
             samples: [[2.0; L]],
             t_last: 8000,
+            fs: 1000.0,
         };
 
         // Should add data without serialization since timestamps are contiguous

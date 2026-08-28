@@ -68,11 +68,20 @@ pub struct MqttConfig {
     pub tls: Option<TlsConfig>,
 }
 
-const MQTT_TOPICS: &str = "f/#,qmonixx/#,sms/resp";
+const MQTT_TOPICS: [&str; 8] = [
+    "f/#",
+    "qmonixx/+/strain_bulk/+",
+    "qmonixx/+/temperature_bulk/+",
+    "qmonixx/+/strain/#",
+    "qmonixx/+/temperature/#",
+    "qmonixx/+/s/#",
+    "qmonixx/+/T/#",
+    "sms/resp",
+];
 
 async fn mqtt_subscribe(client: &AsyncClient) -> Result<(), Vec<rumqttc::ClientError>> {
     let mut errors = Vec::new();
-    for topic in MQTT_TOPICS.split(',') {
+    for topic in MQTT_TOPICS {
         if let Err(err) = client.subscribe(topic, QoS::AtLeastOnce).await {
             errors.push(err);
         }

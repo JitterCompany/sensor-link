@@ -79,10 +79,13 @@ const MQTT_TOPICS: [&str; 8] = [
     "sms/resp",
 ];
 
-async fn mqtt_subscribe(client: &AsyncClient) -> Result<(), Vec<rumqttc::ClientError>> {
+async fn mqtt_subscribe(
+    client: &AsyncClient,
+    additional_topics: &[&'static str],
+) -> Result<(), Vec<rumqttc::ClientError>> {
     let mut errors = Vec::new();
-    for topic in MQTT_TOPICS {
-        if let Err(err) = client.subscribe(topic, QoS::AtLeastOnce).await {
+    for topic in MQTT_TOPICS.iter().chain(additional_topics.iter()) {
+        if let Err(err) = client.subscribe(*topic, QoS::AtLeastOnce).await {
             errors.push(err);
         }
     }
@@ -99,6 +102,7 @@ pub fn start_task<C, DS>(
     device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
     rx: mpsc::Receiver<ControlMessageOut<C::ControlOut>>,
     db: DS,
+    additional_topics: Vec<&'static str>,
     on_task_panic: PanicCallback,
     hooks: MqttHooks,
 ) -> Handle
@@ -146,6 +150,7 @@ where
                     device_tx: device_tx.clone(),
                     msg_out: rx.clone(),
                     db: db.clone(),
+                    additional_topics: additional_topics.clone(),
                     on_task_panic: on_panic_clone.clone(),
                     hooks: hooks.clone(),
                 },
@@ -163,6 +168,7 @@ struct MqttTaskParams<DS, C: TopicCodec> {
     device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
     msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
     db: DS,
+    additional_topics: Vec<&'static str>,
     on_task_panic: PanicCallback,
     hooks: MqttHooks,
 }
@@ -177,6 +183,7 @@ where
         device_tx,
         msg_out,
         db,
+        additional_topics,
         on_task_panic,
         hooks,
     } = params;
@@ -229,7 +236,7 @@ where
         )
     };
 
-    let errors = mqtt_subscribe(&client).await;
+    let errors = mqtt_subscribe(&client, &additional_topics).await;
     if let Err(errors) = errors {
         print_error(
             "MQTT client",
@@ -259,7 +266,7 @@ where
 
             _ = connect_rx.changed() => {
                 tracing::debug!("mqtt_task: connected(?), subscribing...");
-                if let Err(errors) = mqtt_subscribe(&client).await {
+                if let Err(errors) = mqtt_subscribe(&client, &additional_topics).await {
                     print_error(
                         "MQTT client",
                         "CRITICAL ERROR: Failed to (re)-subscribe to topics",

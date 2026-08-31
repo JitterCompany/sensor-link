@@ -96,16 +96,7 @@ async fn mqtt_subscribe(
     }
 }
 
-pub fn start_task<C, DS>(
-    config: MqttConfig,
-    data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
-    device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
-    rx: mpsc::Receiver<ControlMessageOut<C::ControlOut>>,
-    db: DS,
-    additional_topics: Vec<&'static str>,
-    on_task_panic: PanicCallback,
-    hooks: MqttHooks,
-) -> Handle
+pub fn start_task<C, DS>(config: MqttConfig, params: MqttTaskParams<DS, C>) -> Handle
 where
     C: TopicCodec,
     DS: EventStore + DeviceStore + Clone + Send + 'static,
@@ -138,32 +129,30 @@ where
     tracing::info!("Connecting to MQTT broker: {:?}", mqttoptions);
 
     let task_function = mqtt_task::<DS, C>;
-    let rx = Arc::new(Mutex::new(rx));
-    let on_panic_clone = on_task_panic.clone();
+    let on_panic_clone = params.on_task_panic.clone();
     Handle::new(
         move |shutdown_rx| {
             task_function(
                 shutdown_rx,
+                mqttoptions.clone(),
                 MqttTaskParams {
-                    mqttoptions: mqttoptions.clone(),
-                    data_tx: data_tx.clone(),
-                    device_tx: device_tx.clone(),
-                    msg_out: rx.clone(),
-                    db: db.clone(),
-                    additional_topics: additional_topics.clone(),
+                    data_tx: params.data_tx.clone(),
+                    device_tx: params.device_tx.clone(),
+                    msg_out: params.msg_out.clone(),
+                    db: params.db.clone(),
+                    additional_topics: params.additional_topics.clone(),
                     on_task_panic: on_panic_clone.clone(),
-                    hooks: hooks.clone(),
+                    hooks: params.hooks.clone(),
                 },
             )
         },
         get_crate_relative_function_path(task_function),
-        on_task_panic,
+        params.on_task_panic.clone(),
     )
 }
 
 /// Dependencies for [`mqtt_task`], bundled to keep its argument list manageable.
-struct MqttTaskParams<DS, C: TopicCodec> {
-    mqttoptions: MqttOptions,
+pub struct MqttTaskParams<DS, C: TopicCodec> {
     data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
     device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
     msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
@@ -173,12 +162,14 @@ struct MqttTaskParams<DS, C: TopicCodec> {
     hooks: MqttHooks,
 }
 
-async fn mqtt_task<DS, C: TopicCodec>(mut shutdown_rx: Receiver<()>, params: MqttTaskParams<DS, C>)
-where
+async fn mqtt_task<DS, C: TopicCodec>(
+    mut shutdown_rx: Receiver<()>,
+    mqtt_options: MqttOptions,
+    params: MqttTaskParams<DS, C>,
+) where
     DS: EventStore + DeviceStore + Clone + Send + 'static,
 {
     let MqttTaskParams {
-        mut mqttoptions,
         data_tx,
         device_tx,
         msg_out,
@@ -201,6 +192,7 @@ where
         QoS::AtLeastOnce,
         true,
     );
+    let mut mqttoptions = mqtt_options;
     mqttoptions.set_last_will(lastwill);
 
     // Capacity of channel between client and eventloop

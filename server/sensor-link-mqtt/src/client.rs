@@ -68,16 +68,7 @@ pub struct MqttConfig {
     pub tls: Option<TlsConfig>,
 }
 
-const MQTT_TOPICS: [&str; 8] = [
-    "f/#",
-    "qmonixx/+/strain_bulk/+",
-    "qmonixx/+/temperature_bulk/+",
-    "qmonixx/+/strain/#",
-    "qmonixx/+/temperature/#",
-    "qmonixx/+/s/#",
-    "qmonixx/+/T/#",
-    "sms/resp",
-];
+const MQTT_TOPICS: [&str; 2] = ["f/#", "sms/resp"];
 
 async fn mqtt_subscribe(
     client: &AsyncClient,

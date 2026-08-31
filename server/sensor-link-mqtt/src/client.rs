@@ -153,13 +153,13 @@ where
 
 /// Dependencies for [`mqtt_task`], bundled to keep its argument list manageable.
 pub struct MqttTaskParams<DS, C: TopicCodec> {
-    data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
-    device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
-    msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
-    db: DS,
-    additional_topics: Vec<&'static str>,
-    on_task_panic: PanicCallback,
-    hooks: MqttHooks,
+    pub data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
+    pub device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
+    pub msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
+    pub db: DS,
+    pub additional_topics: Vec<&'static str>,
+    pub on_task_panic: PanicCallback,
+    pub hooks: MqttHooks,
 }
 
 async fn mqtt_task<DS, C: TopicCodec>(

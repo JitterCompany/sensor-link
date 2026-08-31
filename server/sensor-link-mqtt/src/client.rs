@@ -68,21 +68,15 @@ pub struct MqttConfig {
     pub tls: Option<TlsConfig>,
 }
 
-const MQTT_TOPICS: [&str; 8] = [
-    "f/#",
-    "qmonixx/+/strain_bulk/+",
-    "qmonixx/+/temperature_bulk/+",
-    "qmonixx/+/strain/#",
-    "qmonixx/+/temperature/#",
-    "qmonixx/+/s/#",
-    "qmonixx/+/T/#",
-    "sms/resp",
-];
+const MQTT_TOPICS: [&str; 2] = ["f/#", "sms/resp"];
 
-async fn mqtt_subscribe(client: &AsyncClient) -> Result<(), Vec<rumqttc::ClientError>> {
+async fn mqtt_subscribe(
+    client: &AsyncClient,
+    additional_topics: &[&'static str],
+) -> Result<(), Vec<rumqttc::ClientError>> {
     let mut errors = Vec::new();
-    for topic in MQTT_TOPICS {
-        if let Err(err) = client.subscribe(topic, QoS::AtLeastOnce).await {
+    for topic in MQTT_TOPICS.iter().chain(additional_topics.iter()) {
+        if let Err(err) = client.subscribe(*topic, QoS::AtLeastOnce).await {
             errors.push(err);
         }
     }
@@ -93,15 +87,7 @@ async fn mqtt_subscribe(client: &AsyncClient) -> Result<(), Vec<rumqttc::ClientE
     }
 }
 
-pub fn start_task<C, DS>(
-    config: MqttConfig,
-    data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
-    device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
-    rx: mpsc::Receiver<ControlMessageOut<C::ControlOut>>,
-    db: DS,
-    on_task_panic: PanicCallback,
-    hooks: MqttHooks,
-) -> Handle
+pub fn start_task<C, DS>(config: MqttConfig, params: MqttTaskParams<DS, C>) -> Handle
 where
     C: TopicCodec,
     DS: EventStore + DeviceStore + Clone + Send + 'static,
@@ -134,49 +120,52 @@ where
     tracing::info!("Connecting to MQTT broker: {:?}", mqttoptions);
 
     let task_function = mqtt_task::<DS, C>;
-    let rx = Arc::new(Mutex::new(rx));
-    let on_panic_clone = on_task_panic.clone();
+    let on_panic_clone = params.on_task_panic.clone();
     Handle::new(
         move |shutdown_rx| {
             task_function(
                 shutdown_rx,
+                mqttoptions.clone(),
                 MqttTaskParams {
-                    mqttoptions: mqttoptions.clone(),
-                    data_tx: data_tx.clone(),
-                    device_tx: device_tx.clone(),
-                    msg_out: rx.clone(),
-                    db: db.clone(),
+                    data_tx: params.data_tx.clone(),
+                    device_tx: params.device_tx.clone(),
+                    msg_out: params.msg_out.clone(),
+                    db: params.db.clone(),
+                    additional_topics: params.additional_topics.clone(),
                     on_task_panic: on_panic_clone.clone(),
-                    hooks: hooks.clone(),
+                    hooks: params.hooks.clone(),
                 },
             )
         },
         get_crate_relative_function_path(task_function),
-        on_task_panic,
+        params.on_task_panic.clone(),
     )
 }
 
 /// Dependencies for [`mqtt_task`], bundled to keep its argument list manageable.
-struct MqttTaskParams<DS, C: TopicCodec> {
-    mqttoptions: MqttOptions,
-    data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
-    device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
-    msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
-    db: DS,
-    on_task_panic: PanicCallback,
-    hooks: MqttHooks,
+pub struct MqttTaskParams<DS, C: TopicCodec> {
+    pub data_tx: mpsc::Sender<ProcessingMessage<C::DT, C::P>>,
+    pub device_tx: mpsc::Sender<ControlMessageIn<C::D, C::S, C::EV>>,
+    pub msg_out: Arc<Mutex<mpsc::Receiver<ControlMessageOut<C::ControlOut>>>>,
+    pub db: DS,
+    pub additional_topics: Vec<&'static str>,
+    pub on_task_panic: PanicCallback,
+    pub hooks: MqttHooks,
 }
 
-async fn mqtt_task<DS, C: TopicCodec>(mut shutdown_rx: Receiver<()>, params: MqttTaskParams<DS, C>)
-where
+async fn mqtt_task<DS, C: TopicCodec>(
+    mut shutdown_rx: Receiver<()>,
+    mqtt_options: MqttOptions,
+    params: MqttTaskParams<DS, C>,
+) where
     DS: EventStore + DeviceStore + Clone + Send + 'static,
 {
     let MqttTaskParams {
-        mut mqttoptions,
         data_tx,
         device_tx,
         msg_out,
         db,
+        additional_topics,
         on_task_panic,
         hooks,
     } = params;
@@ -194,6 +183,7 @@ where
         QoS::AtLeastOnce,
         true,
     );
+    let mut mqttoptions = mqtt_options;
     mqttoptions.set_last_will(lastwill);
 
     // Capacity of channel between client and eventloop
@@ -229,7 +219,7 @@ where
         )
     };
 
-    let errors = mqtt_subscribe(&client).await;
+    let errors = mqtt_subscribe(&client, &additional_topics).await;
     if let Err(errors) = errors {
         print_error(
             "MQTT client",
@@ -259,7 +249,7 @@ where
 
             _ = connect_rx.changed() => {
                 tracing::debug!("mqtt_task: connected(?), subscribing...");
-                if let Err(errors) = mqtt_subscribe(&client).await {
+                if let Err(errors) = mqtt_subscribe(&client, &additional_topics).await {
                     print_error(
                         "MQTT client",
                         "CRITICAL ERROR: Failed to (re)-subscribe to topics",

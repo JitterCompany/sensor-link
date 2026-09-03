@@ -1,0 +1,691 @@
+//! egui front-end: a setup screen (artifacts, variant, log, PIN) and the
+//! per-device loop screen. All work happens in the worker thread.
+
+use std::{
+    path::PathBuf,
+    sync::mpsc::{Receiver, Sender, channel},
+};
+
+use eframe::egui::{self, Color32, RichText};
+
+use crate::{
+    artifacts::Artifacts,
+    log_csv, sound, validate,
+    worker::{self, Command, DevCa, Event, Outcome, SessionConfig, SessionInfo, StepState},
+};
+
+pub struct App {
+    tx: Sender<Command>,
+    rx: Receiver<Event>,
+    sounds: sound::Sounds,
+    screen: Screen,
+}
+
+enum Screen {
+    Setup(Setup),
+    Session(Session),
+}
+
+#[derive(Default)]
+struct Setup {
+    zip: Option<PathBuf>,
+    artifacts: Option<Result<Artifacts, String>>,
+    variant: usize,
+    log: String,
+    pin: String,
+    ca_cert_file: Option<PathBuf>,
+    /// Set from the command line only.
+    dev_ca: Option<DevCa>,
+    probes: Option<Vec<String>>,
+    starting: bool,
+    error: Option<String>,
+}
+
+struct Session {
+    info: SessionInfo,
+    uid: String,
+    icc: String,
+    focus_uid: bool,
+    focus_icc: bool,
+    counts: Counts,
+    phase: Phase,
+    last: Option<Finished>,
+    steps: Vec<StepState>,
+    show_summary: bool,
+}
+
+#[derive(Default)]
+struct Counts {
+    ok: u32,
+    unverified: u32,
+    fail: u32,
+}
+
+enum Phase {
+    Idle,
+    /// Soft-check warnings the operator must acknowledge before starting.
+    Confirm {
+        warnings: Vec<String>,
+        uid: String,
+        icc: String,
+        reprovision: bool,
+    },
+    Running,
+    /// A step failed; waiting for Retry / Skip.
+    Failed {
+        step: usize,
+        message: String,
+    },
+}
+
+struct Finished {
+    uid: String,
+    outcome: Outcome,
+    rtt_log: String,
+    error: Option<String>,
+}
+
+impl App {
+    pub fn new(cc: &eframe::CreationContext<'_>, dev_ca: Option<DevCa>) -> Self {
+        let (tx, cmd_rx) = channel();
+        let (ev_tx, rx) = channel();
+        worker::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
+        cc.egui_ctx.set_zoom_factor(1.15);
+        let _ = tx.send(Command::ListProbes);
+        Self {
+            tx,
+            rx,
+            sounds: sound::Sounds::new(),
+            screen: Screen::Setup(Setup {
+                dev_ca,
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn handle_events(&mut self) {
+        while let Ok(ev) = self.rx.try_recv() {
+            match ev {
+                Event::Probes(list) => {
+                    if let Screen::Setup(s) = &mut self.screen {
+                        s.probes = Some(list);
+                    }
+                }
+                Event::SessionReady(info) => {
+                    self.screen = Screen::Session(Session {
+                        info: *info,
+                        uid: String::new(),
+                        icc: String::new(),
+                        focus_uid: true,
+                        focus_icc: false,
+                        counts: Counts::default(),
+                        phase: Phase::Idle,
+                        last: None,
+                        steps: vec![StepState::Pending; worker::STEPS.len()],
+                        show_summary: false,
+                    });
+                }
+                Event::SessionFailed(msg) => {
+                    if let Screen::Setup(s) = &mut self.screen {
+                        s.starting = false;
+                        s.error = Some(msg);
+                    }
+                }
+                Event::Step { index, state } => {
+                    if let Screen::Session(s) = &mut self.screen {
+                        if let StepState::Failed(m) = &state
+                            && index != worker::STEPS.len() - 1
+                        {
+                            s.phase = Phase::Failed {
+                                step: index,
+                                message: m.clone(),
+                            };
+                        }
+                        s.steps[index] = state;
+                    }
+                }
+                Event::DeviceFinished {
+                    uid,
+                    outcome,
+                    reprovision,
+                    rtt_log,
+                    error,
+                } => {
+                    if let Screen::Session(s) = &mut self.screen {
+                        if !reprovision {
+                            match outcome {
+                                Outcome::Ok => s.counts.ok += 1,
+                                Outcome::Unverified => s.counts.unverified += 1,
+                                Outcome::Fail => s.counts.fail += 1,
+                            }
+                        }
+                        match outcome {
+                            Outcome::Ok => self.sounds.ok(),
+                            _ => self.sounds.fail(),
+                        }
+                        s.last = Some(Finished {
+                            uid,
+                            outcome,
+                            rtt_log,
+                            error,
+                        });
+                        s.phase = Phase::Idle;
+                        s.uid.clear();
+                        s.icc.clear();
+                        s.focus_uid = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_events();
+        egui::CentralPanel::default().show(ctx, |ui| match &mut self.screen {
+            Screen::Setup(setup) => setup.ui(ui, &self.tx),
+            Screen::Session(session) => session.ui(ui, &self.tx),
+        });
+    }
+}
+
+impl Setup {
+    fn ui(&mut self, ui: &mut egui::Ui, tx: &Sender<Command>) {
+        ui.heading("sensor-link provisioning");
+        ui.add_space(8.0);
+
+        ui.horizontal(|ui| {
+            if ui.button("Select firmware zip…").clicked()
+                && let Some(p) = rfd::FileDialog::new()
+                    .add_filter("zip", &["zip"])
+                    .pick_file()
+            {
+                self.artifacts = Some(Artifacts::load(&p).map_err(|e| format!("{e:#}")));
+                self.zip = Some(p);
+                self.variant = 0;
+                if let Some(Ok(a)) = &self.artifacts
+                    && self.log.is_empty()
+                    && let Some(d) = a.profile.default_log_path()
+                {
+                    self.log = d.display().to_string();
+                }
+            }
+            if let Some(z) = &self.zip {
+                ui.label(
+                    z.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                );
+            }
+        });
+
+        match &self.artifacts {
+            None => {
+                ui.label("The CI artifact zip (firmware-build-<run>.zip) containing provision.toml, bootloader and firmware.");
+            }
+            Some(Err(e)) => {
+                ui.colored_label(Color32::RED, e);
+            }
+            Some(Ok(a)) => {
+                egui::Grid::new("profile")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.label("Project");
+                        ui.strong(&a.profile.project.name);
+                        ui.end_row();
+                        ui.label("Bootloader");
+                        ui.label(&a.bootloader.name);
+                        ui.end_row();
+                        ui.label("Variant");
+                        egui::ComboBox::from_id_salt("variant")
+                            .selected_text(&a.profile.variants[self.variant].name)
+                            .show_ui(ui, |ui| {
+                                for (i, v) in a.profile.variants.iter().enumerate() {
+                                    ui.selectable_value(&mut self.variant, i, &v.name);
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Firmware");
+                        ui.label(&a.firmwares[self.variant].name);
+                        ui.end_row();
+                        ui.label("Chip");
+                        ui.label(&a.profile.target.chip);
+                        ui.end_row();
+                        ui.label("Cert subject");
+                        ui.label(format!("{}, CN=<UID>", a.profile.identity.cert_subject));
+                        ui.end_row();
+                        ui.label("CA slot");
+                        ui.label(format!("YubiKey PIV {}", a.profile.identity.ca_piv_slot));
+                        ui.end_row();
+                    });
+            }
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Issuance log (CSV)");
+            ui.add(egui::TextEdit::singleline(&mut self.log).desired_width(380.0));
+            if ui.button("…").clicked()
+                && let Some(p) = rfd::FileDialog::new()
+                    .add_filter("csv", &["csv"])
+                    .save_file()
+            {
+                self.log = p.display().to_string();
+            }
+        });
+        if let Some(dev) = &self.dev_ca {
+            dev_ca_banner(ui);
+            ui.label(format!("key: {}", dev.key.display()));
+            ui.label(format!("cert: {}", dev.cert.display()));
+        } else {
+            ui.horizontal(|ui| {
+                ui.label("YubiKey PIV PIN");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.pin)
+                        .password(true)
+                        .desired_width(160.0),
+                );
+            });
+        }
+        ui.horizontal(|ui| {
+            ui.label("CA certificate file (only if not stored on the YubiKey)");
+            if ui.button("Select…").clicked()
+                && let Some(p) = rfd::FileDialog::new()
+                    .add_filter("PEM", &["pem", "cert", "crt"])
+                    .pick_file()
+            {
+                self.ca_cert_file = Some(p);
+            }
+            if let Some(p) = &self.ca_cert_file {
+                ui.label(
+                    p.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                );
+            }
+        });
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Probe:");
+            match &self.probes {
+                None => {
+                    ui.spinner();
+                }
+                Some(p) if p.is_empty() => {
+                    ui.colored_label(Color32::from_rgb(200, 120, 0), "none found");
+                }
+                Some(p) => {
+                    ui.label(p.join(", "));
+                }
+            }
+            if ui.button("Rescan").clicked() {
+                self.probes = None;
+                let _ = tx.send(Command::ListProbes);
+            }
+        });
+
+        ui.add_space(12.0);
+        let ready = matches!(self.artifacts, Some(Ok(_)))
+            && !self.log.trim().is_empty()
+            && (!self.pin.is_empty() || self.dev_ca.is_some())
+            && !self.starting;
+        if ui
+            .add_enabled(
+                ready,
+                egui::Button::new(RichText::new("Start session").size(18.0)),
+            )
+            .clicked()
+            && let Some(zip) = &self.zip
+        {
+            self.starting = true;
+            self.error = None;
+            let _ = tx.send(Command::StartSession(SessionConfig {
+                zip: zip.clone(),
+                variant: self.variant,
+                log: crate::profile::expand_home(self.log.trim()),
+                pin: self.pin.clone(),
+                ca_cert_file: self.ca_cert_file.clone(),
+                dev_ca: self.dev_ca.clone(),
+            }));
+        }
+        if self.starting {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Checking YubiKey, CA and artifacts…");
+            });
+        }
+        if let Some(e) = &self.error {
+            ui.colored_label(Color32::RED, e);
+        }
+    }
+}
+
+impl Session {
+    fn ui(&mut self, ui: &mut egui::Ui, tx: &Sender<Command>) {
+        let ctx = ui.ctx().clone();
+        ui.horizontal(|ui| {
+            ui.heading(format!("{}: {}", self.info.project, self.info.variant));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("End session").clicked() {
+                    self.show_summary = true;
+                }
+            });
+        });
+        ui.small(format!(
+            "{} + {} (device type {}) | probe {} | CA {} | YubiKey {} | log {}",
+            self.info.bootloader,
+            self.info.firmware,
+            self.info.device_type,
+            self.info.probe,
+            self.info.ca_subject,
+            self.info.yubikey,
+            self.info.log.display()
+        ));
+        if self.info.dev_ca {
+            dev_ca_banner(ui);
+        }
+        ui.add_space(6.0);
+
+        ui.horizontal(|ui| {
+            counter(ui, "OK", self.counts.ok, Color32::from_rgb(40, 160, 60));
+            counter(
+                ui,
+                "UNVERIFIED",
+                self.counts.unverified,
+                Color32::from_rgb(210, 140, 0),
+            );
+            counter(
+                ui,
+                "FAILED",
+                self.counts.fail,
+                Color32::from_rgb(200, 40, 40),
+            );
+        });
+        ui.add_space(10.0);
+
+        let idle = matches!(self.phase, Phase::Idle);
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        ui.add_enabled_ui(idle, |ui| {
+            egui::Grid::new("inputs")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Device UID").size(16.0));
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.uid)
+                            .font(egui::TextStyle::Heading)
+                            .desired_width(260.0),
+                    );
+                    if self.focus_uid {
+                        r.request_focus();
+                        self.focus_uid = false;
+                    }
+                    if r.lost_focus() && enter && !self.uid.trim().is_empty() {
+                        self.uid = validate::normalize_uid(&self.uid);
+                        self.focus_icc = true;
+                    }
+                    ui.end_row();
+                    ui.label(RichText::new("SIM ICCID").size(16.0));
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.icc)
+                            .font(egui::TextStyle::Heading)
+                            .desired_width(260.0),
+                    );
+                    if self.focus_icc {
+                        r.request_focus();
+                        self.focus_icc = false;
+                    }
+                    if r.lost_focus() && enter && !self.icc.trim().is_empty() {
+                        self.prepare_start();
+                    }
+                    ui.end_row();
+                });
+            ui.horizontal(|ui| {
+                if ui.button("Provision").clicked() {
+                    self.prepare_start();
+                }
+                if ui.button("Clear").clicked() {
+                    self.uid.clear();
+                    self.icc.clear();
+                    self.focus_uid = true;
+                }
+            });
+        });
+
+        ui.add_space(10.0);
+        ui.separator();
+        self.status_ui(ui);
+
+        ui.separator();
+        for (i, name) in worker::STEPS.iter().enumerate() {
+            ui.horizontal(|ui| {
+                match &self.steps[i] {
+                    StepState::Pending => ui.label(RichText::new("○").weak()),
+                    StepState::Running => {
+                        ui.spinner();
+                        ui.label("")
+                    }
+                    StepState::Done => ui.colored_label(Color32::from_rgb(40, 160, 60), "✔"),
+                    StepState::Failed(_) => ui.colored_label(Color32::from_rgb(200, 40, 40), "✘"),
+                };
+                ui.label(*name);
+                if let StepState::Failed(m) = &self.steps[i] {
+                    ui.colored_label(Color32::from_rgb(200, 40, 40), m);
+                }
+            });
+        }
+
+        self.dialogs(&ctx, tx);
+    }
+
+    fn prepare_start(&mut self) {
+        self.uid = validate::normalize_uid(&self.uid);
+        self.icc = self.icc.trim().to_owned();
+        if self.uid.is_empty() {
+            self.focus_uid = true;
+            return;
+        }
+        if self.icc.is_empty() {
+            self.focus_icc = true;
+            return;
+        }
+        let mut warnings = Vec::new();
+        if let Some(w) = validate::uid_warning(&self.uid, self.info.uid_length) {
+            warnings.push(w);
+        }
+        if !validate::iccid_valid(&self.icc) {
+            warnings.push(validate::ICCID_WARNING.to_owned());
+        }
+        let reprovision = log_csv::contains_uid(&self.info.log, &self.uid);
+        if reprovision {
+            warnings.push(format!(
+                "UID {} is already in the log. Re-provision it?",
+                self.uid
+            ));
+        }
+        self.phase = Phase::Confirm {
+            warnings,
+            uid: self.uid.clone(),
+            icc: self.icc.clone(),
+            reprovision,
+        };
+    }
+
+    fn status_ui(&self, ui: &mut egui::Ui) {
+        match &self.phase {
+            Phase::Running => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new(format!("Provisioning {}…", self.uid)).size(22.0));
+                });
+            }
+            Phase::Failed { step, message } => {
+                ui.label(
+                    RichText::new(format!("{} failed", worker::STEPS[*step]))
+                        .size(22.0)
+                        .color(Color32::from_rgb(200, 40, 40)),
+                );
+                ui.label(message);
+            }
+            _ => match &self.last {
+                None => {
+                    ui.label(RichText::new("Scan the device UID").size(22.0));
+                }
+                Some(f) => {
+                    let (text, color) = match f.outcome {
+                        Outcome::Ok => (format!("OK: {}", f.uid), Color32::from_rgb(40, 160, 60)),
+                        Outcome::Unverified => (
+                            format!("UNVERIFIED: {}", f.uid),
+                            Color32::from_rgb(210, 140, 0),
+                        ),
+                        Outcome::Fail => {
+                            (format!("FAIL: {}", f.uid), Color32::from_rgb(200, 40, 40))
+                        }
+                    };
+                    ui.label(RichText::new(text).size(26.0).strong().color(color));
+                    match f.outcome {
+                        Outcome::Unverified => {
+                            ui.label("Flashed and logged, but the boot log did not confirm the UID. Re-provision if the device does not work.");
+                        }
+                        Outcome::Fail => {
+                            ui.label("Not provisioned. You can retry the same UID.");
+                        }
+                        Outcome::Ok => {}
+                    }
+                    if let Some(e) = &f.error {
+                        ui.label(e);
+                    }
+                    if !f.rtt_log.is_empty() {
+                        ui.collapsing("Boot log", |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(160.0)
+                                .show(ui, |ui| {
+                                    ui.monospace(&f.rtt_log);
+                                });
+                        });
+                    }
+                }
+            },
+        }
+    }
+
+    fn dialogs(&mut self, ctx: &egui::Context, tx: &Sender<Command>) {
+        let mut next: Option<Phase> = None;
+        match &self.phase {
+            Phase::Confirm {
+                warnings,
+                uid,
+                icc,
+                reprovision,
+            } => {
+                if warnings.is_empty() {
+                    let _ = tx.send(Command::Provision {
+                        uid: uid.clone(),
+                        icc: icc.clone(),
+                        reprovision: *reprovision,
+                    });
+                    next = Some(Phase::Running);
+                } else {
+                    egui::Window::new("Please check")
+                        .collapsible(false)
+                        .resizable(false)
+                        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                        .show(ctx, |ui| {
+                            for w in warnings {
+                                ui.label(w);
+                                ui.add_space(4.0);
+                            }
+                            ui.horizontal(|ui| {
+                                if ui.button("Cancel").clicked() {
+                                    next = Some(Phase::Idle);
+                                    self.focus_uid = true;
+                                }
+                                if ui.button("Continue anyway").clicked() {
+                                    let _ = tx.send(Command::Provision {
+                                        uid: uid.clone(),
+                                        icc: icc.clone(),
+                                        reprovision: *reprovision,
+                                    });
+                                    next = Some(Phase::Running);
+                                }
+                            });
+                        });
+                }
+            }
+            Phase::Failed { step, message } => {
+                egui::Window::new("Step failed").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                    ui.strong(worker::STEPS[*step]);
+                    ui.label(message);
+                    ui.add_space(6.0);
+                    ui.label("Fix the cause (probe, power, SWD plug) and retry, or skip this device.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Retry").clicked() {
+                            let _ = tx.send(Command::Retry);
+                            next = Some(Phase::Running);
+                        }
+                        if ui.button("Skip device").clicked() {
+                            let _ = tx.send(Command::Skip);
+                            next = Some(Phase::Running);
+                        }
+                    });
+                });
+            }
+            _ => {}
+        }
+        if let Some(p) = next {
+            self.phase = p;
+        }
+
+        if self.show_summary {
+            egui::Window::new("Session summary").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                ui.label(format!("OK: {}   UNVERIFIED: {}   FAILED: {}", self.counts.ok, self.counts.unverified, self.counts.fail));
+                ui.label(format!("Log: {}", self.info.log.display()));
+                if let Some(note) = &self.info.exit_note {
+                    ui.add_space(6.0);
+                    ui.strong(note);
+                }
+                if self.counts.unverified > 0 {
+                    ui.add_space(6.0);
+                    ui.colored_label(
+                        Color32::from_rgb(210, 140, 0),
+                        format!("{} device(s) flashed but not verified over RTT; re-provision them if they do not work.", self.counts.unverified),
+                    );
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Back").clicked() {
+                        self.show_summary = false;
+                    }
+                    if ui.button("Quit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+            });
+        }
+    }
+}
+
+fn dev_ca_banner(ui: &mut egui::Ui) {
+    ui.label(
+        RichText::new("DEVELOPMENT CA from file: certificates are not signed by the production CA")
+            .strong()
+            .color(Color32::from_rgb(210, 140, 0)),
+    );
+}
+
+fn counter(ui: &mut egui::Ui, label: &str, n: u32, color: Color32) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.label(
+                RichText::new(n.to_string())
+                    .size(30.0)
+                    .strong()
+                    .color(color),
+            );
+            ui.label(label);
+        });
+    });
+}

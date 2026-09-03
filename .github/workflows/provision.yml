@@ -1,0 +1,56 @@
+name: Provisioning tool
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "sensor-link-provision/**"
+      - "sensor-link-firmware/**"
+      - "**/provision.yml"
+  pull_request:
+    types: [opened, synchronize]
+    branches: [master]
+    paths:
+      - "sensor-link-provision/**"
+      - "**/provision.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: provision-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: sensor-link-provision-macos-arm64
+          - os: ubuntu-22.04
+            artifact: sensor-link-provision-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libpcsclite-dev libasound2-dev libgtk-3-dev pkg-config
+      - name: Test
+        run: cargo test -p sensor-link-provision
+      - name: Build
+        run: cargo build --release -p sensor-link-provision
+      - name: Archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/release/sensor-link-provision
+          retention-days: 90

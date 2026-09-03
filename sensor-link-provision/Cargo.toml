@@ -1,0 +1,34 @@
+[package]
+name = "sensor-link-provision"
+version = "0.1.0"
+edition = "2024"
+description = "GUI provisioning tool for sensor-link devices: flashes bootloader, firmware and per-device config, signs device certificates with a YubiKey-held CA"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+eframe = "0.33.3"
+env_logger = "0.11.11"
+getrandom = "0.4.3"
+glob = "0.3.4"
+hex = "0.4.3"
+log = "0.4.34"
+p256 = "0.14.0"
+pem = "4.0.0"
+probe-rs = { version = "0.32.0", default-features = false, features = ["builtin-targets", "builtin-formats"] }
+rcgen = { version = "0.14.9", features = ["pem", "x509-parser"] }
+regex = "1.13.1"
+rfd = "0.17.2"
+rodio = "0.22.2"
+sensor-link-firmware = { version = "0.1.0", path = "../sensor-link-firmware", default-features = false, features = ["use-std"] }
+serde = { workspace = true, features = ["derive"] }
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+time = "0.3.55"
+toml = "1.1.4"
+x509-cert = "0.2"
+x509-parser = "0.18.1"
+yubikey = "0.8.0"
+zip = "8.6.0"
+

@@ -343,7 +343,7 @@ pub trait SensorDataStore: Send + Sync + 'static {
         &self,
         file_id: &DataStoreId,
         chunk_index: u32,
-    ) -> anyhow::Result<Vec<u8>>;
+    ) -> anyhow::Result<Option<Vec<u8>>>;
 
     async fn delete_data_export(&self, export_id: &DataStoreId) -> Result<()>
     where

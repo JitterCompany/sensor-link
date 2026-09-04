@@ -1600,9 +1600,9 @@ where
         &self,
         file_id: &DataStoreId,
         chunk_index: u32,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<Option<Vec<u8>>> {
         tracing::debug!("Getting chunk {} of file {}", chunk_index, file_id);
-        let document = self
+        let Some(document) = self
             .collection::<Document>(&format!("{DATA_EXPORT_COLL_NAME}.chunks"))
             .find_one(doc! {
                 "files_id": ObjectId::parse_str(file_id)?,
@@ -1610,14 +1610,16 @@ where
             })
             .projection(doc! { "data": 1 })
             .await?
-            .ok_or(anyhow::anyhow!("Chunk not found"))?;
+        else {
+            return Ok(None);
+        };
         let data = document
             .get("data")
             .ok_or(anyhow::anyhow!("No data found"))?;
         let Bson::Binary(Binary { bytes, .. }) = data else {
             return Err(anyhow::anyhow!("Data is not binary"));
         };
-        Ok(bytes.to_vec())
+        Ok(Some(bytes.to_vec()))
     }
 
     async fn delete_data_export(&self, export_id: &DataStoreId) -> Result<()>

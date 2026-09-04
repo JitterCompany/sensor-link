@@ -25,6 +25,9 @@ pub struct App {
 /// Aspect ratio of the Jitter wordmark (viewBox 160x50).
 const LOGO_ASPECT: f32 = 160.0 / 50.0;
 
+/// Jitter blue, used for section badges and accents.
+const ACCENT: Color32 = Color32::from_rgb(77, 159, 220);
+
 fn load_logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
     let img = image::load_from_memory(include_bytes!("../assets/jitter-logo.png"))
         .ok()?
@@ -227,178 +230,210 @@ impl Setup {
         tx: &Sender<Command>,
         logo_tex: Option<&egui::TextureHandle>,
     ) {
-        logo(ui, logo_tex, 44.0);
-        ui.heading("Provisioning");
-        ui.add_space(8.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(10.0);
+                logo(ui, logo_tex, 48.0);
+                ui.add_space(6.0);
+                ui.heading("Provisioning");
+                ui.add_space(20.0);
 
-        ui.horizontal(|ui| {
-            if ui.button("Select firmware zip…").clicked()
-                && let Some(p) = rfd::FileDialog::new()
-                    .add_filter("zip", &["zip"])
-                    .pick_file()
-            {
-                self.artifacts = Some(Artifacts::load(&p).map_err(|e| format!("{e:#}")));
-                self.zip = Some(p);
-                self.variant = 0;
-                if let Some(Ok(a)) = &self.artifacts
-                    && self.log.is_empty()
-                    && let Some(d) = a.profile.default_log_path()
-                {
-                    self.log = d.display().to_string();
-                }
-            }
-            if let Some(z) = &self.zip {
-                ui.label(
-                    z.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                );
-            }
-        });
+                section(ui, 1, "Firmware", |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Select firmware zip\u{2026}").clicked()
+                            && let Some(p) = rfd::FileDialog::new()
+                                .add_filter("zip", &["zip"])
+                                .pick_file()
+                        {
+                            self.artifacts = Some(Artifacts::load(&p).map_err(|e| format!("{e:#}")));
+                            self.zip = Some(p);
+                            self.variant = 0;
+                            if let Some(Ok(a)) = &self.artifacts
+                                && self.log.is_empty()
+                                && let Some(d) = a.profile.default_log_path()
+                            {
+                                self.log = d.display().to_string();
+                            }
+                        }
+                        if let Some(z) = &self.zip {
+                            ui.label(
+                                z.file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_default(),
+                            );
+                        }
+                    });
+                    match &self.artifacts {
+                        None => {
+                            ui.add_space(6.0);
+                            ui.weak("The CI artifact zip (firmware-build-<run>.zip) with provision.toml, bootloader and firmware.");
+                        }
+                        Some(Err(e)) => {
+                            ui.add_space(6.0);
+                            ui.colored_label(Color32::RED, e);
+                        }
+                        Some(Ok(a)) => {
+                            ui.add_space(10.0);
+                            egui::Grid::new("profile")
+                                .num_columns(2)
+                                .spacing([24.0, 8.0])
+                                .show(ui, |ui| {
+                                    ui.label("Project");
+                                    ui.strong(&a.profile.project.name);
+                                    ui.end_row();
+                                    ui.label("Bootloader");
+                                    ui.label(&a.bootloader.name);
+                                    ui.end_row();
+                                    ui.label("Variant");
+                                    egui::ComboBox::from_id_salt("variant")
+                                        .selected_text(&a.profile.variants[self.variant].name)
+                                        .show_ui(ui, |ui| {
+                                            for (i, v) in a.profile.variants.iter().enumerate() {
+                                                ui.selectable_value(&mut self.variant, i, &v.name);
+                                            }
+                                        });
+                                    ui.end_row();
+                                    ui.label("Firmware");
+                                    ui.label(&a.firmwares[self.variant].name);
+                                    ui.end_row();
+                                    ui.label("Chip");
+                                    ui.label(&a.profile.target.chip);
+                                    ui.end_row();
+                                    ui.label("Cert subject");
+                                    ui.label(format!("{}, CN=<UID>", a.profile.identity.cert_subject));
+                                    ui.end_row();
+                                    ui.label("CA slot");
+                                    ui.label(format!("YubiKey PIV {}", a.profile.identity.ca_piv_slot));
+                                    ui.end_row();
+                                });
+                        }
+                    }
+                });
 
-        match &self.artifacts {
-            None => {
-                ui.label("The CI artifact zip (firmware-build-<run>.zip) containing provision.toml, bootloader and firmware.");
-            }
-            Some(Err(e)) => {
-                ui.colored_label(Color32::RED, e);
-            }
-            Some(Ok(a)) => {
-                egui::Grid::new("profile")
-                    .num_columns(2)
-                    .spacing([12.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.label("Project");
-                        ui.strong(&a.profile.project.name);
-                        ui.end_row();
-                        ui.label("Bootloader");
-                        ui.label(&a.bootloader.name);
-                        ui.end_row();
-                        ui.label("Variant");
-                        egui::ComboBox::from_id_salt("variant")
-                            .selected_text(&a.profile.variants[self.variant].name)
-                            .show_ui(ui, |ui| {
-                                for (i, v) in a.profile.variants.iter().enumerate() {
-                                    ui.selectable_value(&mut self.variant, i, &v.name);
+                section(ui, 2, "Secrets", |ui| {
+                    egui::Grid::new("secrets")
+                        .num_columns(2)
+                        .spacing([24.0, 12.0])
+                        .show(ui, |ui| {
+                            ui.label("Issuance log (CSV)");
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.log).desired_width(360.0),
+                                );
+                                if ui.button("\u{2026}").clicked()
+                                    && let Some(p) = rfd::FileDialog::new()
+                                        .add_filter("csv", &["csv"])
+                                        .save_file()
+                                {
+                                    self.log = p.display().to_string();
                                 }
                             });
-                        ui.end_row();
-                        ui.label("Firmware");
-                        ui.label(&a.firmwares[self.variant].name);
-                        ui.end_row();
-                        ui.label("Chip");
-                        ui.label(&a.profile.target.chip);
-                        ui.end_row();
-                        ui.label("Cert subject");
-                        ui.label(format!("{}, CN=<UID>", a.profile.identity.cert_subject));
-                        ui.end_row();
-                        ui.label("CA slot");
-                        ui.label(format!("YubiKey PIV {}", a.profile.identity.ca_piv_slot));
-                        ui.end_row();
+                            ui.end_row();
+
+                            if let Some(dev) = &self.dev_ca {
+                                ui.label("CA");
+                                ui.vertical(|ui| {
+                                    dev_ca_banner(ui);
+                                    ui.label(format!("key: {}", dev.key.display()));
+                                    ui.label(format!("cert: {}", dev.cert.display()));
+                                });
+                                ui.end_row();
+                            } else {
+                                ui.label("YubiKey PIV PIN");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.pin)
+                                        .password(true)
+                                        .desired_width(200.0),
+                                );
+                                ui.end_row();
+
+                                ui.label("CA certificate");
+                                ui.horizontal(|ui| {
+                                    if ui.button("Select file\u{2026}").clicked()
+                                        && let Some(p) = rfd::FileDialog::new()
+                                            .add_filter("PEM", &["pem", "cert", "crt"])
+                                            .pick_file()
+                                    {
+                                        self.ca_cert_file = Some(p);
+                                    }
+                                    match &self.ca_cert_file {
+                                        Some(p) => {
+                                            ui.label(
+                                                p.file_name()
+                                                    .map(|n| n.to_string_lossy().into_owned())
+                                                    .unwrap_or_default(),
+                                            );
+                                        }
+                                        None => {
+                                            ui.weak("(read from the YubiKey slot)");
+                                        }
+                                    }
+                                });
+                                ui.end_row();
+                            }
+                        });
+                });
+
+                section(ui, 3, "Start", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Probe:");
+                        match &self.probes {
+                            None => {
+                                ui.spinner();
+                            }
+                            Some(p) if p.is_empty() => {
+                                ui.colored_label(Color32::from_rgb(200, 120, 0), "none found");
+                            }
+                            Some(p) => {
+                                ui.label(p.join(", "));
+                            }
+                        }
+                        if ui.button("Rescan").clicked() {
+                            self.probes = None;
+                            let _ = tx.send(Command::ListProbes);
+                        }
                     });
-            }
-        }
-
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Issuance log (CSV)");
-            ui.add(egui::TextEdit::singleline(&mut self.log).desired_width(380.0));
-            if ui.button("…").clicked()
-                && let Some(p) = rfd::FileDialog::new()
-                    .add_filter("csv", &["csv"])
-                    .save_file()
-            {
-                self.log = p.display().to_string();
-            }
-        });
-        if let Some(dev) = &self.dev_ca {
-            dev_ca_banner(ui);
-            ui.label(format!("key: {}", dev.key.display()));
-            ui.label(format!("cert: {}", dev.cert.display()));
-        } else {
-            ui.horizontal(|ui| {
-                ui.label("YubiKey PIV PIN");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.pin)
-                        .password(true)
-                        .desired_width(160.0),
-                );
+                    ui.add_space(14.0);
+                    let ready = matches!(self.artifacts, Some(Ok(_)))
+                        && !self.log.trim().is_empty()
+                        && (!self.pin.is_empty() || self.dev_ca.is_some())
+                        && !self.starting;
+                    if ui
+                        .add_enabled(
+                            ready,
+                            egui::Button::new(RichText::new("Start session").size(18.0))
+                                .min_size(egui::vec2(190.0, 38.0)),
+                        )
+                        .clicked()
+                        && let Some(zip) = &self.zip
+                    {
+                        self.starting = true;
+                        self.error = None;
+                        let _ = tx.send(Command::StartSession(SessionConfig {
+                            zip: zip.clone(),
+                            variant: self.variant,
+                            log: crate::profile::expand_home(self.log.trim()),
+                            pin: self.pin.clone(),
+                            ca_cert_file: self.ca_cert_file.clone(),
+                            dev_ca: self.dev_ca.clone(),
+                        }));
+                    }
+                    if self.starting {
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Checking YubiKey, CA and artifacts\u{2026}");
+                        });
+                    }
+                    if let Some(e) = &self.error {
+                        ui.add_space(6.0);
+                        ui.colored_label(Color32::RED, e);
+                    }
+                });
             });
-        }
-        ui.horizontal(|ui| {
-            ui.label("CA certificate file (only if not stored on the YubiKey)");
-            if ui.button("Select…").clicked()
-                && let Some(p) = rfd::FileDialog::new()
-                    .add_filter("PEM", &["pem", "cert", "crt"])
-                    .pick_file()
-            {
-                self.ca_cert_file = Some(p);
-            }
-            if let Some(p) = &self.ca_cert_file {
-                ui.label(
-                    p.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                );
-            }
-        });
-
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Probe:");
-            match &self.probes {
-                None => {
-                    ui.spinner();
-                }
-                Some(p) if p.is_empty() => {
-                    ui.colored_label(Color32::from_rgb(200, 120, 0), "none found");
-                }
-                Some(p) => {
-                    ui.label(p.join(", "));
-                }
-            }
-            if ui.button("Rescan").clicked() {
-                self.probes = None;
-                let _ = tx.send(Command::ListProbes);
-            }
-        });
-
-        ui.add_space(12.0);
-        let ready = matches!(self.artifacts, Some(Ok(_)))
-            && !self.log.trim().is_empty()
-            && (!self.pin.is_empty() || self.dev_ca.is_some())
-            && !self.starting;
-        if ui
-            .add_enabled(
-                ready,
-                egui::Button::new(RichText::new("Start session").size(18.0)),
-            )
-            .clicked()
-            && let Some(zip) = &self.zip
-        {
-            self.starting = true;
-            self.error = None;
-            let _ = tx.send(Command::StartSession(SessionConfig {
-                zip: zip.clone(),
-                variant: self.variant,
-                log: crate::profile::expand_home(self.log.trim()),
-                pin: self.pin.clone(),
-                ca_cert_file: self.ca_cert_file.clone(),
-                dev_ca: self.dev_ca.clone(),
-            }));
-        }
-        if self.starting {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Checking YubiKey, CA and artifacts…");
-            });
-        }
-        if let Some(e) = &self.error {
-            ui.colored_label(Color32::RED, e);
-        }
     }
 }
-
 impl Session {
     fn ui(
         &mut self,
@@ -759,6 +794,30 @@ impl Session {
             });
         }
     }
+}
+
+fn section(ui: &mut egui::Ui, n: u32, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
+        ui.painter().circle_filled(rect.center(), 13.0, ACCENT);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            n.to_string(),
+            egui::FontId::proportional(15.0),
+            Color32::WHITE,
+        );
+        ui.add_space(6.0);
+        ui.label(RichText::new(title).size(19.0).strong());
+    });
+    ui.add_space(8.0);
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            body(ui);
+        });
+    ui.add_space(22.0);
 }
 
 fn dev_ca_banner(ui: &mut egui::Ui) {

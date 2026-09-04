@@ -33,7 +33,6 @@ use crate::{
         DataStoreError, DeviceStore, EventStore, FirmwareStore, Result, SensorDataOptions,
         SensorDataStore, TransactionDataStore,
     },
-    utils::datetime::datetime_from_millis,
     DataStoreId, MeteorId, TimeRange,
 };
 
@@ -1468,35 +1467,6 @@ where
         );
         let mut upload_stream = bucket.open_upload_stream("example.txt").await?;
 
-        let first_timestamp = if let Some(data_channel) = data_channels.first() {
-            self.find_first_timestamp_for_mp(*data_channel, meas_point_id)
-                .await?
-                .and_then(|ts| datetime_from_millis(ts).ok())
-        } else {
-            None
-        };
-        let last_timestamp = if let Some(data_channel) = data_channels.first() {
-            self.find_latest_timestamp_for_mp(*data_channel, meas_point_id)
-                .await?
-                .and_then(|ts| datetime_from_millis(ts).ok())
-        } else {
-            None
-        };
-        let mut mp_time_range = TimeRange {
-            from: timerange.from,
-            until: timerange.until,
-        };
-        if let Some(first_timestamp) = first_timestamp {
-            if first_timestamp > mp_time_range.from {
-                mp_time_range.from = first_timestamp;
-            }
-        }
-        if let Some(last_timestamp) = last_timestamp {
-            if last_timestamp < mp_time_range.until {
-                mp_time_range.until = last_timestamp;
-            }
-        }
-
         // The freq/perc columns are decided from the first non-empty batch: a field
         // is included only if the data actually carries it. The header is therefore
         // written lazily, once that decision can be made.
@@ -1504,7 +1474,7 @@ where
         let mut include_freq = false;
         let mut include_perc = false;
 
-        for day_range in mp_time_range.iter_hours() {
+        for day_range in timerange.iter_hours() {
             let mut timeseries = MPSensorDataChannels::new();
             for &data_channel in data_channels.iter() {
                 let data = self
@@ -1513,7 +1483,7 @@ where
                         Some(time_resolution),
                         meas_point_id,
                         &day_range,
-                        day_range.until == mp_time_range.until,
+                        day_range.until == timerange.until,
                     )
                     .await?;
                 timeseries.push(data);
@@ -1597,9 +1567,9 @@ where
         &self,
         file_id: &DataStoreId,
         chunk_index: u32,
-    ) -> anyhow::Result<Vec<u8>> {
+    ) -> anyhow::Result<Option<Vec<u8>>> {
         tracing::debug!("Getting chunk {} of file {}", chunk_index, file_id);
-        let document = self
+        let Some(document) = self
             .collection::<Document>(&format!("{DATA_EXPORT_COLL_NAME}.chunks"))
             .find_one(doc! {
                 "files_id": ObjectId::parse_str(file_id)?,
@@ -1607,14 +1577,16 @@ where
             })
             .projection(doc! { "data": 1 })
             .await?
-            .ok_or(anyhow::anyhow!("Chunk not found"))?;
+        else {
+            return Ok(None);
+        };
         let data = document
             .get("data")
             .ok_or(anyhow::anyhow!("No data found"))?;
         let Bson::Binary(Binary { bytes, .. }) = data else {
             return Err(anyhow::anyhow!("Data is not binary"));
         };
-        Ok(bytes.to_vec())
+        Ok(Some(bytes.to_vec()))
     }
 
     async fn delete_data_export(&self, export_id: &DataStoreId) -> Result<()>

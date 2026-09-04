@@ -450,6 +450,9 @@ impl Session {
 
         let idle = matches!(self.phase, Phase::Idle);
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let scan_color = Color32::from_rgb(45, 120, 220);
+        let mut uid_focused = false;
+        let mut icc_focused = false;
         ui.add_enabled_ui(idle, |ui| {
             egui::Grid::new("inputs")
                 .num_columns(2)
@@ -458,13 +461,16 @@ impl Session {
                     ui.label(RichText::new("Device UID").size(16.0));
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut self.uid)
+                            .id_salt("uid_field")
                             .font(egui::TextStyle::Heading)
                             .desired_width(260.0),
                     );
+                    uid_focused = r.has_focus();
                     if self.focus_uid {
                         r.request_focus();
                         self.focus_uid = false;
                     }
+                    // Enter (barcode-scanner suffix) submits: advance to the SIM field.
                     if r.lost_focus() && enter && !self.uid.trim().is_empty() {
                         self.uid = validate::normalize_uid(&self.uid);
                         self.focus_icc = true;
@@ -473,18 +479,36 @@ impl Session {
                     ui.label(RichText::new("SIM ICCID").size(16.0));
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut self.icc)
+                            .id_salt("icc_field")
                             .font(egui::TextStyle::Heading)
                             .desired_width(260.0),
                     );
+                    icc_focused = r.has_focus();
                     if self.focus_icc {
                         r.request_focus();
                         self.focus_icc = false;
                     }
+                    // Enter on the SIM field starts provisioning (hands-free scan flow).
                     if r.lost_focus() && enter && !self.icc.trim().is_empty() {
                         self.prepare_start();
                     }
                     ui.end_row();
                 });
+            if idle {
+                if uid_focused {
+                    ui.label(
+                        RichText::new("\u{2b07} Scan the device UID barcode")
+                            .color(scan_color)
+                            .strong(),
+                    );
+                } else if icc_focused {
+                    ui.label(
+                        RichText::new("\u{2b07} Scan the SIM barcode (ICCID)")
+                            .color(scan_color)
+                            .strong(),
+                    );
+                }
+            }
             ui.horizontal(|ui| {
                 if ui.button("Provision").clicked() {
                     self.prepare_start();
@@ -610,7 +634,7 @@ impl Session {
             }
             _ => match &self.last {
                 None => {
-                    ui.label(RichText::new("Scan the device UID").size(22.0));
+                    ui.label(RichText::new("Ready").size(22.0));
                 }
                 Some(f) => {
                     let (text, color) = match f.outcome {

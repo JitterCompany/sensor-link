@@ -37,4 +37,12 @@ iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 sed "s/@VERSION@/$VERSION/g" "$SCRIPT_DIR/Info.plist" > "$APP/Contents/Info.plist"
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
-echo "Built $APP (version $VERSION)"
+# Ad-hoc code-sign the assembled bundle. Without any signature, a quarantined
+# app on Apple Silicon is reported as "damaged" with no way to allow it; an
+# ad-hoc signature makes Gatekeeper show the normal "unidentified developer"
+# prompt with an "Open Anyway" button instead. (Not notarised; the first
+# launch still needs the user to allow it once.)
+codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
+
+echo "Built and ad-hoc signed $APP (version $VERSION)"

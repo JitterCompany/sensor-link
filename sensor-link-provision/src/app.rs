@@ -496,7 +496,7 @@ impl Session {
                 Color32::from_rgb(200, 40, 40),
             );
         });
-        ui.add_space(10.0);
+        ui.add_space(4.0);
 
         let idle = matches!(self.phase, Phase::Idle);
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));

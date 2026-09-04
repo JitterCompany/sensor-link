@@ -14,6 +14,7 @@ Reusable building blocks for Jitter sensor platforms, in three groups:
 | Crate | Description |
 |---|---|
 | [server/task-supervisor](server/task-supervisor/) | Supervised tokio background tasks: auto-restart on panic, graceful shutdown with timeout |
+| [sensor-link-provision](sensor-link-provision/) | Desktop provisioning tool: flashes bootloader, firmware and device config over J-Link, signs device certificates with a YubiKey-held CA |
 
 ## Linting
 

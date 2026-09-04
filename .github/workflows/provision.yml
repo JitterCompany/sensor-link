@@ -1,0 +1,92 @@
+name: Provisioning tool
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "sensor-link-provision/**"
+      - "sensor-link-firmware/**"
+      - "**/provision.yml"
+  pull_request:
+    types: [opened, synchronize]
+    branches: [master]
+    paths:
+      - "sensor-link-provision/**"
+      - "**/provision.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: provision-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: sensor-link-provision-macos-arm64
+          - os: ubuntu-22.04
+            artifact: sensor-link-provision-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libpcsclite-dev libasound2-dev libgtk-3-dev pkg-config
+      - name: Test
+        run: cargo test -p sensor-link-provision
+      - name: Build
+        run: cargo build --release -p sensor-link-provision
+
+      # macOS: package a .app bundle (icon + Info.plist) and zip it with
+      # ditto so the bundle structure and exec bit survive the artifact upload.
+      - name: Bundle macOS app
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(awk -F '"' '/^version/ {print $2; exit}' sensor-link-provision/Cargo.toml)-${{ github.run_number }}
+          mkdir -p dist
+          sensor-link-provision/macos/bundle.sh \
+            target/release/sensor-link-provision \
+            sensor-link-provision/assets/jitter-icon.png \
+            dist "$VERSION"
+          # Name the zip after the artifact: with archive:false the file name
+          # becomes the artifact name. ditto preserves the bundle's exec bit.
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/sensor-link-provision.app "dist/${{ matrix.artifact }}.zip"
+
+      - name: Archive (macOS app)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          # archive:false uploads the zip as-is (no extra outer zip) and uses
+          # the file name as the artifact name, so name: is ignored here.
+          path: dist/${{ matrix.artifact }}.zip
+          archive: false
+          retention-days: 90
+
+      - name: Stage Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp target/release/sensor-link-provision "dist/${{ matrix.artifact }}"
+
+      - name: Archive (Linux binary)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          # archive:false keeps the executable bit and uses the file name as
+          # the artifact name.
+          path: dist/${{ matrix.artifact }}
+          archive: false
+          retention-days: 90

@@ -103,6 +103,11 @@ pub enum Event {
     Probes(Vec<String>),
     /// Accumulated RTT boot log for the device being verified.
     Rtt(String),
+    /// Flashing progress (0.0..=1.0) for a step.
+    StepProgress {
+        index: usize,
+        fraction: f32,
+    },
     SessionReady(Box<SessionInfo>),
     SessionFailed(String),
     Step {
@@ -297,6 +302,13 @@ impl Worker {
         let variant = &profile.variants[session.variant];
         let target = &profile.target;
 
+        let ptx = self.events.clone();
+        let pctx = self.ctx.clone();
+        let progress = |index: usize, fraction: f32| {
+            let _ = ptx.send(Event::StepProgress { index, fraction });
+            pctx.request_repaint();
+        };
+
         let mut rtt_log = String::new();
         let mut last_error = None;
         let outcome = (|| -> Result<Outcome, Skipped> {
@@ -315,12 +327,15 @@ impl Worker {
             })?;
             let mut probe = self.step(2, || flash::attach(&target.chip, target.swd_speed_khz))?;
             self.step(3, || {
-                flash::flash_elf(&mut probe, &session.artifacts.bootloader.path)
+                flash::flash_elf(&mut probe, &session.artifacts.bootloader.path, |f| {
+                    progress(3, f)
+                })
             })?;
             self.step(4, || {
                 flash::flash_elf(
                     &mut probe,
                     &session.artifacts.firmwares[session.variant].path,
+                    |f| progress(4, f),
                 )
             })?;
             self.step(5, || {
@@ -329,6 +344,7 @@ impl Worker {
                     target.config_flash_start,
                     target.config_flash_end,
                     &config,
+                    |f| progress(5, f),
                 )
             })?;
             self.step(STEP_LOG, || {

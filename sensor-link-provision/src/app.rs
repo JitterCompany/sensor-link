@@ -76,6 +76,8 @@ struct Session {
     phase: Phase,
     last: Option<Finished>,
     steps: Vec<StepState>,
+    /// Flashing progress (0.0..=1.0) per step, for the progress bars.
+    progress: Vec<f32>,
     /// RTT boot log streamed for the device currently being verified.
     live_rtt: String,
     show_summary: bool,
@@ -149,6 +151,7 @@ impl App {
                         phase: Phase::Idle,
                         last: None,
                         steps: vec![StepState::Pending; worker::STEPS.len()],
+                        progress: vec![0.0; worker::STEPS.len()],
                         live_rtt: String::new(),
                         show_summary: false,
                     });
@@ -169,12 +172,24 @@ impl App {
                                 message: m.clone(),
                             };
                         }
+                        if matches!(s.steps[index], StepState::Pending | StepState::Running)
+                            && let Some(p) = s.progress.get_mut(index)
+                        {
+                            *p = 0.0;
+                        }
                         s.steps[index] = state;
                     }
                 }
                 Event::Rtt(log) => {
                     if let Screen::Session(s) = &mut self.screen {
                         s.live_rtt = log;
+                    }
+                }
+                Event::StepProgress { index, fraction } => {
+                    if let Screen::Session(s) = &mut self.screen
+                        && let Some(p) = s.progress.get_mut(index)
+                    {
+                        *p = fraction;
                     }
                 }
                 Event::DeviceFinished {
@@ -571,15 +586,27 @@ impl Session {
         for (i, name) in worker::STEPS.iter().enumerate() {
             ui.horizontal(|ui| {
                 match &self.steps[i] {
-                    StepState::Pending => ui.label(RichText::new("○").weak()),
+                    StepState::Pending => {
+                        ui.label(RichText::new("○").weak());
+                    }
                     StepState::Running => {
                         ui.spinner();
-                        ui.label("")
                     }
-                    StepState::Done => ui.colored_label(Color32::from_rgb(40, 160, 60), "✔"),
-                    StepState::Failed(_) => ui.colored_label(Color32::from_rgb(200, 40, 40), "✘"),
+                    StepState::Done => {
+                        ui.colored_label(Color32::from_rgb(40, 160, 60), "✔");
+                    }
+                    StepState::Failed(_) => {
+                        ui.colored_label(Color32::from_rgb(200, 40, 40), "✘");
+                    }
                 };
                 ui.label(*name);
+                if matches!(self.steps[i], StepState::Running) && self.progress[i] > 0.001 {
+                    ui.add(
+                        egui::ProgressBar::new(self.progress[i])
+                            .desired_width(140.0)
+                            .show_percentage(),
+                    );
+                }
                 if let StepState::Failed(m) = &self.steps[i] {
                     ui.colored_label(Color32::from_rgb(200, 40, 40), m);
                 }

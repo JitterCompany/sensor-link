@@ -152,9 +152,17 @@ fn flash_test(args: &[String]) -> Result<()> {
     println!("Attaching to {} at {} kHz", t.chip, t.swd_speed_khz);
     let mut session = flash::attach(&t.chip, t.swd_speed_khz)?;
     println!("Flashing {}", artifacts.bootloader.name);
-    flash::flash_elf(&mut session, &artifacts.bootloader.path)?;
+    flash::flash_elf(&mut session, &artifacts.bootloader.path, |f| {
+        print!("\r  {:>3.0}%", f * 100.0);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    })?;
+    println!();
     println!("Flashing {}", artifacts.firmwares[variant].name);
-    flash::flash_elf(&mut session, &artifacts.firmwares[variant].path)?;
+    flash::flash_elf(&mut session, &artifacts.firmwares[variant].path, |f| {
+        print!("\r  {:>3.0}%", f * 100.0);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    })?;
+    println!();
     println!(
         "Writing config ({} bytes) at {:#x}",
         config.len(),
@@ -165,6 +173,7 @@ fn flash_test(args: &[String]) -> Result<()> {
         t.config_flash_start,
         t.config_flash_end,
         &config,
+        |_| {},
     )?;
     println!(
         "Reset + RTT at {:#x}, waiting {} s for '{uid}'",

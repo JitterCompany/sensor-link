@@ -71,18 +71,48 @@ pub fn attach(chip: &str, speed_khz: u32) -> Result<Session> {
         })
 }
 
-/// Flash an ELF; only the sectors it covers are erased.
-pub fn flash_elf(session: &mut Session, path: &Path) -> Result<()> {
+/// Flash an ELF; only the sectors it covers are erased. `on_progress` is
+/// called with a 0.0..=1.0 fraction across erase/program/verify.
+pub fn flash_elf(session: &mut Session, path: &Path, on_progress: impl FnMut(f32)) -> Result<()> {
     let mut options = DownloadOptions::default();
     options.verify = true;
-    options.progress = FlashProgress::new(|ev| log::debug!("flash: {ev:?}"));
+    options.progress = fraction_progress(on_progress);
     download_file_with_options(session, path, ElfLoader(ElfOptions::default()), options)
         .map_err(anyhow::Error::from)
         .with_context(|| format!("flashing {}", path.display()))
 }
 
+/// A FlashProgress that accumulates AddProgressBar totals and Progress sizes
+/// into a single 0.0..=1.0 fraction.
+fn fraction_progress<'a>(mut on_progress: impl FnMut(f32) + 'a) -> FlashProgress<'a> {
+    use std::cell::Cell;
+
+    use probe_rs::flashing::ProgressEvent;
+    let total = Cell::new(0u64);
+    let done = Cell::new(0u64);
+    FlashProgress::new(move |ev| match ev {
+        ProgressEvent::AddProgressBar { total: Some(t), .. } => {
+            total.set(total.get() + t);
+        }
+        ProgressEvent::Progress { size, .. } => {
+            done.set(done.get() + size);
+            let t = total.get();
+            if t > 0 {
+                on_progress((done.get() as f32 / t as f32).min(1.0));
+            }
+        }
+        _ => {}
+    })
+}
+
 /// Erase `start..end` and write `data` at `start` (the config region).
-pub fn write_region(session: &mut Session, start: u64, end: u64, data: &[u8]) -> Result<()> {
+pub fn write_region(
+    session: &mut Session,
+    start: u64,
+    end: u64,
+    data: &[u8],
+    on_progress: impl FnMut(f32),
+) -> Result<()> {
     if data.len() as u64 > end - start {
         bail!(
             "config ({} bytes) does not fit in {:#x}..{:#x}",
@@ -108,7 +138,7 @@ pub fn write_region(session: &mut Session, start: u64, end: u64, data: &[u8]) ->
     options.verify = true;
     options.skip_erase = true;
     options.keep_unwritten_bytes = true;
-    options.progress = FlashProgress::new(|ev| log::debug!("write: {ev:?}"));
+    options.progress = fraction_progress(on_progress);
     loader
         .commit(session, options)
         .map_err(anyhow::Error::from)

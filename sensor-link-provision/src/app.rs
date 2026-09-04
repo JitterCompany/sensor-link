@@ -427,8 +427,22 @@ impl Setup {
                                         .desired_width(200.0),
                                 );
                                 ui.end_row();
+                            }
+                        });
 
-                                ui.label("CA certificate");
+                    // The CA certificate is normally read from the YubiKey
+                    // slot; the file picker is a rarely-needed fallback, so
+                    // keep it collapsed unless a file has already been chosen.
+                    if self.dev_ca.is_none() {
+                        ui.add_space(6.0);
+                        egui::CollapsingHeader::new("CA certificate not on the YubiKey")
+                            .default_open(self.ca_cert_file.is_some())
+                            .show(ui, |ui| {
+                                let current = self.ca_cert_file.as_ref().map(|p| {
+                                    p.file_name()
+                                        .map(|n| n.to_string_lossy().into_owned())
+                                        .unwrap_or_default()
+                                });
                                 ui.horizontal(|ui| {
                                     if ui.button("Select file\u{2026}").clicked()
                                         && let Some(p) = rfd::FileDialog::new()
@@ -437,22 +451,20 @@ impl Setup {
                                     {
                                         self.ca_cert_file = Some(p);
                                     }
-                                    match &self.ca_cert_file {
-                                        Some(p) => {
-                                            ui.label(
-                                                p.file_name()
-                                                    .map(|n| n.to_string_lossy().into_owned())
-                                                    .unwrap_or_default(),
-                                            );
+                                    match current {
+                                        Some(name) => {
+                                            if ui.button("Clear").clicked() {
+                                                self.ca_cert_file = None;
+                                            }
+                                            ui.label(name);
                                         }
                                         None => {
-                                            ui.weak("(read from the YubiKey slot)");
+                                            ui.weak("Use only if the CA certificate is not stored in the YubiKey slot.");
                                         }
                                     }
                                 });
-                                ui.end_row();
-                            }
-                        });
+                            });
+                    }
                 });
 
                 section(ui, 3, "Start", |ui| {

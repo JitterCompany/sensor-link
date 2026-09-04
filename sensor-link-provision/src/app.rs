@@ -940,6 +940,10 @@ fn dev_ca_banner(ui: &mut egui::Ui) {
 
 fn counter(ui: &mut egui::Ui, label: &str, n: u32, color: Color32) {
     egui::Frame::group(ui.style()).show(ui, |ui| {
+        // Fixed width so the three counters sit side by side; without it the
+        // centered layout expands to the full available width and pushes the
+        // others off-screen.
+        ui.set_width(96.0);
         ui.vertical_centered(|ui| {
             ui.label(
                 RichText::new(n.to_string())

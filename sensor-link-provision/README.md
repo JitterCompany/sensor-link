@@ -59,19 +59,19 @@ Ship this file in the release zip next to the bootloader and firmware ELFs
 version = 1                  # provision.toml schema version
 
 [project]
-name = "BTB Zonneboiler"
+name = "Acme Heat Meter"
 
 # One entry per flashable variant; the operator picks one per session.
 [[variants]]
-name = "Zonneboiler"
+name = "Heat meter"
 device_type = 0              # wire byte of the firmware's DeviceType
-firmware = "zonneboiler-*"   # glob on file names in the zip
+firmware = "heatmeter-*"     # glob on file names in the zip
 
 [artifacts]
 bootloader = "bootloader-*"
 
 [target]
-chip = "STM32L4R5ZITxP"      # probe-rs target name
+chip = "STM32L4R5ZITx"       # probe-rs target name
 swd_speed_khz = 4000         # optional, default 4000
 config_flash_start = 0x081FE000
 config_flash_end = 0x08200000
@@ -80,13 +80,14 @@ boot_banner = "# Starting"   # optional; UID must appear after the last banner
 rtt_timeout_s = 10           # optional
 
 [identity]
-uid_length = 9               # warning (with override) when the scan differs
-cert_subject = { OU = "Devices", O = "BTB Energy", C = "NL" }
+uid_min = 5                  # accepted UID length range; a scan outside it
+uid_max = 9                  # warns (with override), capped at the firmware limit
+cert_subject = { OU = "Devices", O = "Acme", C = "NL" }
 cert_validity_days = 9650
 ca_piv_slot = "R1"           # retired slot R1..R20, or hex 82..95
 
 [session]                    # optional
-default_log = "~/zonneboiler-provisioning/issuance.csv"
+default_log = "~/acme-provisioning/issuance.csv"
 exit_note = "Enter the SIM ICCID of each new device in the dashboard."
 ```
 

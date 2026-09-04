@@ -1,6 +1,6 @@
 [package]
 name = "sensor-link-provision"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "GUI provisioning tool for sensor-link devices: flashes bootloader, firmware and per-device config, signs device certificates with a YubiKey-held CA"
 license.workspace = true

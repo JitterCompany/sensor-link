@@ -60,26 +60,33 @@ jobs:
             target/release/sensor-link-provision \
             sensor-link-provision/assets/jitter-icon.png \
             dist "$VERSION"
+          # Name the zip after the artifact: with archive:false the file name
+          # becomes the artifact name. ditto preserves the bundle's exec bit.
           ditto -c -k --sequesterRsrc --keepParent \
-            dist/sensor-link-provision.app dist/sensor-link-provision.app.zip
+            dist/sensor-link-provision.app "dist/${{ matrix.artifact }}.zip"
 
       - name: Archive (macOS app)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/sensor-link-provision.app.zip
-          # Upload the zip as-is (no extra outer zip); ditto already preserved
-          # the bundle's executable bit, which GitHub's own zipping would strip.
+          # archive:false uploads the zip as-is (no extra outer zip) and uses
+          # the file name as the artifact name, so name: is ignored here.
+          path: dist/${{ matrix.artifact }}.zip
           archive: false
           retention-days: 90
+
+      - name: Stage Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp target/release/sensor-link-provision "dist/${{ matrix.artifact }}"
 
       - name: Archive (Linux binary)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact }}
-          path: target/release/sensor-link-provision
-          # Upload the binary as-is so it keeps its executable bit.
+          # archive:false keeps the executable bit and uses the file name as
+          # the artifact name.
+          path: dist/${{ matrix.artifact }}
           archive: false
           retention-days: 90

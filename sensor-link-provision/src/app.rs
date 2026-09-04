@@ -21,37 +21,32 @@ pub struct App {
     logo: Option<egui::TextureHandle>,
     about_open: bool,
     /// Native menu bar; kept alive for the app's lifetime (macOS only).
+    #[cfg(target_os = "macos")]
     _menu: Option<muda::Menu>,
     screen: Screen,
 }
 
 /// Build the macOS application menu with an About item and the standard
-/// Hide/Quit entries, and install it. Returns None on other platforms.
+/// Hide/Quit entries, and install it.
+#[cfg(target_os = "macos")]
 fn build_app_menu() -> Option<muda::Menu> {
-    #[cfg(target_os = "macos")]
-    {
-        use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-        let menu = Menu::new();
-        let app = Submenu::new("sensor-link-provision", true);
-        let about = MenuItem::with_id("about", "About sensor-link-provision", true, None);
-        app.append_items(&[
-            &about,
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(None),
-            &PredefinedMenuItem::hide_others(None),
-            &PredefinedMenuItem::show_all(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::quit(None),
-        ])
-        .ok()?;
-        menu.append(&app).ok()?;
-        menu.init_for_nsapp();
-        Some(menu)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+    use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+    let menu = Menu::new();
+    let app = Submenu::new("sensor-link-provision", true);
+    let about = MenuItem::with_id("about", "About sensor-link-provision", true, None);
+    app.append_items(&[
+        &about,
+        &PredefinedMenuItem::separator(),
+        &PredefinedMenuItem::hide(None),
+        &PredefinedMenuItem::hide_others(None),
+        &PredefinedMenuItem::show_all(None),
+        &PredefinedMenuItem::separator(),
+        &PredefinedMenuItem::quit(None),
+    ])
+    .ok()?;
+    menu.append(&app).ok()?;
+    menu.init_for_nsapp();
+    Some(menu)
 }
 
 /// Aspect ratio of the Jitter wordmark (viewBox 160x50).
@@ -158,6 +153,7 @@ impl App {
             sounds: sound::Sounds::new(),
             logo: load_logo(&cc.egui_ctx),
             about_open: false,
+            #[cfg(target_os = "macos")]
             _menu: build_app_menu(),
             screen: Screen::Setup(Setup {
                 dev_ca,
@@ -264,6 +260,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
         while let Ok(ev) = muda::MenuEvent::receiver().try_recv() {
             if ev.id == "about" {
                 self.about_open = true;

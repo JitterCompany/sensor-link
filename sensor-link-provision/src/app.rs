@@ -588,7 +588,6 @@ impl Session {
 
         ui.add_space(8.0);
         ui.separator();
-        ui.label(RichText::new("Boot log (RTT)").strong());
         // Terminal-style panel: near-black background, light monospace text.
         let terminal_bg = Color32::from_rgb(18, 18, 18);
         let terminal_fg = Color32::from_rgb(220, 223, 228);

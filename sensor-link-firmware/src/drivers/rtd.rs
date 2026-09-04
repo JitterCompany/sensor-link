@@ -251,6 +251,7 @@ impl RTD {
                 idac_mag: ads124s08::IDACMagnitude::I_500μA,
                 idac1_out: Some(self.pin_map.idac_out),
                 idac2_out: None,
+                ..Default::default()
             };
             adc.configure_ref(ref_config).await?;
 
@@ -347,6 +348,7 @@ impl RTD {
                     idac_mag: ads124s08::IDACMagnitude::I_500μA,
                     idac1_out: Some(self.pin_map.idac_out),
                     idac2_out: None,
+                    ..Default::default()
                 };
                 adc.configure_ref(ref_config).await?;
 
@@ -404,6 +406,7 @@ impl RTD {
             idac_mag: ads124s08::IDACMagnitude::Off,
             idac1_out: None,
             idac2_out: None,
+            ..Default::default()
         };
         adc.configure_ref(ref_config).await?;
 

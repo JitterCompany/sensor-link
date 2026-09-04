@@ -365,10 +365,13 @@ pub mod IDACMAG {
 
     #[allow(dead_code)]
     #[repr(u8)]
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     /// PGA output rail flag enable
     ///
-    /// Enables the PGA output voltage rail monitor circuit
+    /// Enables the PGA output voltage rail monitor circuit.
+    /// four flags that trip when either PGA output goes above AVDD - 0.15V
+    /// or below AVSS + 0.15V (datasheet 9.3.10.3).
+    /// The monitors are active even when the PGA is bypassed.
     pub enum FL_RAIL_EN {
         Disable = 0,
         Enable = 1 << 7,

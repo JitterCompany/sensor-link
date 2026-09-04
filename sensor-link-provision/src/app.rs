@@ -19,7 +19,39 @@ pub struct App {
     rx: Receiver<Event>,
     sounds: sound::Sounds,
     logo: Option<egui::TextureHandle>,
+    about_open: bool,
+    /// Native menu bar; kept alive for the app's lifetime (macOS only).
+    _menu: Option<muda::Menu>,
     screen: Screen,
+}
+
+/// Build the macOS application menu with an About item and the standard
+/// Hide/Quit entries, and install it. Returns None on other platforms.
+fn build_app_menu() -> Option<muda::Menu> {
+    #[cfg(target_os = "macos")]
+    {
+        use muda::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+        let menu = Menu::new();
+        let app = Submenu::new("sensor-link-provision", true);
+        let about = MenuItem::with_id("about", "About sensor-link-provision", true, None);
+        app.append_items(&[
+            &about,
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::hide(None),
+            &PredefinedMenuItem::hide_others(None),
+            &PredefinedMenuItem::show_all(None),
+            &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::quit(None),
+        ])
+        .ok()?;
+        menu.append(&app).ok()?;
+        menu.init_for_nsapp();
+        Some(menu)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
 }
 
 /// Aspect ratio of the Jitter wordmark (viewBox 160x50).
@@ -125,6 +157,8 @@ impl App {
             rx,
             sounds: sound::Sounds::new(),
             logo: load_logo(&cc.egui_ctx),
+            about_open: false,
+            _menu: build_app_menu(),
             screen: Screen::Setup(Setup {
                 dev_ca,
                 ..Default::default()
@@ -230,11 +264,45 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        while let Ok(ev) = muda::MenuEvent::receiver().try_recv() {
+            if ev.id == "about" {
+                self.about_open = true;
+            }
+        }
         self.handle_events();
         egui::CentralPanel::default().show(ctx, |ui| match &mut self.screen {
             Screen::Setup(setup) => setup.ui(ui, &self.tx, self.logo.as_ref()),
             Screen::Session(session) => session.ui(ui, &self.tx, self.logo.as_ref()),
         });
+        self.about_ui(ctx);
+    }
+}
+
+impl App {
+    fn about_ui(&mut self, ctx: &egui::Context) {
+        if !self.about_open {
+            return;
+        }
+        egui::Window::new("About")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.strong("sensor-link provisioning");
+                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+                ui.add_space(8.0);
+                ui.label(
+                    "Provisioning tool for sensor-link devices: flashes the bootloader, \
+                     firmware and per-device config over a J-Link, and signs each device \
+                     certificate with a YubiKey-held CA.",
+                );
+                ui.add_space(8.0);
+                ui.hyperlink_to("jitter.nl", "https://www.jitter.nl");
+                ui.add_space(10.0);
+                if ui.button("Close").clicked() {
+                    self.about_open = false;
+                }
+            });
     }
 }
 

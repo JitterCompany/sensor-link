@@ -22,7 +22,7 @@ rcgen = { version = "0.14.9", features = ["pem", "x509-parser"] }
 regex = "1.13.1"
 rfd = "0.17.2"
 rodio = "0.22.2"
-sensor-link-firmware = { version = "0.1.0", path = "../sensor-link-firmware", default-features = false, features = ["use-std"] }
+sensor-link-firmware = { version = "0.2", path = "../sensor-link-firmware", default-features = false, features = ["use-std"] }
 serde = { workspace = true, features = ["derive"] }
 sha2 = "0.11.0"
 tempfile = "3.27.0"

@@ -231,7 +231,7 @@ ca_piv_slot = "R1"
 
 [session]
 default_log = "~/zonneboiler-provisioning/issuance.csv"
-exit_note = "Enter the SIM ICCID of each new device in the dashboard."
+exit_note = "Register each provisioned device in the tracking sheet."
 "#;
 
 #[cfg(test)]

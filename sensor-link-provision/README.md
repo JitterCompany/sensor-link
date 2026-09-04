@@ -110,7 +110,7 @@ ca_piv_slot = "R1"           # retired slot R1..R20, or hex 82..95
 
 [session]                    # optional
 default_log = "~/acme-provisioning/issuance.csv"
-exit_note = "Enter the SIM ICCID of each new device in the dashboard."
+exit_note = "Register each provisioned device in the tracking sheet."
 ```
 
 Device certificates get subject `<cert_subject>, CN=<UID>`, a random

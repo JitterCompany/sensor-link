@@ -6,8 +6,8 @@ Reusable building blocks for Jitter sensor platforms, in three groups:
 | Directory | Contents |
 |---|---|
 | [server/](server/) | Server-side crates |
-| sensor-link-protocol/ | Device ↔ server protocol crate (planned) |
-| sensor-link-firmware/ | Firmware library crate (planned) |
+| sensor-link-protocol/ | Device ↔ server protocol crate |
+| sensor-link-firmware/ | Firmware library crate |
 
 ## Crates
 
@@ -18,10 +18,10 @@ Reusable building blocks for Jitter sensor platforms, in three groups:
 
 ## Linting
 
-The workspace carries a backlog of clippy findings inherited from the code moved
-in from the Frogwatch repos. Rather than fix them all at once, CI gates only on
-findings in files a pull request actually changes, so the backlog shrinks as the
-code gets touched. Touch a file, and you own its findings.
+The workspace carries a backlog of clippy findings.
+Rather than fix them all at once, CI gates only files a pull request actually
+changes, so the backlog shrinks as the code gets touched.
+Run the script below to check what clippy warnings you must solve to get your PR accepted.
 
 ```bash
 ./scripts/clippy-changed.sh            # compare against origin/master

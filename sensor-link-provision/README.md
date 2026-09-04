@@ -31,10 +31,16 @@ touched.
 
 ## Installing
 
-Download the build for your platform from the *Provisioning tool* workflow
-artifacts in this repository: `sensor-link-provision-macos-arm64` (a zipped
-`sensor-link-provision.app`) and `sensor-link-provision-linux-x86_64` (a bare
-binary).
+Download the build for your platform from the repository's
+[Releases](../../releases) page:
+
+- **macOS (Apple Silicon):** `sensor-link-provision-macos-arm64.zip` — a
+  zipped `sensor-link-provision.app`.
+- **Linux (x86_64):** `sensor-link-provision-linux-x86_64` — a bare binary.
+
+Releases are cut by pushing a `sensor-link-provision-v*` tag. Untagged builds
+of every master commit are also available as *Provisioning tool* workflow
+run artifacts.
 
 ### macOS
 

@@ -4,16 +4,20 @@ on:
   workflow_dispatch:
   push:
     branches: [master]
-    paths:
-      - "sensor-link-provision/**"
-      - "sensor-link-firmware/**"
-      - "**/provision.yml"
+    # No paths filter: path filters are unreliable on tag pushes and would
+    # skip releases. The build is cheap enough to run on every master push.
+    tags:
+      - "sensor-link-provision-v*"
   pull_request:
     types: [opened, synchronize]
     branches: [master]
     paths:
       - "sensor-link-provision/**"
       - "**/provision.yml"
+
+# The release step attaches assets to a GitHub Release.
+permissions:
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -90,3 +94,17 @@ jobs:
           path: dist/${{ matrix.artifact }}
           archive: false
           retention-days: 90
+
+      # On a sensor-link-provision-v* tag, publish the platform asset to a
+      # GitHub Release. Each matrix job attaches its own file; the action
+      # creates the release on the first job and updates it on the second.
+      - name: Attach to GitHub release
+        if: startsWith(github.ref, 'refs/tags/sensor-link-provision-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: sensor-link-provision ${{ github.ref_name }}
+          fail_on_unmatched_files: false
+          generate_release_notes: true
+          files: |
+            dist/${{ matrix.artifact }}.zip
+            dist/${{ matrix.artifact }}

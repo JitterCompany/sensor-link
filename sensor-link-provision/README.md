@@ -56,6 +56,8 @@ Ship this file in the release zip next to the bootloader and firmware ELFs
 (they must be ELF files; `.bin`/`.b64`/`.cdx.json` siblings are ignored).
 
 ```toml
+version = 1                  # provision.toml schema version
+
 [project]
 name = "BTB Zonneboiler"
 

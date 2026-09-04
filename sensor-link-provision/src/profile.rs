@@ -6,8 +6,15 @@ use std::fmt;
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+/// Highest provision.toml schema version this build understands. Bump it
+/// when a change would make an older tool misread a newer profile.
+pub const SUPPORTED_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Profile {
+    /// provision.toml schema version (defaults to 1 when absent).
+    #[serde(default = "default_version")]
+    pub version: u32,
     pub project: Project,
     pub variants: Vec<Variant>,
     pub artifacts: Artifacts,
@@ -90,6 +97,9 @@ pub struct Session {
     pub exit_note: Option<String>,
 }
 
+fn default_version() -> u32 {
+    1
+}
 fn default_swd_speed() -> u32 {
     4000
 }
@@ -114,6 +124,15 @@ impl Profile {
     }
 
     fn validate(&self) -> Result<()> {
+        if self.version == 0 {
+            bail!("provision.toml: version must be >= 1");
+        }
+        if self.version > SUPPORTED_VERSION {
+            bail!(
+                "provision.toml version {} is newer than this tool supports ({SUPPORTED_VERSION}); update sensor-link-provision",
+                self.version
+            );
+        }
         if self.variants.is_empty() {
             bail!("provision.toml: at least one [[variants]] entry is required");
         }
@@ -184,6 +203,8 @@ impl fmt::Display for CertSubject {
 
 #[cfg(test)]
 pub(crate) const EXAMPLE_PROFILE: &str = r#"
+version = 1
+
 [project]
 name = "BTB Zonneboiler"
 
@@ -224,6 +245,17 @@ mod tests {
         assert_eq!(p.target.swd_speed_khz, 4000);
         assert_eq!(p.identity.piv_slot().unwrap(), 0x82);
         assert_eq!(p.variants[0].device_type, 1);
+        assert_eq!(p.version, 1);
+    }
+
+    #[test]
+    fn version_defaults_and_rejects_newer() {
+        // Absent version defaults to 1 and parses.
+        let no_ver = EXAMPLE_PROFILE.replace("version = 1\n\n", "");
+        assert_eq!(Profile::parse(&no_ver).unwrap().version, 1);
+        // A newer schema version is refused.
+        let newer = EXAMPLE_PROFILE.replace("version = 1", "version = 999");
+        assert!(Profile::parse(&newer).is_err());
     }
 
     #[test]
@@ -240,6 +272,7 @@ mod tests {
     #[test]
     fn frogwatch_style_multi_variant() {
         let toml = r#"
+version = 1
 [project]
 name = "Frogwatch"
 [[variants]]

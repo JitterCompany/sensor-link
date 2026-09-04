@@ -1,4 +1,6 @@
-#![allow(non_camel_case_types, non_snake_case)]
+// Register, field and bit names are spelled exactly as in the ADS124S08
+// datasheet, so the register map can be checked against it by eye.
+#![allow(non_camel_case_types, non_snake_case, clippy::upper_case_acronyms)]
 
 #[allow(dead_code)]
 #[repr(u8)]
@@ -81,7 +83,7 @@ pub enum STATUS {
 /// Input Multiplexer
 pub mod INPMUX {
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     /// Positive ADC input selection
     pub struct MUXP(pub super::AnalogPin);
     impl MUXP {
@@ -90,7 +92,7 @@ pub mod INPMUX {
         }
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     /// Negative ADC input selection
     pub struct MUXN(pub super::AnalogPin);
     impl MUXN {
@@ -412,7 +414,7 @@ pub mod IDACMAG {
 pub mod IDACMUX {
 
     #[allow(dead_code)]
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     /// IDAC2 output channel selection
     pub enum I2MUX {
         Disconnect,
@@ -426,6 +428,9 @@ pub mod IDACMUX {
             }
         }
     }
+
+    #[derive(Debug, Clone, Copy)]
+    /// IDAC1 output channel selection
     pub enum I1MUX {
         Disconnect,
         Connect(super::AnalogPin),

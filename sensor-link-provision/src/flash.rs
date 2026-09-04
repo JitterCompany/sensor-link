@@ -1,7 +1,7 @@
 //! Probe access and flash programming through probe-rs (native J-Link driver,
 //! no SEGGER software needed).
 
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use probe_rs::{
@@ -115,10 +115,19 @@ pub fn write_region(session: &mut Session, start: u64, end: u64, data: &[u8]) ->
         .with_context(|| format!("writing config at {start:#x}"))
 }
 
+/// Reset the target and let the firmware run.
+///
+/// probe-rs `Core::reset()` only issues SYSRESETREQ; it does not touch the
+/// reset vector catch (DEMCR.VC_CORERESET). Flashing can leave that catch
+/// armed, and the core then halts at the reset vector instead of running, so
+/// the RTT boot check sees nothing. `reset_and_halt` sets and then clears the
+/// catch itself, so a following `run()` reliably starts the firmware.
 pub fn reset(session: &mut Session) -> Result<()> {
-    session
-        .core(0)?
-        .reset()
+    let mut core = session.core(0)?;
+    core.reset_and_halt(Duration::from_millis(500))
         .map_err(anyhow::Error::from)
-        .context("reset")
+        .context("reset")?;
+    core.run()
+        .map_err(anyhow::Error::from)
+        .context("run after reset")
 }

@@ -36,12 +36,32 @@ artifacts in this repository: `sensor-link-provision-macos-arm64` (a zipped
 `sensor-link-provision.app`) and `sensor-link-provision-linux-x86_64` (a bare
 binary).
 
-macOS: unzip and move `sensor-link-provision.app` to Applications. It is not
-notarised, so on first launch right-click the app and choose *Open* (or run
-`xattr -dr com.apple.quarantine sensor-link-provision.app`). Nothing else is
-needed.
+### macOS
 
-Linux (Debian/Ubuntu):
+Unzip and move `sensor-link-provision.app` to Applications. The app is not
+notarised, so the first launch is blocked by Gatekeeper:
+
+1. Double-click the app. macOS refuses to open it:
+
+   ![Gatekeeper block](assets/macos-security1.png)
+
+   Click **Cancel** (do *not* move it to the Trash).
+
+2. Open **System Settings -> Privacy & Security**, scroll to **Security**, and
+   click **Open Anyway** next to the `sensor-link-provision` entry:
+
+   ![Open Anyway in Privacy & Security](assets/macos-security2.png)
+
+   Confirm with your password/Touch ID. The app opens, and macOS remembers the
+   choice for future launches.
+
+Command-line alternative (does the same thing without the dialogs):
+
+```sh
+xattr -dr com.apple.quarantine /Applications/sensor-link-provision.app
+```
+
+### Linux (Debian/Ubuntu)
 
 ```sh
 sudo apt install pcscd libpcsclite1 libgtk-3-0 libasound2

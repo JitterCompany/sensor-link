@@ -177,6 +177,7 @@ fn flash_test(args: &[String]) -> Result<()> {
         &t.boot_banner,
         &uid,
         Duration::from_secs(t.rtt_timeout_s),
+        |_log| {},
     )?;
     println!(
         "--- RTT ---\n{}\n--- {} ---",

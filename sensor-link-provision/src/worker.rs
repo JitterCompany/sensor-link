@@ -100,6 +100,8 @@ pub enum Outcome {
 
 pub enum Event {
     Probes(Vec<String>),
+    /// Accumulated RTT boot log for the device being verified.
+    Rtt(String),
     SessionReady(Box<SessionInfo>),
     SessionFailed(String),
     Step {
@@ -343,6 +345,8 @@ impl Worker {
                 index: STEP_RTT,
                 state: StepState::Running,
             });
+            let tx = self.events.clone();
+            let ctx = self.ctx.clone();
             let check = flash::reset(&mut probe).and_then(|()| {
                 rtt::wait_for_uid(
                     &mut probe,
@@ -350,6 +354,10 @@ impl Worker {
                     &target.boot_banner,
                     uid,
                     Duration::from_secs(target.rtt_timeout_s),
+                    |log| {
+                        let _ = tx.send(Event::Rtt(log.to_owned()));
+                        ctx.request_repaint();
+                    },
                 )
             });
             drop(probe);

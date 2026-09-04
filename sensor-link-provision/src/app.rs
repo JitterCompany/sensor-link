@@ -51,6 +51,8 @@ struct Session {
     phase: Phase,
     last: Option<Finished>,
     steps: Vec<StepState>,
+    /// RTT boot log streamed for the device currently being verified.
+    live_rtt: String,
     show_summary: bool,
 }
 
@@ -81,7 +83,6 @@ enum Phase {
 struct Finished {
     uid: String,
     outcome: Outcome,
-    rtt_log: String,
     error: Option<String>,
 }
 
@@ -122,6 +123,7 @@ impl App {
                         phase: Phase::Idle,
                         last: None,
                         steps: vec![StepState::Pending; worker::STEPS.len()],
+                        live_rtt: String::new(),
                         show_summary: false,
                     });
                 }
@@ -144,6 +146,11 @@ impl App {
                         s.steps[index] = state;
                     }
                 }
+                Event::Rtt(log) => {
+                    if let Screen::Session(s) = &mut self.screen {
+                        s.live_rtt = log;
+                    }
+                }
                 Event::DeviceFinished {
                     uid,
                     outcome,
@@ -163,10 +170,10 @@ impl App {
                             Outcome::Ok => self.sounds.ok(),
                             _ => self.sounds.fail(),
                         }
+                        s.live_rtt = rtt_log;
                         s.last = Some(Finished {
                             uid,
                             outcome,
-                            rtt_log,
                             error,
                         });
                         s.phase = Phase::Idle;
@@ -478,10 +485,30 @@ impl Session {
             });
         }
 
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(RichText::new("Boot log (RTT)").strong());
+        egui::ScrollArea::vertical()
+            .max_height(220.0)
+            .auto_shrink([false, false])
+            .stick_to_bottom(true)
+            .show(ui, |ui| {
+                if self.live_rtt.is_empty() {
+                    ui.weak("(RTT output from the device appears here during boot verification)");
+                } else {
+                    ui.monospace(&self.live_rtt);
+                }
+            });
+
         self.dialogs(&ctx, tx);
     }
 
+    fn clear_for_new_device(&mut self) {
+        self.live_rtt.clear();
+    }
+
     fn prepare_start(&mut self) {
+        self.clear_for_new_device();
         self.uid = validate::normalize_uid(&self.uid);
         self.icc = self.icc.trim().to_owned();
         if self.uid.is_empty() {
@@ -557,15 +584,6 @@ impl Session {
                     }
                     if let Some(e) = &f.error {
                         ui.label(e);
-                    }
-                    if !f.rtt_log.is_empty() {
-                        ui.collapsing("Boot log", |ui| {
-                            egui::ScrollArea::vertical()
-                                .max_height(160.0)
-                                .show(ui, |ui| {
-                                    ui.monospace(&f.rtt_log);
-                                });
-                        });
                     }
                 }
             },

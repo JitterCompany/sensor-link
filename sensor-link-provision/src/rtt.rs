@@ -39,6 +39,7 @@ pub fn wait_for_uid(
     banner: &str,
     uid: &str,
     timeout: Duration,
+    mut on_update: impl FnMut(&str),
 ) -> Result<Capture> {
     let deadline = Instant::now() + timeout;
     let region = ScanRegion::Exact(address);
@@ -82,6 +83,7 @@ pub fn wait_for_uid(
             pending.extend_from_slice(&buf[..read]);
             log.push_str(&String::from_utf8_lossy(&pending));
             pending.clear();
+            on_update(&log);
             if uid_seen(&log, banner, uid) {
                 return Ok(Capture { matched: true, log });
             }

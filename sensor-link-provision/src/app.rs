@@ -503,7 +503,12 @@ impl Session {
                     uid_focused = r.has_focus();
                     if self.focus_uid {
                         r.request_focus();
-                        self.focus_uid = false;
+                        // Keep requesting until focus actually lands: a widget
+                        // re-enabled this frame (Running -> Idle) can drop a
+                        // single request_focus.
+                        if r.has_focus() {
+                            self.focus_uid = false;
+                        }
                     }
                     // Enter (barcode-scanner suffix) submits: advance to the SIM field.
                     if r.lost_focus() && enter && !self.uid.trim().is_empty() {
@@ -521,7 +526,9 @@ impl Session {
                     icc_focused = r.has_focus();
                     if self.focus_icc {
                         r.request_focus();
-                        self.focus_icc = false;
+                        if r.has_focus() {
+                            self.focus_icc = false;
+                        }
                     }
                     // Enter on the SIM field starts provisioning (hands-free scan flow).
                     if r.lost_focus() && enter && !self.icc.trim().is_empty() {

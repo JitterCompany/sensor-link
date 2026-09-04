@@ -1460,6 +1460,7 @@ where
         time_resolution: TimeResolution,
         export_id: &DataStoreId,
         csv_header: &str,
+        clamp_to_data_range: bool,
     ) -> anyhow::Result<()> {
         let bucket = self.db().gridfs_bucket(
             GridFsBucketOptions::builder()
@@ -1468,32 +1469,34 @@ where
         );
         let mut upload_stream = bucket.open_upload_stream("example.txt").await?;
 
-        let first_timestamp = if let Some(data_channel) = data_channels.first() {
-            self.find_first_timestamp_for_mp(*data_channel, meas_point_id)
-                .await?
-                .and_then(|ts| datetime_from_millis(ts).ok())
-        } else {
-            None
-        };
-        let last_timestamp = if let Some(data_channel) = data_channels.first() {
-            self.find_latest_timestamp_for_mp(*data_channel, meas_point_id)
-                .await?
-                .and_then(|ts| datetime_from_millis(ts).ok())
-        } else {
-            None
-        };
         let mut mp_time_range = TimeRange {
             from: timerange.from,
             until: timerange.until,
         };
-        if let Some(first_timestamp) = first_timestamp {
-            if first_timestamp > mp_time_range.from {
-                mp_time_range.from = first_timestamp;
+        if clamp_to_data_range {
+            let first_timestamp = if let Some(data_channel) = data_channels.first() {
+                self.find_first_timestamp_for_mp(*data_channel, meas_point_id)
+                    .await?
+                    .and_then(|ts| datetime_from_millis(ts).ok())
+            } else {
+                None
+            };
+            let last_timestamp = if let Some(data_channel) = data_channels.first() {
+                self.find_latest_timestamp_for_mp(*data_channel, meas_point_id)
+                    .await?
+                    .and_then(|ts| datetime_from_millis(ts).ok())
+            } else {
+                None
+            };
+            if let Some(first_timestamp) = first_timestamp {
+                if first_timestamp > mp_time_range.from {
+                    mp_time_range.from = first_timestamp;
+                }
             }
-        }
-        if let Some(last_timestamp) = last_timestamp {
-            if last_timestamp < mp_time_range.until {
-                mp_time_range.until = last_timestamp;
+            if let Some(last_timestamp) = last_timestamp {
+                if last_timestamp < mp_time_range.until {
+                    mp_time_range.until = last_timestamp;
+                }
             }
         }
 

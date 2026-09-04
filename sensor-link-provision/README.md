@@ -31,12 +31,14 @@ touched.
 
 ## Installing
 
-Download the binary for your platform from the *Provisioning tool* workflow
-artifacts in this repository (`sensor-link-provision-macos-arm64`,
-`sensor-link-provision-linux-x86_64`).
+Download the build for your platform from the *Provisioning tool* workflow
+artifacts in this repository: `sensor-link-provision-macos-arm64` (a zipped
+`sensor-link-provision.app`) and `sensor-link-provision-linux-x86_64` (a bare
+binary).
 
-macOS: the binary is not notarised; on first start right-click, *Open*, or
-run `xattr -d com.apple.quarantine sensor-link-provision`. Nothing else is
+macOS: unzip and move `sensor-link-provision.app` to Applications. It is not
+notarised, so on first launch right-click the app and choose *Open* (or run
+`xattr -dr com.apple.quarantine sensor-link-provision.app`). Nothing else is
 needed.
 
 Linux (Debian/Ubuntu):

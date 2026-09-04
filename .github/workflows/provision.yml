@@ -48,7 +48,31 @@ jobs:
         run: cargo test -p sensor-link-provision
       - name: Build
         run: cargo build --release -p sensor-link-provision
-      - name: Archive
+
+      # macOS: package a .app bundle (icon + Info.plist) and zip it with
+      # ditto so the bundle structure and exec bit survive the artifact upload.
+      - name: Bundle macOS app
+        if: runner.os == 'macOS'
+        run: |
+          VERSION=$(awk -F '"' '/^version/ {print $2; exit}' sensor-link-provision/Cargo.toml)-${{ github.run_number }}
+          mkdir -p dist
+          sensor-link-provision/macos/bundle.sh \
+            target/release/sensor-link-provision \
+            sensor-link-provision/assets/jitter-icon.png \
+            dist "$VERSION"
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/sensor-link-provision.app dist/sensor-link-provision.app.zip
+
+      - name: Archive (macOS app)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/sensor-link-provision.app.zip
+          retention-days: 90
+
+      - name: Archive (Linux binary)
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}

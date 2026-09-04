@@ -49,11 +49,27 @@ The subcommands exercise the hardware paths from a terminal:
   --selftest-sign   sign a test certificate with the YubiKey CA (asks for the PIN) and verify it
   --flash-test      flash bootloader + firmware + a test config to a connected board and watch RTT";
 
+fn app_icon() -> Option<eframe::egui::IconData> {
+    let img = image::load_from_memory(include_bytes!("../assets/jitter-icon.png"))
+        .ok()?
+        .to_rgba8();
+    let (width, height) = img.dimensions();
+    Some(eframe::egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
+}
+
 fn run_gui(dev_ca: Option<worker::DevCa>) -> Result<()> {
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([960.0, 720.0])
+        .with_title("sensor-link provisioning");
+    if let Some(icon) = app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 720.0])
-            .with_title("sensor-link provisioning"),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(

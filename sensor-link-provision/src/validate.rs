@@ -7,9 +7,9 @@ pub fn normalize_uid(raw: &str) -> String {
 }
 
 /// `None` when the UID has the expected length, otherwise a warning text.
-pub fn uid_warning(uid: &str, expected_len: usize) -> Option<String> {
+pub fn uid_warning(uid: &str, min: usize, max: usize) -> Option<String> {
     let n = uid.chars().count();
-    (n != expected_len).then(|| format!("UID '{uid}' is {n} characters (expected {expected_len})."))
+    (n < min || n > max).then(|| format!("UID '{uid}' is {n} characters (expected {min}-{max})."))
 }
 
 /// SIM ICCID: 20 digits with a valid Luhn-10 check digit.
@@ -57,7 +57,9 @@ mod tests {
     #[test]
     fn uid() {
         assert_eq!(normalize_uid(" abc123def\n"), "ABC123DEF");
-        assert!(uid_warning("ABC123DEF", 9).is_none());
-        assert!(uid_warning("ABC123", 9).is_some());
+        assert!(uid_warning("ABC123DEF", 5, 9).is_none());
+        assert!(uid_warning("ABCDE", 5, 9).is_none());
+        assert!(uid_warning("ABCD", 5, 9).is_some());
+        assert!(uid_warning("ABC1234567", 5, 9).is_some());
     }
 }

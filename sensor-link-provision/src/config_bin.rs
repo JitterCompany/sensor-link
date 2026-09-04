@@ -21,6 +21,9 @@ type Config<'a> = FirmwareConfig<'a, ProfileDeviceType>;
 
 pub const BINARY_SIZE: usize = Config::BINARY_SIZE;
 
+/// Firmware's hard cap on the UID / serial length.
+pub const MAX_UID_LEN: usize = Config::MAX_SERIAL_STRLEN;
+
 pub fn build(uid: &str, device_type: u8, cert_pem: &[u8], key_pem: &[u8]) -> Result<Vec<u8>> {
     if cert_pem.len() > Config::MAX_CERT_SIZE {
         bail!(

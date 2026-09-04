@@ -60,7 +60,8 @@ pub struct SessionInfo {
     pub dev_ca: bool,
     pub probe: String,
     pub log: PathBuf,
-    pub uid_length: usize,
+    pub uid_min: usize,
+    pub uid_max: usize,
     pub exit_note: Option<String>,
 }
 
@@ -236,7 +237,8 @@ impl Worker {
             dev_ca: cfg.dev_ca.is_some(),
             probe,
             log: cfg.log.clone(),
-            uid_length: profile.identity.uid_length,
+            uid_min: profile.identity.uid_min,
+            uid_max: profile.identity.uid_max,
             exit_note: profile.session.exit_note.clone(),
         };
         self.session = Some(Session {

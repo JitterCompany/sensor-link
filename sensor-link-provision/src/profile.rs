@@ -59,7 +59,11 @@ pub struct Target {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Identity {
-    pub uid_length: usize,
+    /// Accepted UID length range; a scan outside it warns (with override).
+    #[serde(default = "default_uid_min")]
+    pub uid_min: usize,
+    #[serde(default = "default_uid_max")]
+    pub uid_max: usize,
     pub cert_subject: CertSubject,
     pub cert_validity_days: u32,
     /// PIV retired slot holding the CA key: `R1`..`R20` or hex `82`..`95`.
@@ -89,6 +93,12 @@ pub struct Session {
 fn default_swd_speed() -> u32 {
     4000
 }
+fn default_uid_min() -> usize {
+    1
+}
+fn default_uid_max() -> usize {
+    crate::config_bin::MAX_UID_LEN
+}
 fn default_boot_banner() -> String {
     "# Starting".into()
 }
@@ -114,8 +124,15 @@ impl Profile {
         if t.rtt_address == 0 {
             bail!("provision.toml: rtt_address must be set");
         }
-        if self.identity.uid_length == 0 {
-            bail!("provision.toml: uid_length must be > 0");
+        let (lo, hi) = (self.identity.uid_min, self.identity.uid_max);
+        if lo == 0 || hi < lo {
+            bail!("provision.toml: uid_min must be >= 1 and uid_max >= uid_min");
+        }
+        if hi > crate::config_bin::MAX_UID_LEN {
+            bail!(
+                "provision.toml: uid_max {hi} exceeds the firmware limit of {}",
+                crate::config_bin::MAX_UID_LEN
+            );
         }
         if self.identity.cert_validity_days == 0 {
             bail!("provision.toml: cert_validity_days must be > 0");
@@ -185,7 +202,8 @@ config_flash_end = 0x08200000
 rtt_address = 0x2009FF00
 
 [identity]
-uid_length = 9
+uid_min = 5
+uid_max = 9
 cert_subject = { OU = "Devices", O = "BTB Energy", C = "NL" }
 cert_validity_days = 9650
 ca_piv_slot = "R1"
@@ -244,7 +262,8 @@ config_flash_start = 0x081FE000
 config_flash_end = 0x08200000
 rtt_address = 0x2009FF00
 [identity]
-uid_length = 9
+uid_min = 5
+uid_max = 9
 cert_subject = { OU = "Devices", O = "Jitter", C = "NL" }
 cert_validity_days = 10950
 ca_piv_slot = "82"

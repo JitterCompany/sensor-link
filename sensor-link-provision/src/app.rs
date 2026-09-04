@@ -595,7 +595,7 @@ impl Session {
             return;
         }
         let mut warnings = Vec::new();
-        if let Some(w) = validate::uid_warning(&self.uid, self.info.uid_length) {
+        if let Some(w) = validate::uid_warning(&self.uid, self.info.uid_min, self.info.uid_max) {
             warnings.push(w);
         }
         if !validate::iccid_valid(&self.icc) {

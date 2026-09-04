@@ -18,7 +18,29 @@ pub struct App {
     tx: Sender<Command>,
     rx: Receiver<Event>,
     sounds: sound::Sounds,
+    logo: Option<egui::TextureHandle>,
     screen: Screen,
+}
+
+/// Aspect ratio of the Jitter wordmark (viewBox 160x50).
+const LOGO_ASPECT: f32 = 160.0 / 50.0;
+
+fn load_logo(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let img = image::load_from_memory(include_bytes!("../assets/jitter-logo.png"))
+        .ok()?
+        .to_rgba8();
+    let (w, h) = img.dimensions();
+    let color = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], img.as_raw());
+    Some(ctx.load_texture("jitter-logo", color, egui::TextureOptions::LINEAR))
+}
+
+fn logo(ui: &mut egui::Ui, tex: Option<&egui::TextureHandle>, height: f32) {
+    if let Some(tex) = tex {
+        ui.add(
+            egui::Image::from_texture(tex)
+                .fit_to_exact_size(egui::vec2(height * LOGO_ASPECT, height)),
+        );
+    }
 }
 
 enum Screen {
@@ -97,6 +119,7 @@ impl App {
             tx,
             rx,
             sounds: sound::Sounds::new(),
+            logo: load_logo(&cc.egui_ctx),
             screen: Screen::Setup(Setup {
                 dev_ca,
                 ..Default::default()
@@ -191,15 +214,21 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_events();
         egui::CentralPanel::default().show(ctx, |ui| match &mut self.screen {
-            Screen::Setup(setup) => setup.ui(ui, &self.tx),
-            Screen::Session(session) => session.ui(ui, &self.tx),
+            Screen::Setup(setup) => setup.ui(ui, &self.tx, self.logo.as_ref()),
+            Screen::Session(session) => session.ui(ui, &self.tx, self.logo.as_ref()),
         });
     }
 }
 
 impl Setup {
-    fn ui(&mut self, ui: &mut egui::Ui, tx: &Sender<Command>) {
-        ui.heading("sensor-link provisioning");
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        tx: &Sender<Command>,
+        logo_tex: Option<&egui::TextureHandle>,
+    ) {
+        logo(ui, logo_tex, 44.0);
+        ui.heading("Provisioning");
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
@@ -371,9 +400,15 @@ impl Setup {
 }
 
 impl Session {
-    fn ui(&mut self, ui: &mut egui::Ui, tx: &Sender<Command>) {
+    fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        tx: &Sender<Command>,
+        logo_tex: Option<&egui::TextureHandle>,
+    ) {
         let ctx = ui.ctx().clone();
         ui.horizontal(|ui| {
+            logo(ui, logo_tex, 28.0);
             ui.heading(format!("{}: {}", self.info.project, self.info.variant));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("End session").clicked() {
@@ -488,16 +523,32 @@ impl Session {
         ui.add_space(8.0);
         ui.separator();
         ui.label(RichText::new("Boot log (RTT)").strong());
-        egui::ScrollArea::vertical()
-            .max_height(220.0)
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
+        // Terminal-style panel: near-black background, light monospace text.
+        let terminal_bg = Color32::from_rgb(18, 18, 18);
+        let terminal_fg = Color32::from_rgb(220, 223, 228);
+        egui::Frame::new()
+            .fill(terminal_bg)
+            .inner_margin(egui::Margin::same(8))
+            .corner_radius(4)
             .show(ui, |ui| {
-                if self.live_rtt.is_empty() {
-                    ui.weak("(RTT output from the device appears here during boot verification)");
-                } else {
-                    ui.monospace(&self.live_rtt);
-                }
+                ui.style_mut().visuals.override_text_color = Some(terminal_fg);
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if self.live_rtt.is_empty() {
+                            ui.label(
+                                RichText::new(
+                                    "(RTT output from the device appears here during boot verification)",
+                                )
+                                .monospace()
+                                .color(Color32::from_rgb(120, 124, 130)),
+                            );
+                        } else {
+                            ui.label(RichText::new(&self.live_rtt).monospace().color(terminal_fg));
+                        }
+                    });
             });
 
         self.dialogs(&ctx, tx);

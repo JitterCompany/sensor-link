@@ -65,16 +65,21 @@ jobs:
 
       - name: Archive (macOS app)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: dist/sensor-link-provision.app.zip
+          # Upload the zip as-is (no extra outer zip); ditto already preserved
+          # the bundle's executable bit, which GitHub's own zipping would strip.
+          archive: false
           retention-days: 90
 
       - name: Archive (Linux binary)
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: target/release/sensor-link-provision
+          # Upload the binary as-is so it keeps its executable bit.
+          archive: false
           retention-days: 90

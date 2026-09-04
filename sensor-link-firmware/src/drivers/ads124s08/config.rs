@@ -2,7 +2,7 @@ use super::register;
 pub use super::register::{
     AnalogPin,
     DATARATE::DR as DataRate,
-    IDACMAG::IMAG as IDACMagnitude,
+    IDACMAG::{FL_RAIL_EN as RailMonitors, IMAG as IDACMagnitude},
     PGA::{DELAY as Delay, GAIN as Gain},
     REF::REFSEL as RefSource,
 };
@@ -22,15 +22,27 @@ pub struct RefConfig {
 
     /// Pin connected to IDAC2
     pub idac2_out: Option<AnalogPin>,
+
+    /// PGA output voltage rail monitors.
+    ///
+    /// These monitor when the input signal is (nearly) exceeding the ADC range.
+    /// Leave enabled unless normal operation expects the inputs to be
+    /// driven close to the limits (PGA output within 0.15V of supply).
+    ///
+    /// Note that the monitors stays active even when the PGA is bypassed
+    /// (triggering with input witing 0.15V of supply and gnd).
+    ///
+    /// If any of the rail monitors trigger, conversions come back as
+    /// [ReadError::PGAOverrange](super::ReadError::PGAOverrange).
+    /// Disabling them returns the raw conversion value instead.
+    pub rail_monitors: RailMonitors,
 }
 
 impl RefConfig {
     /// IDACMAG register value
     #[inline]
     pub(super) fn reg_idacmag(&self) -> u8 {
-        register::IDACMAG::FL_RAIL_EN::Enable as u8
-            | register::IDACMAG::PSW::Open as u8
-            | self.idac_mag as u8
+        self.rail_monitors as u8 | register::IDACMAG::PSW::Open as u8 | self.idac_mag as u8
     }
 
     /// REF register
@@ -72,6 +84,7 @@ impl Default for RefConfig {
             idac_mag: IDACMagnitude::Off,
             idac1_out: None,
             idac2_out: None,
+            rail_monitors: RailMonitors::Enable,
         }
     }
 }

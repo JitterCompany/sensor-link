@@ -322,7 +322,6 @@ pub trait SensorDataStore: Send + Sync + 'static {
         time_resolution: TimeResolution,
         export_id: &DataStoreId,
         csv_header: &str,
-        clamp_to_data_range: bool,
     ) -> anyhow::Result<()>;
 
     async fn get_data_exports(

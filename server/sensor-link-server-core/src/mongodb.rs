@@ -33,7 +33,6 @@ use crate::{
         DataStoreError, DeviceStore, EventStore, FirmwareStore, Result, SensorDataOptions,
         SensorDataStore, TransactionDataStore,
     },
-    utils::datetime::datetime_from_millis,
     DataStoreId, MeteorId, TimeRange,
 };
 
@@ -1460,7 +1459,6 @@ where
         time_resolution: TimeResolution,
         export_id: &DataStoreId,
         csv_header: &str,
-        clamp_to_data_range: bool,
     ) -> anyhow::Result<()> {
         let bucket = self.db().gridfs_bucket(
             GridFsBucketOptions::builder()
@@ -1469,37 +1467,6 @@ where
         );
         let mut upload_stream = bucket.open_upload_stream("example.txt").await?;
 
-        let mut mp_time_range = TimeRange {
-            from: timerange.from,
-            until: timerange.until,
-        };
-        if clamp_to_data_range {
-            let first_timestamp = if let Some(data_channel) = data_channels.first() {
-                self.find_first_timestamp_for_mp(*data_channel, meas_point_id)
-                    .await?
-                    .and_then(|ts| datetime_from_millis(ts).ok())
-            } else {
-                None
-            };
-            let last_timestamp = if let Some(data_channel) = data_channels.first() {
-                self.find_latest_timestamp_for_mp(*data_channel, meas_point_id)
-                    .await?
-                    .and_then(|ts| datetime_from_millis(ts).ok())
-            } else {
-                None
-            };
-            if let Some(first_timestamp) = first_timestamp {
-                if first_timestamp > mp_time_range.from {
-                    mp_time_range.from = first_timestamp;
-                }
-            }
-            if let Some(last_timestamp) = last_timestamp {
-                if last_timestamp < mp_time_range.until {
-                    mp_time_range.until = last_timestamp;
-                }
-            }
-        }
-
         // The freq/perc columns are decided from the first non-empty batch: a field
         // is included only if the data actually carries it. The header is therefore
         // written lazily, once that decision can be made.
@@ -1507,7 +1474,7 @@ where
         let mut include_freq = false;
         let mut include_perc = false;
 
-        for day_range in mp_time_range.iter_hours() {
+        for day_range in timerange.iter_hours() {
             let mut timeseries = MPSensorDataChannels::new();
             for &data_channel in data_channels.iter() {
                 let data = self
@@ -1516,7 +1483,7 @@ where
                         Some(time_resolution),
                         meas_point_id,
                         &day_range,
-                        day_range.until == mp_time_range.until,
+                        day_range.until == timerange.until,
                     )
                     .await?;
                 timeseries.push(data);

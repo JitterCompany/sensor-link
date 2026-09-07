@@ -9,6 +9,12 @@ pub enum DataExportStatus {
     Error,
 }
 
+/// Result of fetching one chunk of an exported file.
+pub enum ExportChunk {
+    Data(Vec<u8>),
+    EndOfFile,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(bound(
     serialize = "DT: serde::Serialize",

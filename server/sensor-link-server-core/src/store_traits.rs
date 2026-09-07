@@ -6,7 +6,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
 use crate::{
-    data_export::{DataExport, DataExportStatus},
+    data_export::{DataExport, DataExportStatus, ExportChunk},
     data_kind::DataKind,
     data_set::{DataSet, NewDataSet},
     device::{Device, DeviceExt, DeviceFieldType, DeviceQuery, DeviceStatusLike},
@@ -342,7 +342,7 @@ pub trait SensorDataStore: Send + Sync + 'static {
         &self,
         file_id: &DataStoreId,
         chunk_index: u32,
-    ) -> anyhow::Result<Option<Vec<u8>>>;
+    ) -> anyhow::Result<ExportChunk>;
 
     async fn delete_data_export(&self, export_id: &DataStoreId) -> Result<()>
     where

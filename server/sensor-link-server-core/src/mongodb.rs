@@ -20,7 +20,7 @@ use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 
 use crate::{
-    data_export::{DataExport, DataExportStatus},
+    data_export::{DataExport, DataExportStatus, ExportChunk},
     data_kind::DataKind,
     data_set::{DataSet, NewDataSet},
     device::{Device, DeviceExt, DeviceFieldType, DeviceQuery, DeviceStatusLike},
@@ -1567,7 +1567,7 @@ where
         &self,
         file_id: &DataStoreId,
         chunk_index: u32,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
+    ) -> anyhow::Result<ExportChunk> {
         tracing::debug!("Getting chunk {} of file {}", chunk_index, file_id);
         let Some(document) = self
             .collection::<Document>(&format!("{DATA_EXPORT_COLL_NAME}.chunks"))
@@ -1578,7 +1578,7 @@ where
             .projection(doc! { "data": 1 })
             .await?
         else {
-            return Ok(None);
+            return Ok(ExportChunk::EndOfFile);
         };
         let data = document
             .get("data")
@@ -1586,7 +1586,7 @@ where
         let Bson::Binary(Binary { bytes, .. }) = data else {
             return Err(anyhow::anyhow!("Data is not binary"));
         };
-        Ok(Some(bytes.to_vec()))
+        Ok(ExportChunk::Data(bytes.to_vec()))
     }
 
     async fn delete_data_export(&self, export_id: &DataStoreId) -> Result<()>

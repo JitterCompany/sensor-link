@@ -29,7 +29,7 @@ pub fn list_probes() -> Vec<ProbeStatus> {
         .iter()
         .map(|p| ProbeStatus {
             name: describe(p),
-            problem: p.open().err().map(|e| explain_open_error(&e.to_string())),
+            problem: p.open().err().map(|e| explain_open_error(&e)),
         })
         .collect()
 }
@@ -50,11 +50,21 @@ pub fn needs_winusb(message: &str) -> bool {
 
 /// Turns the probe-rs open error into operator wording where we know the
 /// cause: on Windows, nusb refuses a J-Link bound to any driver but WinUSB.
-fn explain_open_error(err: &str) -> String {
-    if cfg!(windows) && err.to_lowercase().contains("driver") {
-        return format!("{NOT_WINUSB} ({err})");
+/// probe-rs reports that as a bare "USB Communication Error" with the
+/// detail in the source chain, so the whole chain is inspected and shown.
+fn explain_open_error(err: &dyn std::error::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut cur = err.source();
+    while let Some(e) = cur {
+        parts.push(e.to_string());
+        cur = e.source();
     }
-    err.into()
+    let full = parts.join(": ");
+    let lower = full.to_lowercase();
+    if cfg!(windows) && (lower.contains("driver") || lower.contains("usb")) {
+        return format!("{NOT_WINUSB} ({full})");
+    }
+    full
 }
 
 fn describe(p: &DebugProbeInfo) -> String {
@@ -95,13 +105,9 @@ pub fn find_probe() -> Result<DebugProbeInfo> {
 
 pub fn attach(chip: &str, speed_khz: u32) -> Result<Session> {
     let info = find_probe()?;
-    let mut probe = info.open().map_err(|e| {
-        anyhow!(
-            "opening {}: {}",
-            describe(&info),
-            explain_open_error(&e.to_string())
-        )
-    })?;
+    let mut probe = info
+        .open()
+        .map_err(|e| anyhow!("opening {}: {}", describe(&info), explain_open_error(&e)))?;
     probe
         .set_speed(speed_khz)
         .map_err(anyhow::Error::from)

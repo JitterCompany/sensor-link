@@ -3,7 +3,7 @@
 
 use std::{path::Path, time::Duration};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use probe_rs::{
     Permissions, Session,
     flashing::{
@@ -13,9 +13,58 @@ use probe_rs::{
     probe::{DebugProbeInfo, list::Lister},
 };
 
-/// All connected probes, as display strings.
-pub fn list_probes() -> Vec<String> {
-    Lister::new().list_all().iter().map(describe).collect()
+/// A connected probe and, if it cannot be opened, why.
+#[derive(Clone, Debug)]
+pub struct ProbeStatus {
+    pub name: String,
+    pub problem: Option<String>,
+}
+
+/// All connected probes, each briefly opened so that a probe that is listed
+/// but unusable (on Windows: bound to the wrong USB driver) is reported on
+/// the setup screen instead of at the first device.
+pub fn list_probes() -> Vec<ProbeStatus> {
+    Lister::new()
+        .list_all()
+        .iter()
+        .map(|p| ProbeStatus {
+            name: describe(p),
+            problem: p.open().err().map(|e| explain_open_error(&e)),
+        })
+        .collect()
+}
+
+/// What the operator must do when a J-Link on Windows is not in WinUSB mode
+/// (the tool drives the probe over WinUSB, not SEGGER's driver).
+pub const WINUSB_HINT: &str = "On Windows the J-Link must be in WinUSB mode: install the J-Link \
+software (segger.com/downloads/jlink), open J-Link Configurator, right-click the probe, \
+choose Configure, set USB Driver to WinUSB, then unplug and replug the probe. \
+The setting is stored in the probe, so this is needed once per probe.";
+
+const NOT_WINUSB: &str = "the J-Link is not in WinUSB mode";
+
+/// True for a probe error that [`WINUSB_HINT`] solves.
+pub fn needs_winusb(message: &str) -> bool {
+    message.contains(NOT_WINUSB)
+}
+
+/// Turns the probe-rs open error into operator wording where we know the
+/// cause: on Windows, nusb refuses a J-Link bound to any driver but WinUSB.
+/// probe-rs reports that as a bare "USB Communication Error" with the
+/// detail in the source chain, so the whole chain is inspected and shown.
+fn explain_open_error(err: &dyn std::error::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut cur = err.source();
+    while let Some(e) = cur {
+        parts.push(e.to_string());
+        cur = e.source();
+    }
+    let full = parts.join(": ");
+    let lower = full.to_lowercase();
+    if cfg!(windows) && (lower.contains("driver") || lower.contains("usb")) {
+        return format!("{NOT_WINUSB} ({full})");
+    }
+    full
 }
 
 fn describe(p: &DebugProbeInfo) -> String {
@@ -58,7 +107,7 @@ pub fn attach(chip: &str, speed_khz: u32) -> Result<Session> {
     let info = find_probe()?;
     let mut probe = info
         .open()
-        .with_context(|| format!("opening {}", describe(&info)))?;
+        .map_err(|e| anyhow!("opening {}: {}", describe(&info), explain_open_error(&e)))?;
     probe
         .set_speed(speed_khz)
         .map_err(anyhow::Error::from)

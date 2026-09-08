@@ -1,5 +1,3 @@
-use core::i32;
-
 use serde::{Deserialize, Serialize};
 
 /// Network time syncronization lower limit (microsecond): updates at a faster interval are ignored
@@ -123,7 +121,7 @@ impl ClockCalibration {
             || self
                 .drift_error_ppb
                 .saturating_sub(other.drift_error_ppb)
-                .abs() as u32
+                .unsigned_abs()
                 > ESTIMATE_MIN_INITIAL_UNCERTAINTY_PPB
     }
 }
@@ -387,9 +385,7 @@ impl ClockDriftEstimate {
 
                         let err_min = prev_min.min(new_min);
                         let err_max = prev_max.max(new_max);
-                        let worst_case_uncertainty = (err_max - err_min).abs() as u32;
-
-                        worst_case_uncertainty
+                        (err_max - err_min).unsigned_abs()
                     })
                     .unwrap_or(temp_adjust.uncertainty_ppb);
                 if uncertainty > network.max_temp_uncertainty_ppb {
@@ -653,8 +649,16 @@ mod test {
 
     use super::*;
 
+    // REV_SLOPE_PERFCOUNT is a global; tests that reset and assert on it
+    // must not run concurrently.
+    static PERFCOUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn perfcount_guard() -> std::sync::MutexGuard<'static, ()> {
+        PERFCOUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_slope_convert_small_adjustment() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // note: 1800_000_000 chosen because it is slightly below i32::MAX
@@ -669,6 +673,7 @@ mod test {
 
     #[test]
     fn test_slope_convert_small_adjustment_negative() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // note: 1800_000_000 chosen because it is slightly below i32::MAX
@@ -683,6 +688,7 @@ mod test {
 
     #[test]
     fn test_slope_convert_extreme_adjustment() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // adjust this test + assertion if CORRECTION_ERROR_MAX_PPB changes
@@ -699,6 +705,7 @@ mod test {
 
     #[test]
     fn test_slope_convert_small_adjustment_long_time() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // note: 86_400_000_000 chosen because it is >> i32::MAX

@@ -100,7 +100,7 @@ pub enum Outcome {
 }
 
 pub enum Event {
-    Probes(Vec<String>),
+    Probes(Vec<flash::ProbeStatus>),
     /// Accumulated RTT boot log for the device being verified.
     Rtt(String),
     /// Flashing progress (0.0..=1.0) for a step.

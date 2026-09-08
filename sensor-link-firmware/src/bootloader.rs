@@ -1,3 +1,6 @@
+// Needs the RTT control block (`_SEGGER_RTT`) that only a firmware binary
+// provides; keep it out of std builds so they link on MSVC.
+#[cfg(not(feature = "use-std"))]
 pub mod common_rtt_logger;
 pub mod common_time;
 

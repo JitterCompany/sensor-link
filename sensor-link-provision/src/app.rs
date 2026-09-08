@@ -10,7 +10,7 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::{
     artifacts::Artifacts,
-    log_csv, sound, validate,
+    flash, log_csv, sound, validate,
     worker::{self, Command, DevCa, Event, Outcome, SessionConfig, SessionInfo, StepState},
 };
 
@@ -88,7 +88,7 @@ struct Setup {
     ca_cert_file: Option<PathBuf>,
     /// Set from the command line only.
     dev_ca: Option<DevCa>,
-    probes: Option<Vec<String>>,
+    probes: Option<Vec<flash::ProbeStatus>>,
     starting: bool,
     error: Option<String>,
 }
@@ -478,7 +478,9 @@ impl Setup {
                                 ui.colored_label(Color32::from_rgb(200, 120, 0), "none found");
                             }
                             Some(p) => {
-                                ui.label(p.join(", "));
+                                ui.label(
+                                    p.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "),
+                                );
                             }
                         }
                         if ui.button("Rescan").clicked() {
@@ -487,9 +489,48 @@ impl Setup {
                         }
                     });
                     ui.add_space(14.0);
+                    // A probe that is listed but unusable blocks the session;
+                    // say why (and how to fix it) right above the button.
+                    let problems: Vec<(&str, &str)> = self
+                        .probes
+                        .iter()
+                        .flatten()
+                        .filter_map(|p| Some((p.name.as_str(), p.problem.as_deref()?)))
+                        .collect();
+                    let probe_error = !problems.is_empty();
+                    if probe_error {
+                        let dark = ui.visuals().dark_mode;
+                        let fill = if dark {
+                            Color32::from_rgb(70, 30, 30)
+                        } else {
+                            Color32::from_rgb(255, 235, 235)
+                        };
+                        egui::Frame::new()
+                            .fill(fill)
+                            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(200, 60, 60)))
+                            .inner_margin(egui::Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.strong(
+                                    RichText::new("Probe cannot be used")
+                                        .color(Color32::from_rgb(220, 80, 80)),
+                                );
+                                for (name, problem) in &problems {
+                                    ui.label(format!("{name}: {problem}"));
+                                    if flash::needs_winusb(problem) {
+                                        ui.add_space(4.0);
+                                        ui.label(flash::WINUSB_HINT);
+                                    }
+                                }
+                                ui.add_space(4.0);
+                                ui.label("Then click Rescan.");
+                            });
+                        ui.add_space(14.0);
+                    }
                     let ready = matches!(self.artifacts, Some(Ok(_)))
                         && !self.log.trim().is_empty()
                         && (!self.pin.is_empty() || self.dev_ca.is_some())
+                        && !probe_error
                         && !self.starting;
                     if ui
                         .add_enabled(
@@ -855,10 +896,16 @@ impl Session {
             }
             Phase::Failed { step, message } => {
                 egui::Window::new("Step failed").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                    ui.set_max_width(520.0);
                     ui.strong(worker::STEPS[*step]);
                     ui.label(message);
                     ui.add_space(6.0);
-                    ui.label("Fix the cause (probe, power, SWD plug) and retry, or skip this device.");
+                    if flash::needs_winusb(message) {
+                        ui.strong(flash::WINUSB_HINT);
+                        ui.label("Then retry.");
+                    } else {
+                        ui.label("Fix the cause (probe, power, SWD plug) and retry, or skip this device.");
+                    }
                     ui.horizontal(|ui| {
                         if ui.button("Retry").clicked() {
                             let _ = tx.send(Command::Retry);

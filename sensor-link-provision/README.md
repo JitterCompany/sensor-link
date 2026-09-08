@@ -34,8 +34,10 @@ touched.
 Download the build for your platform from the repository's
 [Releases](../../releases) page:
 
-- **macOS (Apple Silicon):** `sensor-link-provision-macos-arm64.zip` — a
-  zipped `sensor-link-provision.app`.
+- **macOS (Apple Silicon and Intel):** `sensor-link-provision-macos-universal.zip`
+  — a zipped universal `sensor-link-provision.app`.
+- **Windows (x86_64):** `sensor-link-provision-windows-x86_64.exe` — a bare
+  executable.
 - **Linux (x86_64):** `sensor-link-provision-linux-x86_64` — a bare binary.
 
 Releases are cut by pushing a `sensor-link-provision-v*` tag. Untagged builds
@@ -77,6 +79,25 @@ sudo curl -o /etc/udev/rules.d/69-probe-rs.rules https://probe.rs/files/69-probe
 sudo udevadm control --reload && sudo udevadm trigger
 sudo usermod -aG plugdev $USER   # log out and in again
 ```
+
+### Windows
+
+Put the `.exe` anywhere and run it. It is not code-signed, so the first
+launch shows "Windows protected your PC": click **More info**, then
+**Run anyway**.
+
+- **J-Link:** the tool talks to the probe over WinUSB directly and does not
+  work with SEGGER's default driver. Switch the probe to WinUSB once: install
+  the [J-Link software](https://www.segger.com/downloads/jlink/), open
+  *J-Link Configurator*, right-click the probe -> *Configure*, and pick
+  **WinUSB** under *USB Driver*. If that option is greyed out, use
+  [Zadig](https://zadig.akeo.ie/) instead. Details in the
+  [probe-rs probe setup guide](https://probe.rs/docs/getting-started/probe-setup/)
+  under "SEGGER J-Link". SEGGER's own tools still work with the WinUSB driver.
+- **YubiKey:** works with the built-in Smart Card service; nothing to install.
+- The `--selftest-sign` / `--flash-test` command-line checks print nothing on
+  Windows in release builds (the executable is a GUI program without a
+  console); use a debug build (`cargo build`) for those.
 
 ## The profile: `provision.toml`
 
@@ -176,4 +197,8 @@ cargo build --release -p sensor-link-provision
 ```
 
 Linux build dependencies: `libudev-dev libpcsclite-dev libasound2-dev
-libgtk-3-dev pkg-config`.
+libgtk-3-dev pkg-config`. Windows needs the MSVC toolchain (Visual Studio
+Build Tools with the Windows SDK) for the linker and `rc.exe`, which embeds
+the icon. macOS needs nothing beyond Xcode's command-line tools; the release
+workflow builds a universal binary by adding the `x86_64-apple-darwin` target
+and merging the two builds with `lipo`.

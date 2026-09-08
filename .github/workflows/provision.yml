@@ -34,9 +34,11 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            artifact: sensor-link-provision-macos-arm64
+            artifact: sensor-link-provision-macos-universal
           - os: ubuntu-22.04
             artifact: sensor-link-provision-linux-x86_64
+          - os: windows-latest
+            artifact: sensor-link-provision-windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -51,7 +53,25 @@ jobs:
       - name: Test
         run: cargo test -p sensor-link-provision
       - name: Build
+        if: runner.os != 'macOS'
         run: cargo build --release -p sensor-link-provision
+
+      # macOS: the arm64 runner also cross-compiles the x86_64 slice (the
+      # dependencies are pure Rust or bind to system frameworks, so no SDK
+      # setup is needed) and lipo merges both into one universal binary.
+      - name: Build (macOS universal)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release -p sensor-link-provision \
+            --target aarch64-apple-darwin --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/sensor-link-provision \
+            target/aarch64-apple-darwin/release/sensor-link-provision \
+            target/x86_64-apple-darwin/release/sensor-link-provision
+          lipo -info dist/sensor-link-provision
+          # Rosetta on the runner: prove the x86_64 slice at least starts.
+          arch -x86_64 dist/sensor-link-provision --help
 
       # macOS: package a .app bundle (icon + Info.plist) and zip it with
       # ditto so the bundle structure and exec bit survive the artifact upload.
@@ -59,9 +79,8 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           VERSION=$(awk -F '"' '/^version/ {print $2; exit}' sensor-link-provision/Cargo.toml)-${{ github.run_number }}
-          mkdir -p dist
           sensor-link-provision/macos/bundle.sh \
-            target/release/sensor-link-provision \
+            dist/sensor-link-provision \
             sensor-link-provision/assets/jitter-icon.png \
             dist "$VERSION"
           # Name the zip after the artifact: with archive:false the file name
@@ -95,9 +114,24 @@ jobs:
           archive: false
           retention-days: 90
 
+      - name: Stage Windows exe
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/release/sensor-link-provision.exe "dist/${{ matrix.artifact }}.exe"
+
+      - name: Archive (Windows exe)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/${{ matrix.artifact }}.exe
+          archive: false
+          retention-days: 90
+
       # On a sensor-link-provision-v* tag, publish the platform asset to a
       # GitHub Release. Each matrix job attaches its own file; the action
-      # creates the release on the first job and updates it on the second.
+      # creates the release on the first job and updates it on the others.
       - name: Attach to GitHub release
         if: startsWith(github.ref, 'refs/tags/sensor-link-provision-v')
         uses: softprops/action-gh-release@v2
@@ -107,4 +141,5 @@ jobs:
           generate_release_notes: true
           files: |
             dist/${{ matrix.artifact }}.zip
+            dist/${{ matrix.artifact }}.exe
             dist/${{ matrix.artifact }}

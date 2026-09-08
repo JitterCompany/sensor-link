@@ -167,10 +167,11 @@ impl Profile {
 }
 
 pub fn expand_home(path: &str) -> std::path::PathBuf {
+    // `home_dir` uses HOME on Unix and USERPROFILE on Windows.
     if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = std::env::home_dir()
     {
-        return std::path::PathBuf::from(home).join(rest);
+        return home.join(rest);
     }
     std::path::PathBuf::from(path)
 }

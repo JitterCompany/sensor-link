@@ -653,8 +653,16 @@ mod test {
 
     use super::*;
 
+    // REV_SLOPE_PERFCOUNT is a global; tests that reset and assert on it
+    // must not run concurrently.
+    static PERFCOUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn perfcount_guard() -> std::sync::MutexGuard<'static, ()> {
+        PERFCOUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_slope_convert_small_adjustment() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // note: 1800_000_000 chosen because it is slightly below i32::MAX
@@ -669,6 +677,7 @@ mod test {
 
     #[test]
     fn test_slope_convert_small_adjustment_negative() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // note: 1800_000_000 chosen because it is slightly below i32::MAX
@@ -683,6 +692,7 @@ mod test {
 
     #[test]
     fn test_slope_convert_extreme_adjustment() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // adjust this test + assertion if CORRECTION_ERROR_MAX_PPB changes
@@ -699,6 +709,7 @@ mod test {
 
     #[test]
     fn test_slope_convert_small_adjustment_long_time() {
+        let _guard = perfcount_guard();
         REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
 
         // note: 86_400_000_000 chosen because it is >> i32::MAX

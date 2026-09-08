@@ -507,7 +507,7 @@ impl Setup {
                         };
                         egui::Frame::new()
                             .fill(fill)
-                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(200, 60, 60)))
+                            .stroke(egui::Stroke::new(1.0_f32, Color32::from_rgb(200, 60, 60)))
                             .inner_margin(egui::Margin::same(10))
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());

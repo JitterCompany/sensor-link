@@ -34,14 +34,25 @@ pub fn list_probes() -> Vec<ProbeStatus> {
         .collect()
 }
 
-/// Turns the probe-rs open error into operator instructions where we know
-/// the cause. nusb refuses a J-Link that is still bound to SEGGER's driver.
+/// What the operator must do when a J-Link on Windows is not in WinUSB mode
+/// (the tool drives the probe over WinUSB, not SEGGER's driver).
+pub const WINUSB_HINT: &str = "On Windows the J-Link must be in WinUSB mode: install the J-Link \
+software (segger.com/downloads/jlink), open J-Link Configurator, right-click the probe, \
+choose Configure, set USB Driver to WinUSB, then unplug and replug the probe. \
+The setting is stored in the probe, so this is needed once per probe.";
+
+const NOT_WINUSB: &str = "the J-Link is not in WinUSB mode";
+
+/// True for a probe error that [`WINUSB_HINT`] solves.
+pub fn needs_winusb(message: &str) -> bool {
+    message.contains(NOT_WINUSB)
+}
+
+/// Turns the probe-rs open error into operator wording where we know the
+/// cause: on Windows, nusb refuses a J-Link bound to any driver but WinUSB.
 fn explain_open_error(err: &str) -> String {
-    if cfg!(windows) && err.contains("incompatible driver") {
-        return "the J-Link is bound to SEGGER's USB driver, which this tool cannot use. \
-                Switch it to WinUSB once: open J-Link Configurator, right-click the probe, \
-                Configure, set USB Driver to WinUSB (or use Zadig), then replug and rescan"
-            .into();
+    if cfg!(windows) && err.to_lowercase().contains("driver") {
+        return format!("{NOT_WINUSB} ({err})");
     }
     err.into()
 }

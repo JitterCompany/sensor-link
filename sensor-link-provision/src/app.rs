@@ -488,18 +488,24 @@ impl Setup {
                             let _ = tx.send(Command::ListProbes);
                         }
                     });
+                    let mut probe_error = false;
                     for p in self.probes.iter().flatten() {
                         if let Some(problem) = &p.problem {
+                            probe_error = true;
                             ui.colored_label(
                                 Color32::from_rgb(200, 60, 60),
                                 format!("{}: {problem}", p.name),
                             );
+                            if flash::needs_winusb(problem) {
+                                ui.label(flash::WINUSB_HINT);
+                            }
                         }
                     }
                     ui.add_space(14.0);
                     let ready = matches!(self.artifacts, Some(Ok(_)))
                         && !self.log.trim().is_empty()
                         && (!self.pin.is_empty() || self.dev_ca.is_some())
+                        && !probe_error
                         && !self.starting;
                     if ui
                         .add_enabled(
@@ -865,10 +871,16 @@ impl Session {
             }
             Phase::Failed { step, message } => {
                 egui::Window::new("Step failed").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                    ui.set_max_width(520.0);
                     ui.strong(worker::STEPS[*step]);
                     ui.label(message);
                     ui.add_space(6.0);
-                    ui.label("Fix the cause (probe, power, SWD plug) and retry, or skip this device.");
+                    if flash::needs_winusb(message) {
+                        ui.strong(flash::WINUSB_HINT);
+                        ui.label("Then retry.");
+                    } else {
+                        ui.label("Fix the cause (probe, power, SWD plug) and retry, or skip this device.");
+                    }
                     ui.horizontal(|ui| {
                         if ui.button("Retry").clicked() {
                             let _ = tx.send(Command::Retry);

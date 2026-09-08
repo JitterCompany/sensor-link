@@ -488,20 +488,45 @@ impl Setup {
                             let _ = tx.send(Command::ListProbes);
                         }
                     });
-                    let mut probe_error = false;
-                    for p in self.probes.iter().flatten() {
-                        if let Some(problem) = &p.problem {
-                            probe_error = true;
-                            ui.colored_label(
-                                Color32::from_rgb(200, 60, 60),
-                                format!("{}: {problem}", p.name),
-                            );
-                            if flash::needs_winusb(problem) {
-                                ui.label(flash::WINUSB_HINT);
-                            }
-                        }
-                    }
                     ui.add_space(14.0);
+                    // A probe that is listed but unusable blocks the session;
+                    // say why (and how to fix it) right above the button.
+                    let problems: Vec<(&str, &str)> = self
+                        .probes
+                        .iter()
+                        .flatten()
+                        .filter_map(|p| Some((p.name.as_str(), p.problem.as_deref()?)))
+                        .collect();
+                    let probe_error = !problems.is_empty();
+                    if probe_error {
+                        let dark = ui.visuals().dark_mode;
+                        let fill = if dark {
+                            Color32::from_rgb(70, 30, 30)
+                        } else {
+                            Color32::from_rgb(255, 235, 235)
+                        };
+                        egui::Frame::new()
+                            .fill(fill)
+                            .stroke(egui::Stroke::new(1.0, Color32::from_rgb(200, 60, 60)))
+                            .inner_margin(egui::Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                ui.strong(
+                                    RichText::new("Probe cannot be used")
+                                        .color(Color32::from_rgb(220, 80, 80)),
+                                );
+                                for (name, problem) in &problems {
+                                    ui.label(format!("{name}: {problem}"));
+                                    if flash::needs_winusb(problem) {
+                                        ui.add_space(4.0);
+                                        ui.label(flash::WINUSB_HINT);
+                                    }
+                                }
+                                ui.add_space(4.0);
+                                ui.label("Then click Rescan.");
+                            });
+                        ui.add_space(14.0);
+                    }
                     let ready = matches!(self.artifacts, Some(Ok(_)))
                         && !self.log.trim().is_empty()
                         && (!self.pin.is_empty() || self.dev_ca.is_some())

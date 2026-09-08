@@ -87,14 +87,24 @@ launch shows "Windows protected your PC": click **More info**, then
 **Run anyway**.
 
 - **J-Link:** the tool talks to the probe over WinUSB directly and does not
-  work with SEGGER's default driver. Switch the probe to WinUSB once: install
-  the [J-Link software](https://www.segger.com/downloads/jlink/), open
+  work with SEGGER's default driver; the setup screen says so if the probe is
+  bound to the wrong driver. Switch the probe to WinUSB once, on any PC that
+  has the [J-Link software](https://www.segger.com/downloads/jlink/): open
   *J-Link Configurator*, right-click the probe -> *Configure*, and pick
-  **WinUSB** under *USB Driver*. If that option is greyed out, use
-  [Zadig](https://zadig.akeo.ie/) instead. Details in the
+  **WinUSB** under *USB Driver*. The setting is stored in the probe itself, so
+  from then on Windows binds its built-in WinUSB driver on every PC, with no
+  SEGGER software needed there. If the option is greyed out (old probe or
+  firmware), use [Zadig](https://zadig.akeo.ie/) on each Windows PC instead.
+  Details in the
   [probe-rs probe setup guide](https://probe.rs/docs/getting-started/probe-setup/)
   under "SEGGER J-Link". SEGGER's own tools still work with the WinUSB driver.
 - **YubiKey:** works with the built-in Smart Card service; nothing to install.
+  Not over Remote Desktop, though: an RDP session only sees smart cards
+  redirected from the client, and a YubiKey plugged into the remote PC fails
+  with "PC/SC error: An internal error has been detected". Either plug the
+  YubiKey into the client machine and enable smart card redirection in the
+  RDP client (*Local Resources -> More -> Smart cards*), or use the console
+  (physically, or via a console-mirroring tool such as Quick Assist).
 - The `--selftest-sign` / `--flash-test` command-line checks print nothing on
   Windows in release builds (the executable is a GUI program without a
   console); use a debug build (`cargo build`) for those.

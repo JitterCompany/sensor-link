@@ -3,7 +3,7 @@
 
 use std::{path::Path, time::Duration};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use probe_rs::{
     Permissions, Session,
     flashing::{
@@ -13,9 +13,37 @@ use probe_rs::{
     probe::{DebugProbeInfo, list::Lister},
 };
 
-/// All connected probes, as display strings.
-pub fn list_probes() -> Vec<String> {
-    Lister::new().list_all().iter().map(describe).collect()
+/// A connected probe and, if it cannot be opened, why.
+#[derive(Clone, Debug)]
+pub struct ProbeStatus {
+    pub name: String,
+    pub problem: Option<String>,
+}
+
+/// All connected probes, each briefly opened so that a probe that is listed
+/// but unusable (on Windows: bound to the wrong USB driver) is reported on
+/// the setup screen instead of at the first device.
+pub fn list_probes() -> Vec<ProbeStatus> {
+    Lister::new()
+        .list_all()
+        .iter()
+        .map(|p| ProbeStatus {
+            name: describe(p),
+            problem: p.open().err().map(|e| explain_open_error(&e.to_string())),
+        })
+        .collect()
+}
+
+/// Turns the probe-rs open error into operator instructions where we know
+/// the cause. nusb refuses a J-Link that is still bound to SEGGER's driver.
+fn explain_open_error(err: &str) -> String {
+    if cfg!(windows) && err.contains("incompatible driver") {
+        return "the J-Link is bound to SEGGER's USB driver, which this tool cannot use. \
+                Switch it to WinUSB once: open J-Link Configurator, right-click the probe, \
+                Configure, set USB Driver to WinUSB (or use Zadig), then replug and rescan"
+            .into();
+    }
+    err.into()
 }
 
 fn describe(p: &DebugProbeInfo) -> String {
@@ -56,9 +84,13 @@ pub fn find_probe() -> Result<DebugProbeInfo> {
 
 pub fn attach(chip: &str, speed_khz: u32) -> Result<Session> {
     let info = find_probe()?;
-    let mut probe = info
-        .open()
-        .with_context(|| format!("opening {}", describe(&info)))?;
+    let mut probe = info.open().map_err(|e| {
+        anyhow!(
+            "opening {}: {}",
+            describe(&info),
+            explain_open_error(&e.to_string())
+        )
+    })?;
     probe
         .set_speed(speed_khz)
         .map_err(anyhow::Error::from)

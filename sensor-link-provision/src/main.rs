@@ -136,7 +136,12 @@ fn flash_test(args: &[String]) -> Result<()> {
         .variants
         .get(variant)
         .context("variant index out of range")?;
-    println!("Probes: {:?}", flash::list_probes());
+    for p in flash::list_probes() {
+        match p.problem {
+            Some(problem) => println!("Probe: {} ({problem})", p.name),
+            None => println!("Probe: {}", p.name),
+        }
+    }
 
     // Throwaway CA and device identity: enough to exercise flash + boot check.
     let ca_key = cert::DeviceKey::generate()?;

@@ -1,5 +1,3 @@
-use core::i32;
-
 use serde::{Deserialize, Serialize};
 
 /// Network time syncronization lower limit (microsecond): updates at a faster interval are ignored
@@ -123,7 +121,7 @@ impl ClockCalibration {
             || self
                 .drift_error_ppb
                 .saturating_sub(other.drift_error_ppb)
-                .abs() as u32
+                .unsigned_abs()
                 > ESTIMATE_MIN_INITIAL_UNCERTAINTY_PPB
     }
 }
@@ -387,9 +385,7 @@ impl ClockDriftEstimate {
 
                         let err_min = prev_min.min(new_min);
                         let err_max = prev_max.max(new_max);
-                        let worst_case_uncertainty = (err_max - err_min).abs() as u32;
-
-                        worst_case_uncertainty
+                        (err_max - err_min).unsigned_abs()
                     })
                     .unwrap_or(temp_adjust.uncertainty_ppb);
                 if uncertainty > network.max_temp_uncertainty_ppb {

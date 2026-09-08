@@ -10,7 +10,7 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::{
     artifacts::Artifacts,
-    log_csv, sound, validate,
+    flash, log_csv, sound, validate,
     worker::{self, Command, DevCa, Event, Outcome, SessionConfig, SessionInfo, StepState},
 };
 
@@ -88,7 +88,7 @@ struct Setup {
     ca_cert_file: Option<PathBuf>,
     /// Set from the command line only.
     dev_ca: Option<DevCa>,
-    probes: Option<Vec<String>>,
+    probes: Option<Vec<flash::ProbeStatus>>,
     starting: bool,
     error: Option<String>,
 }
@@ -478,7 +478,9 @@ impl Setup {
                                 ui.colored_label(Color32::from_rgb(200, 120, 0), "none found");
                             }
                             Some(p) => {
-                                ui.label(p.join(", "));
+                                ui.label(
+                                    p.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "),
+                                );
                             }
                         }
                         if ui.button("Rescan").clicked() {
@@ -486,6 +488,14 @@ impl Setup {
                             let _ = tx.send(Command::ListProbes);
                         }
                     });
+                    for p in self.probes.iter().flatten() {
+                        if let Some(problem) = &p.problem {
+                            ui.colored_label(
+                                Color32::from_rgb(200, 60, 60),
+                                format!("{}: {problem}", p.name),
+                            );
+                        }
+                    }
                     ui.add_space(14.0);
                     let ready = matches!(self.artifacts, Some(Ok(_)))
                         && !self.log.trim().is_empty()

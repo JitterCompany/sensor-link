@@ -127,9 +127,14 @@ impl RateLimiter {
             return None;
         }
 
-        // How many of the sends in the window have to expire before `count` more fit. A single
-        // e-mail with more recipients than the limit can never fit, so wait for the window to clear
-        // completely rather than block forever.
+        // A single e-mail with more recipients than the limit never fits, so wait for the window to
+        // clear completely rather than block forever. Once it is empty there is nothing left to
+        // wait for: send it anyway.
+        if in_window == 0 {
+            return None;
+        }
+
+        // How many of the sends in the window have to expire before `count` more fit.
         let must_expire = (in_window + count - limit).min(in_window);
         let last_to_expire = self.sends[first_in_window + must_expire - 1];
 
@@ -206,6 +211,20 @@ mod tests {
             limiter.next_allowed(start, 5),
             Some(start + Duration::from_secs(10) + MINUTE)
         );
+    }
+
+    #[test]
+    fn a_mail_larger_than_the_limit_is_sent_when_the_window_is_empty() {
+        let mut limiter = limiter(2, 100, 100);
+        let start = Instant::now();
+
+        // 5 recipients never fit in a window of 2. With nothing left to wait for, the mail is
+        // released instead of blocking forever.
+        assert_eq!(limiter.next_allowed(start, 5), None);
+
+        // Same once the earlier sends have left the minute window.
+        limiter.record(start, 2);
+        assert_eq!(limiter.next_allowed(start + MINUTE, 5), None);
     }
 
     #[test]

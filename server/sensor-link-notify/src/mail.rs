@@ -233,14 +233,13 @@ async fn send_task(
                             });
                         }
                         if queue.len() >= MAX_QUEUED_EMAILS {
-                            let dropped = queue.pop_front();
-                            tracing::error!(
-                                "Throttled e-mail queue is full ({MAX_QUEUED_EMAILS}): dropping oldest queued e-mail {:?}",
-                                dropped.map(|d| d.mail.subject)
-                            );
-                            metrics::increment_counter_with_attribute(
-                                METER, "mail_dropped", 1u64, "reason", "queue_full",
-                            );
+                            if let Some(dropped) = queue.pop_front() {
+                                tracing::error!(
+                                    "Throttled e-mail queue is full ({MAX_QUEUED_EMAILS}): dropping oldest queued e-mail {:?}",
+                                    dropped.mail.subject
+                                );
+                                report_dropped(feedback_tx.as_ref(), &dropped.mail, "queue_full");
+                            }
                         }
                         queue.push_back(QueuedEmail { mail, queued_at: Instant::now() });
                         metrics::record_gauge(METER, "mail_throttle_queue_depth", queue.len() as u64, NO_ATTRIBUTES);
@@ -530,6 +529,27 @@ pub async fn build_and_send_email(
         }
     }
     ControlFlow::Continue(())
+}
+
+/// Reports an e-mail that is dropped without ever being sent.
+///
+/// Counted as a drop with its own reason, and reported as a failed send per recipient so that
+/// consumers of the feedback channel learn about it just like they would about a send error.
+fn report_dropped(
+    feedback_tx: Option<&mpsc::Sender<EmailSendFeedback>>,
+    mail: &Email,
+    reason: &'static str,
+) {
+    metrics::increment_counter_with_attribute(METER, "mail_dropped", 1u64, "reason", reason);
+    for recipient in &mail.recipients {
+        report_send_result(
+            feedback_tx,
+            mail,
+            recipient,
+            EmailSendStatus::Failed,
+            Some(format!("E-mail dropped before sending ({reason})")),
+        );
+    }
 }
 
 /// Records the outcome of a send attempt as a metric and reports it on the feedback channel.

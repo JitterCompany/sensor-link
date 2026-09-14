@@ -30,6 +30,13 @@ const MAX_QUEUED_EMAILS: usize = 10_000;
 /// allowed to wait that long: whatever is still queued when the grace period ends is dropped.
 const SHUTDOWN_DRAIN_GRACE: Duration = Duration::from_secs(60);
 
+/// How long an e-mail that may be sent right now keeps losing priority to incoming e-mail.
+///
+/// Incoming e-mail is handled first so that urgent e-mail overtakes the queue. A producer that
+/// keeps the channel filled would starve the queue completely, so after this long the queued
+/// e-mail is sent first instead.
+const RELEASE_STARVATION_LIMIT: Duration = Duration::from_secs(1);
+
 #[derive(Debug, Clone)]
 pub struct Email {
     recipients: Vec<String>,
@@ -196,6 +203,9 @@ async fn send_task(
     // Set once shutdown starts: the instant at which draining gives up. `Some` also means "no new
     // email is accepted anymore".
     let mut drain_until: Option<Instant> = None;
+    // Since when the e-mail at the head of the queue may be sent but has not been, see
+    // `RELEASE_STARVATION_LIMIT`.
+    let mut eligible_since: Option<Instant> = None;
 
     loop {
         let mails = &mut mails
@@ -218,11 +228,20 @@ async fn send_task(
             .front()
             .map(|queued| limiter.next_allowed(Instant::now(), queued.mail.send_count()));
 
+        if matches!(release_at, Some(None)) {
+            eligible_since.get_or_insert_with(Instant::now);
+        } else {
+            eligible_since = None;
+        }
+        // A queued e-mail that waited this long goes out before more e-mail is accepted.
+        let starving =
+            eligible_since.is_some_and(|since| since.elapsed() >= RELEASE_STARVATION_LIMIT);
+
         tokio::select! {
-            // Prioritize processing emails over shutdown to ensure pending emails are sent
+            // Handle incoming e-mail first, so that urgent e-mail overtakes the queue.
             biased;
 
-            mail = mails.recv(), if drain_until.is_none() => {
+            mail = mails.recv(), if drain_until.is_none() && !starving => {
                 match mail {
                     // All senders are gone: drain what is queued, then exit
                     None => drain_until = Some(Instant::now() + SHUTDOWN_DRAIN_GRACE),
@@ -260,6 +279,7 @@ async fn send_task(
                     continue;
                 };
                 let now = Instant::now();
+                eligible_since = None;
 
                 limiter.record(now, queued.mail.send_count());
                 metrics::record_histogram(

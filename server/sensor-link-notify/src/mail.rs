@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, ops::ControlFlow, sync::Arc};
+use std::{collections::VecDeque, ops::ControlFlow, sync::Arc, time::Duration};
 
 use lettre::{
     message::{header::ContentType, Attachment, Body, Mailbox, MultiPart, SinglePart},
@@ -23,6 +23,12 @@ const NO_ATTRIBUTES: &[(&str, &str)] = &[];
 /// Maximum number of non-urgent emails kept in the throttle queue. When the queue is full, the
 /// oldest queued email is dropped.
 const MAX_QUEUED_EMAILS: usize = 10_000;
+
+/// How long the task keeps draining its throttle queue after a shutdown request.
+///
+/// Draining happens at the throttled rate, so a large backlog would take hours. Shutdown is not
+/// allowed to wait that long: whatever is still queued when the grace period ends is dropped.
+const SHUTDOWN_DRAIN_GRACE: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct Email {
@@ -187,14 +193,16 @@ async fn send_task(
     let mut limiter = RateLimiter::new(throttle);
     let mut queue: VecDeque<QueuedEmail> = VecDeque::new();
     let mut batch: Option<Batch> = None;
-    let mut shutting_down = false;
+    // Set once shutdown starts: the instant at which draining gives up. `Some` also means "no new
+    // email is accepted anymore".
+    let mut drain_until: Option<Instant> = None;
 
     loop {
         let mails = &mut mails
             .try_lock()
             .expect("Email receiver chanel seems to be locked by another task then email task");
 
-        if shutting_down && queue.is_empty() {
+        if drain_until.is_some() && queue.is_empty() {
             break;
         }
 
@@ -214,10 +222,10 @@ async fn send_task(
             // Prioritize processing emails over shutdown to ensure pending emails are sent
             biased;
 
-            mail = mails.recv(), if !shutting_down => {
+            mail = mails.recv(), if drain_until.is_none() => {
                 match mail {
                     // All senders are gone: drain what is queued, then exit
-                    None => shutting_down = true,
+                    None => drain_until = Some(Instant::now() + SHUTDOWN_DRAIN_GRACE),
 
                     Some(mail) if mail.is_urgent() => {
                         limiter.record(Instant::now(), mail.send_count());
@@ -276,14 +284,28 @@ async fn send_task(
                 }
             }
 
-            _ = shutdown_rx.changed() => {
+            // Draining is bounded: whatever is left when the grace period ends is dropped, so a
+            // large backlog cannot hold up process exit for hours.
+            _ = wait_until(drain_until), if drain_until.is_some() => {
+                tracing::error!(
+                    "Shutdown grace period expired: dropping {} throttled e-mail(s)",
+                    queue.len()
+                );
+                for dropped in queue.drain(..) {
+                    report_dropped(feedback_tx.as_ref(), &dropped.mail, "shutdown");
+                }
+                break;
+            }
+
+            _ = shutdown_rx.changed(), if drain_until.is_none() => {
                 if !queue.is_empty() {
                     tracing::info!(
-                        "Shutdown requested: draining {} throttled e-mail(s) first",
-                        queue.len()
+                        "Shutdown requested: draining {} throttled e-mail(s) first (at most {}s)",
+                        queue.len(),
+                        SHUTDOWN_DRAIN_GRACE.as_secs()
                     );
                 }
-                shutting_down = true;
+                drain_until = Some(Instant::now() + SHUTDOWN_DRAIN_GRACE);
             },
         }
     }
@@ -676,5 +698,54 @@ mod tests {
         assert_eq!(feedback_rx.recv().await.unwrap().subject, "report 1");
         assert_eq!(feedback_rx.recv().await.unwrap().subject, "report 2");
         task.await.unwrap();
+    }
+
+    /// Draining does not hold up shutdown indefinitely: what does not fit in the grace period is
+    /// dropped, and reported as failed so nothing silently disappears.
+    #[tokio::test(start_paused = true)]
+    async fn draining_on_shutdown_is_bounded() {
+        let (mail_tx, mail_rx) = mpsc::channel(32);
+        let (feedback_tx, mut feedback_rx) = mpsc::channel(32);
+        let (shutdown_tx, shutdown_rx) = watch::channel(());
+
+        // One email per hour, so only the first one fits in the shutdown grace period.
+        let task = tokio::spawn(send_task(
+            None,
+            ThrottleConfig {
+                per_minute: 100,
+                per_hour: 1,
+                per_day: 100,
+            },
+            Arc::new(Mutex::new(mail_rx)),
+            shutdown_rx,
+            Some(feedback_tx),
+        ));
+
+        for subject in ["report 1", "report 2", "report 3"] {
+            mail_tx.send(email(subject).non_urgent()).await.unwrap();
+        }
+
+        // Let the task pick up all three emails before requesting shutdown.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        shutdown_tx.send(()).unwrap();
+
+        let sent = feedback_rx.recv().await.unwrap();
+        assert_eq!(sent.subject, "report 1");
+        assert_eq!(sent.error.as_deref(), Some("No mail server configured"));
+
+        for subject in ["report 2", "report 3"] {
+            let dropped = feedback_rx.recv().await.unwrap();
+            assert_eq!(dropped.subject, subject);
+            assert_eq!(dropped.status, EmailSendStatus::Failed);
+            assert_eq!(
+                dropped.error.as_deref(),
+                Some("E-mail dropped before sending (shutdown)")
+            );
+        }
+
+        // The task exits after the grace period instead of waiting an hour for the next send.
+        let start = Instant::now();
+        task.await.unwrap();
+        assert!(start.elapsed() <= SHUTDOWN_DRAIN_GRACE);
     }
 }

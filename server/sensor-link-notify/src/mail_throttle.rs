@@ -42,6 +42,28 @@ pub struct RateLimiter {
     sends: VecDeque<Instant>,
 }
 
+impl ThrottleConfig {
+    /// How long the queue has to stay empty before a bulk of non-urgent email is considered done.
+    ///
+    /// Emails are produced one by one (a report is generated before its email is queued), so the
+    /// queue regularly runs empty in the middle of a bulk. The idle time therefore has to cover the
+    /// longest gap the limiter itself can put between two sends: once a window is full, the next
+    /// email waits until the oldest send leaves that window. With these limits that is the hour
+    /// window, unless the per-minute limit is the stricter one and the hour window never fills up.
+    ///
+    /// The day window is deliberately not taken into account: a bulk that runs into the daily limit
+    /// spans more than a day, and is reported as one batch per day instead of one batch of days.
+    pub fn batch_idle_time(&self) -> Duration {
+        let longest_gap = if u64::from(self.per_hour) < u64::from(self.per_minute) * 60 {
+            HOUR
+        } else {
+            MINUTE
+        };
+        // Plus the resolution at which emails are released once that window has room again.
+        longest_gap + MINUTE
+    }
+}
+
 impl RateLimiter {
     pub fn new(config: ThrottleConfig) -> Self {
         RateLimiter {
@@ -184,6 +206,27 @@ mod tests {
             limiter.next_allowed(start, 5),
             Some(start + Duration::from_secs(10) + MINUTE)
         );
+    }
+
+    #[test]
+    fn batch_idle_time_covers_the_gap_the_limiter_can_cause() {
+        // The hourly limit is reached before the per-minute limit is, so the limiter can hold an
+        // email back until the hour window has room again.
+        let hourly = ThrottleConfig {
+            per_minute: 20,
+            per_hour: 200,
+            per_day: 800,
+        };
+        assert!(hourly.batch_idle_time() > HOUR);
+
+        // Here 20 per minute is the stricter limit (the hour window never fills up), so emails are
+        // never held back for more than a minute.
+        let per_minute = ThrottleConfig {
+            per_hour: 20 * 60,
+            ..hourly
+        };
+        assert!(per_minute.batch_idle_time() > MINUTE);
+        assert!(per_minute.batch_idle_time() < HOUR);
     }
 
     #[test]

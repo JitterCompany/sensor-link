@@ -146,10 +146,11 @@ struct QueuedEmail {
 
 /// Statistics about the batch of non-urgent emails that is currently being sent.
 ///
-/// A batch starts when an email is queued while the queue is empty, and ends when the queue runs
-/// empty again.
+/// A batch starts when an email is queued while no batch is in progress, and ends once the queue
+/// has stayed empty for [`ThrottleConfig::batch_idle_time`].
 struct Batch {
     started_at: Instant,
+    last_sent_at: Instant,
     sent: u64,
 }
 
@@ -197,6 +198,12 @@ async fn send_task(
             break;
         }
 
+        // A batch is done once the queue has stayed empty for a while, see `batch_idle_time`.
+        let batch_done_at = batch
+            .as_ref()
+            .filter(|_| queue.is_empty())
+            .map(|batch| batch.last_sent_at + throttle.batch_idle_time());
+
         // When may the email at the head of the queue be sent? `None` means the queue is empty,
         // `Some(None)` means it may be sent right away.
         let release_at = queue
@@ -219,7 +226,11 @@ async fn send_task(
 
                     Some(mail) => {
                         if batch.is_none() {
-                            batch = Some(Batch { started_at: Instant::now(), sent: 0 });
+                            batch = Some(Batch {
+                                started_at: Instant::now(),
+                                last_sent_at: Instant::now(),
+                                sent: 0,
+                            });
                         }
                         if queue.len() >= MAX_QUEUED_EMAILS {
                             let dropped = queue.pop_front();
@@ -256,11 +267,13 @@ async fn send_task(
 
                 if let Some(batch) = batch.as_mut() {
                     batch.sent += 1;
+                    batch.last_sent_at = Instant::now();
                 }
-                if queue.is_empty() {
-                    if let Some(batch) = batch.take() {
-                        record_batch_metrics(batch);
-                    }
+            }
+
+            _ = wait_until(batch_done_at), if batch_done_at.is_some() => {
+                if let Some(batch) = batch.take() {
+                    record_batch_metrics(batch);
                 }
             }
 
@@ -290,7 +303,7 @@ async fn wait_until(deadline: Option<Instant>) {
 }
 
 fn record_batch_metrics(batch: Batch) {
-    let duration = batch.started_at.elapsed().as_secs_f64();
+    let duration = (batch.last_sent_at - batch.started_at).as_secs_f64();
     tracing::info!(
         "Sent a batch of {} throttled e-mail(s) in {duration:.0}s",
         batch.sent

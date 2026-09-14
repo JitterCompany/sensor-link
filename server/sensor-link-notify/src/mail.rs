@@ -20,10 +20,6 @@ const METER: &str = "mail";
 /// Helper for metrics without attributes (an empty slice needs a concrete attribute type).
 const NO_ATTRIBUTES: &[(&str, &str)] = &[];
 
-/// Maximum number of non-urgent emails kept in the throttle queue. When the queue is full, the
-/// oldest queued email is dropped.
-const MAX_QUEUED_EMAILS: usize = 10_000;
-
 /// How long the task keeps draining its throttle queue after a shutdown request.
 ///
 /// Draining happens at the throttled rate, so a large backlog would take hours. Shutdown is not
@@ -259,10 +255,11 @@ async fn send_task(
                                 sent: 0,
                             });
                         }
-                        if queue.len() >= MAX_QUEUED_EMAILS {
+                        if queue.len() >= throttle.max_queued {
                             if let Some(dropped) = queue.pop_front() {
                                 tracing::error!(
-                                    "Throttled e-mail queue is full ({MAX_QUEUED_EMAILS}): dropping oldest queued e-mail {:?}",
+                                    "Throttled e-mail queue is full ({}): dropping oldest queued e-mail {:?}",
+                                    throttle.max_queued,
                                     dropped.mail.subject
                                 );
                                 report_dropped(feedback_tx.as_ref(), &dropped.mail, "queue_full");
@@ -651,6 +648,7 @@ mod tests {
             per_minute: 1,
             per_hour: 100,
             per_day: 100,
+            ..ThrottleConfig::default()
         };
         let task = tokio::spawn(send_task(
             None,
@@ -702,6 +700,7 @@ mod tests {
                 per_minute: 1,
                 per_hour: 100,
                 per_day: 100,
+                ..ThrottleConfig::default()
             },
             Arc::new(Mutex::new(mail_rx)),
             shutdown_rx,
@@ -735,6 +734,7 @@ mod tests {
                 per_minute: 100,
                 per_hour: 1,
                 per_day: 100,
+                ..ThrottleConfig::default()
             },
             Arc::new(Mutex::new(mail_rx)),
             shutdown_rx,
@@ -767,5 +767,52 @@ mod tests {
         let start = Instant::now();
         task.await.unwrap();
         assert!(start.elapsed() <= SHUTDOWN_DRAIN_GRACE);
+    }
+
+    /// A full queue drops its oldest e-mail, and `max_queued` decides when the queue is full.
+    #[tokio::test(start_paused = true)]
+    async fn a_full_queue_drops_its_oldest_email() {
+        let (mail_tx, mail_rx) = mpsc::channel(32);
+        let (feedback_tx, mut feedback_rx) = mpsc::channel(32);
+        let (_shutdown_tx, shutdown_rx) = watch::channel(());
+
+        // One email per hour, so nothing leaves the queue while it is being filled.
+        let task = tokio::spawn(send_task(
+            None,
+            ThrottleConfig {
+                per_minute: 100,
+                per_hour: 1,
+                per_day: 100,
+                max_queued: 2,
+            },
+            Arc::new(Mutex::new(mail_rx)),
+            shutdown_rx,
+            Some(feedback_tx),
+        ));
+
+        // Incoming email is handled before anything is sent, so all five are queued first and the
+        // queue never holds more than two of them.
+        for subject in ["report 1", "report 2", "report 3", "report 4", "report 5"] {
+            mail_tx.send(email(subject).non_urgent()).await.unwrap();
+        }
+
+        // The three oldest are pushed out by the ones that arrive after them.
+        for subject in ["report 1", "report 2", "report 3"] {
+            let dropped = feedback_rx.recv().await.unwrap();
+            assert_eq!(dropped.subject, subject);
+            assert_eq!(dropped.status, EmailSendStatus::Failed);
+            assert_eq!(
+                dropped.error.as_deref(),
+                Some("E-mail dropped before sending (queue_full)")
+            );
+        }
+
+        // What is left in the queue is still sent.
+        let sent = feedback_rx.recv().await.unwrap();
+        assert_eq!(sent.subject, "report 4");
+        assert_eq!(sent.error.as_deref(), Some("No mail server configured"));
+
+        drop(mail_tx);
+        task.await.unwrap();
     }
 }

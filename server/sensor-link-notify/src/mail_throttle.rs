@@ -12,12 +12,16 @@ const MINUTE: Duration = Duration::from_secs(60);
 const HOUR: Duration = Duration::from_secs(60 * 60);
 const DAY: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// Maximum number of e-mails that may be sent per time window.
+/// Limits on outgoing non-urgent e-mail: how many may be sent per time window, and how many may
+/// wait for send capacity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThrottleConfig {
     pub per_minute: u32,
     pub per_hour: u32,
     pub per_day: u32,
+    /// Maximum number of non-urgent e-mails kept in the throttle queue. When the queue is full,
+    /// the oldest queued e-mail is dropped.
+    pub max_queued: usize,
 }
 
 impl Default for ThrottleConfig {
@@ -28,6 +32,7 @@ impl Default for ThrottleConfig {
             per_minute: 20,
             per_hour: 200,
             per_day: 800,
+            max_queued: 10_000,
         }
     }
 }
@@ -151,6 +156,7 @@ mod tests {
             per_minute,
             per_hour,
             per_day,
+            ..ThrottleConfig::default()
         })
     }
 
@@ -235,6 +241,7 @@ mod tests {
             per_minute: 20,
             per_hour: 200,
             per_day: 800,
+            ..ThrottleConfig::default()
         };
         assert!(hourly.batch_idle_time() > HOUR);
 

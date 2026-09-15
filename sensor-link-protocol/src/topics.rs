@@ -90,7 +90,6 @@ pub enum TopicFromDevice {
     Online,
     // Meta Topics
     Event,
-    Log,
     FWStatus,
     DeviceInfoV2,
     DeviceInfoV3,
@@ -101,6 +100,8 @@ pub enum TopicFromDevice {
     BenchmarkData,
 
     ChargerStatus,
+
+    Log,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, strum::EnumIter)]

@@ -2,7 +2,8 @@
 #![allow(async_fn_in_trait)]
 
 use sensor_link_protocol::{
-    event::EventPayload, Topic, TopicFromDevice, TopicPayloadSerialize, MAX_EVENT_LEN,
+    device_log::LogMessage, event::EventPayload, Topic, TopicFromDevice, TopicPayloadSerialize,
+    MAX_EVENT_LEN, MAX_LOG_LEN,
 };
 use serde::Serialize;
 
@@ -44,7 +45,7 @@ pub mod tests {
     }
 }
 
-use crate::serialize::SerializedSendable;
+use crate::serialize::{AsSendable, SerializedSendable};
 
 /// Serialize an event for any device topic type that can express the shared Jitter event topic.
 ///
@@ -65,5 +66,61 @@ impl<E: Serialize, T: Topic + From<TopicFromDevice>> serialize::AsSendable<MAX_E
             .serialize_topic_payload_to_slice(builder.payload_buffer())
             .map_err(|_| serialize::BuildError::PayloadTooLong)?;
         builder.create_with_payload_length(len)
+    }
+}
+
+/// Serialize a log message for any device topic type that can express the shared Jitter log topic.
+///
+/// Generic over the output topic for the same reason as the [`EventPayload`] impl above: the
+/// dispatch pipeline carries log records addressed to the caller's own topic type.
+impl<T: Topic + From<TopicFromDevice>> AsSendable<MAX_LOG_LEN, T> for LogMessage {
+    type Error = serialize::BuildError;
+    const MAX_SENDABLE_LENGTH: usize = MAX_LOG_LEN;
+
+    #[inline]
+    fn as_sendable(&self) -> Result<SerializedSendable<{ MAX_LOG_LEN }, T>, Self::Error> {
+        let mut builder = serialize::BuilderWithTopic::new(T::from(TopicFromDevice::Log));
+        let len = self
+            .serialize_topic_payload_to_slice(builder.payload_buffer())
+            .map_err(|_| serialize::BuildError::PayloadTooLong)?;
+        builder.create_with_payload_length(len)
+    }
+}
+
+#[cfg(test)]
+mod sendable_tests {
+    use sensor_link_protocol::{
+        device_log::LogLevel, MAX_LOG_MSG_LEN, MAX_LOG_TARGET_LEN, MAX_TOPIC_LEN,
+    };
+
+    use super::*;
+
+    /// A log message must serialize onto the device's log topic.
+    #[test]
+    fn test_log_message_as_sendable() {
+        let message = LogMessage::new(LogLevel::Warn, "Network", "Connect Error", 17491303460000);
+
+        let sendable: SerializedSendable<MAX_LOG_LEN, TopicFromDevice> =
+            message.as_sendable().unwrap();
+
+        assert_eq!(sendable.topic().unwrap(), TopicFromDevice::Log);
+        assert_eq!(
+            core::str::from_utf8(sendable.payload_bytes()).unwrap(),
+            r#"{"l":"warn","tg":"Network","m":"Connect Error","t":17491303460000}"#
+        );
+    }
+
+    /// The worst-case log message must still fit the sendable's payload buffer.
+    #[test]
+    fn test_max_size_log_message_as_sendable() {
+        let message = LogMessage::new(
+            LogLevel::Error,
+            &"a".repeat(MAX_LOG_TARGET_LEN),
+            &"b".repeat(MAX_LOG_MSG_LEN),
+            i64::MIN,
+        );
+
+        AsSendable::<MAX_LOG_LEN, TopicFromDevice>::as_sendable(&message).unwrap();
+        assert!(MAX_LOG_LEN <= MAX_TOPIC_LEN + sensor_link_protocol::MAX_MESSAGE_LEN);
     }
 }

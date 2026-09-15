@@ -16,9 +16,11 @@ use crate::{
     pool::MappedAllocator,
     serialize::{AsSendable, SerializedSendable},
     sync::reserving_sender::{ReservableSender, ReservationToken},
-    utils::select::{select2, Select2},
+    utils::select::{select2, select3, Select2, Select3},
 };
-use sensor_link_protocol::{event::EventPayload, Microseconds, Topic, MAX_EVENT_LEN};
+use sensor_link_protocol::{
+    device_log::LogMessage, event::EventPayload, Microseconds, Topic, MAX_EVENT_LEN, MAX_LOG_LEN,
+};
 
 use futures::FutureExt;
 use pending::Pending;
@@ -29,16 +31,47 @@ pub use crate::storage::dispatch_store::{ConfirmHandle, DispatchStore};
 /// A serialized event, addressed to wire topic `T`.
 pub type SerializedEvent<T> = SerializedSendable<MAX_EVENT_LEN, T>;
 
+/// A serialized device log record, addressed to wire topic `T`.
+pub type SerializedLog<T> = SerializedSendable<MAX_LOG_LEN, T>;
+
+/// [`ReceiveChannel`] of log records that never yields one.
+///
+/// Pass this as `log_in` to [`dispatch_task`] when the application does not
+/// publish its own logs (see the `mqtt-log` feature): the log lane then simply
+/// stays empty.
+pub struct NoLogs;
+
+/// Error type of [`NoLogs`], which never yields a value to fail on.
+#[derive(Debug)]
+pub struct NoLogsReceived;
+
+impl ReceiveChannel<LogMessage> for NoLogs {
+    type Error = NoLogsReceived;
+
+    async fn recv(&mut self) -> Result<LogMessage, Self::Error> {
+        core::future::pending().await
+    }
+
+    fn try_recv(&mut self) -> Result<LogMessage, Self::Error> {
+        Err(NoLogsReceived)
+    }
+}
+
 /// prevent busy loop in case store keeps failing.
 /// 100ms is chosen as ~10 messages/second,
 /// which is a reasonable order-of-magnitude
 /// for normal upload throughput
 const PREVENT_BUSY_LOOP_DELAY_MS: u32 = 100;
 
+// Each argument is a distinct collaborator (store, three input lanes, signals,
+// allocator, upload, urgency), so bundling them would only move the list into a
+// struct that every caller then has to fill in the same way.
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_task<
     DS,
     LCS,
     EQI,
+    LGI,
     SQO,
     UA,
     US,
@@ -51,6 +84,7 @@ pub async fn dispatch_task<
     store: &mut DS,
     data_in: &mut LCS,
     event_in: &mut EQI,
+    log_in: &mut LGI,
     signal_out: &mut SQO,
     upload_alloc: &mut UA,
     upload_tx: &mut US,
@@ -60,14 +94,17 @@ where
     T: Topic,
     EventPayload<E>: AsSendable<MAX_EVENT_LEN, T>,
     <EventPayload<E> as AsSendable<MAX_EVENT_LEN, T>>::Error: core::fmt::Debug,
+    LogMessage: AsSendable<MAX_LOG_LEN, T>,
     DS: DispatchStore<Topic = T>,
     EQI: ReceiveChannel<E>,
+    LGI: ReceiveChannel<LogMessage>,
     LCS: LatencyControlledSerializer<MAX_OUTPUT_SIZE, Topic = T>,
     S: From<Signal>,
     SQO: SendChannel<S>,
     UA: UploadAlloc<
         Event = SerializedEvent<T>,
         SensorData = SerializedSendable<MAX_OUTPUT_SIZE, T>,
+        Log = SerializedLog<T>,
     >,
     US: ReservableSender<Confirmable<UA::Upload>>,
     IsUrgent: Fn(&E) -> bool,
@@ -77,6 +114,7 @@ where
     // pending: to be enqueued to network task
     let mut pending_event = Pending::none(upload_alloc.event());
     let mut pending_data = Pending::none(upload_alloc.data());
+    let mut pending_log = Pending::none(upload_alloc.log());
 
     loop {
         // retry a failed read from the store on next iteration?
@@ -122,8 +160,28 @@ where
             };
         }
 
+        // c. Still nothing to send? send next log record (if any)
+        if let (false, false, Some(mut log_writer)) = (
+            pending_event.is_pending(),
+            pending_data.is_pending(),
+            pending_log.try_set(),
+        ) {
+            match store.peek_log().await {
+                Ok(Some((log, handle))) => {
+                    log_writer.write(log, handle);
+                }
+                Ok(None) => {}
+                // Deliberately not logged: a record about failing to move a log
+                // record is itself a log record, so a persistent failure here
+                // would feed itself.
+                Err(_error) => {
+                    store_retry = true;
+                }
+            };
+        }
+
         // Signal orchestrator that queue is empty
-        if !pending_event.is_pending() && !pending_data.is_pending() {
+        if !pending_event.is_pending() && !pending_data.is_pending() && !pending_log.is_pending() {
             signal_out
                 .send(Signal::DispatchQueueEmpty.into())
                 .await
@@ -132,7 +190,7 @@ where
 
         // Future that transmits any pending data to the network, or never resolves if there is nothing to send.
         // This 'blocking' is intentional, so that the select() statement will wait for the other future to resolve
-        let transmit_network_or_block = try_transmit(&mut pending_event, &mut pending_data, upload_tx).then(|res| {
+        let transmit_network_or_block = try_transmit(&mut pending_event, &mut pending_data, &mut pending_log, upload_tx).then(|res| {
             async move {
                 match res {
                     // successful transmission: done
@@ -161,13 +219,21 @@ where
         // NOTE: select2 has a bias to the first future, so storing incoming data always takes priority
         // over transmitting network data. This is important to prevent the incoming data queue from overflowing
         // in case of a super fast network connection.
-        match select2(incoming(data_in, event_in), transmit_network_or_block).await {
+        match select2(
+            incoming(data_in, event_in, log_in),
+            transmit_network_or_block,
+        )
+        .await
+        {
             Select2::A(incoming) => match incoming {
                 Ok(Incoming::Event(event)) => {
                     process_event(store, &mut pending_event, event, signal_out, &is_urgent).await;
                 }
                 Ok(Incoming::Data(data)) => {
                     process_sensor_data(store, &mut pending_data, data).await;
+                }
+                Ok(Incoming::Log(record)) => {
+                    process_log(store, &mut pending_log, record).await;
                 }
                 Err(error) => {
                     log::error!(target: "Dispatch", "Data loss while receiving: {error:?}");
@@ -184,14 +250,16 @@ enum TransmitError {
 }
 
 /// Try to transmit any pending data to the network
-async fn try_transmit<EA, DA, U, US>(
+async fn try_transmit<EA, DA, LA, U, US>(
     pending_event: &mut Pending<EA>,
     pending_data: &mut Pending<DA>,
+    pending_log: &mut Pending<LA>,
     upload_tx: &mut US,
 ) -> Result<(), TransmitError>
 where
     EA: MappedAllocator<Output = U>,
     DA: MappedAllocator<Output = U>,
+    LA: MappedAllocator<Output = U>,
     US: ReservableSender<Confirmable<U>>,
 {
     let mut result = Err(TransmitError::NothingPending);
@@ -216,6 +284,18 @@ where
             }
             Err(_upl) => {
                 log::error!(target: "Dispatch", "Failed to upload: queue broken or multiple senders on this channel??");
+                return Err(TransmitError::UploadFailed);
+            }
+        }
+    }
+    if let Some(reader) = pending_log.try_read() {
+        let reserved = upload_tx.reserve().await;
+        match reserved.try_send(reader.consume()) {
+            Ok(_) => {
+                result = Ok(());
+            }
+            // Deliberately not logged, unlike the lanes above: see `process_log`.
+            Err(_upl) => {
                 return Err(TransmitError::UploadFailed);
             }
         }
@@ -293,24 +373,56 @@ async fn process_sensor_data<DS, PA, T, const MAX_OUTPUT_SIZE: usize>(
     }
 }
 
+/// Store a log record for upload.
+///
+/// Nothing here is logged, on purpose: every record this function could emit
+/// would arrive back on the log lane and be processed by this same function, so
+/// a persistent failure would feed itself. A log record that cannot be stored is
+/// dropped silently; the application sees the loss as a gap in the published
+/// stream and in [`LogPublisher::dropped`](crate::mqtt::log_publish::LogPublisher::dropped).
+#[inline]
+async fn process_log<DS, PA, T>(store: &mut DS, pending: &mut Pending<PA>, record: LogMessage)
+where
+    T: Topic,
+    LogMessage: AsSendable<MAX_LOG_LEN, T>,
+    DS: DispatchStore<Topic = T>,
+    PA: MappedAllocator<Input = SerializedLog<T>>,
+{
+    let Ok(sendable) = record.as_sendable() else {
+        return;
+    };
+
+    // store failed: write to pending to try sending it to the network anyways.
+    if store.store_log(&sendable).await.is_err() {
+        pending.overwrite(sendable);
+    }
+}
+
+// `Data` carries an inline `MAX_OUTPUT_SIZE` buffer, which dwarfs the others.
+// Boxing it is not an option: this crate is `no_std` with no global allocator.
+#[allow(clippy::large_enum_variant)]
 enum Incoming<E, T: Topic, const MAX_OUTPUT_SIZE: usize> {
     Event(E),
     Data(SerializedSendable<MAX_OUTPUT_SIZE, T>),
+    Log(LogMessage),
 }
 
 #[derive(Debug, Clone, Copy)]
 enum IncomingError {
-    EventQueueError,
-    SerializationError,
+    EventQueue,
+    LogQueue,
+    Serialization,
 }
 
-async fn incoming<LCS, EQI, T, E, const MAX_OUTPUT_SIZE: usize>(
+async fn incoming<LCS, EQI, LGI, T, E, const MAX_OUTPUT_SIZE: usize>(
     data_in: &mut LCS,
     event_in: &mut EQI,
+    log_in: &mut LGI,
 ) -> Result<Incoming<E, T, MAX_OUTPUT_SIZE>, IncomingError>
 where
     T: Topic,
     EQI: ReceiveChannel<E>,
+    LGI: ReceiveChannel<LogMessage>,
     LCS: LatencyControlledSerializer<MAX_OUTPUT_SIZE, Topic = T>,
 {
     // Future that awaits incoming data via LatencyControlledSerializer
@@ -324,21 +436,49 @@ where
                 Ok(Some(sendable)) => break Ok(Incoming::Data(sendable)),
                 Err(err) => {
                     log::error!(target: "Dispatch", "Serialization error: {err:?}");
-                    break Err(IncomingError::SerializationError);
+                    break Err(IncomingError::Serialization);
                 }
             }
         }
     };
 
-    // Await either incoming event or data
-    match select2(event_in.recv(), data_in).await {
-        Select2::A(event) => {
+    // Await either incoming event, data or log record.
+    // NOTE: select3 is biased towards the first future, which is the same order
+    // in which the lanes are drained from the store above: events first, log
+    // records last.
+    match select3(event_in.recv(), data_in, log_in.recv()).await {
+        Select3::A(event) => {
             log::debug!(target: "Dispatch", "Incoming event...");
             match event {
-                Ok(event) => return Ok(Incoming::Event(event)),
-                Err(_) => return Err(IncomingError::EventQueueError),
+                Ok(event) => Ok(Incoming::Event(event)),
+                Err(_) => Err(IncomingError::EventQueue),
             }
         }
-        Select2::B(data_result) => data_result,
+        Select3::B(data_result) => data_result,
+        // Deliberately not logged: see `process_log`.
+        Select3::C(record) => match record {
+            Ok(record) => Ok(Incoming::Log(record)),
+            Err(_) => Err(IncomingError::LogQueue),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use futures::FutureExt;
+
+    use super::*;
+
+    /// `NoLogs` must leave the log lane empty forever rather than resolve, so
+    /// that the `select3` in `incoming` keeps waiting on the other two lanes.
+    #[test]
+    fn test_no_logs_never_yields() {
+        let mut no_logs = NoLogs;
+
+        assert!(no_logs.try_recv().is_err());
+        assert!(
+            no_logs.recv().now_or_never().is_none(),
+            "NoLogs::recv resolved: the log lane would busy-loop"
+        );
     }
 }

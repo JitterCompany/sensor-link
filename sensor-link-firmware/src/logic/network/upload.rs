@@ -34,7 +34,9 @@ pub trait UploadAlloc {
 
     type Event;
     type SensorData;
+    type Log;
 
     fn event(&self) -> impl MappedAllocator<Input = Self::Event, Output = Self::Upload>;
     fn data(&self) -> impl MappedAllocator<Input = Self::SensorData, Output = Self::Upload>;
+    fn log(&self) -> impl MappedAllocator<Input = Self::Log, Output = Self::Upload>;
 }

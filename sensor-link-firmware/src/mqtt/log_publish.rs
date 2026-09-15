@@ -2,18 +2,24 @@
 //!
 //! Enabled by the `mqtt-log` cargo feature. Because this crate is a library,
 //! the decision to publish logs (and how verbosely) belongs to the application:
-//! it enables the feature, picks the levels via [`LogPublishConfig`] and wires
-//! the resulting [`LogPublisher`] into its upload path.
+//! it enables the feature, picks the levels via [`LogPublishConfig`] and hands
+//! the resulting [`LogPublisher`] to [`dispatch_task`] as its `log_in`.
 //!
 //! [`MqttLogger`] is a [`log::Log`] implementation that wraps the application's
 //! existing (local) logger: records still reach that logger, and those passing
 //! the configured [`LogPublishConfig::level`] are additionally queued as
-//! [`LogMessage`]s for publication on [`TopicFromDevice::Log`].
+//! [`LogMessage`]s. From there the ordinary dispatch pipeline carries them:
+//! persisted to the log stream, then uploaded on
+//! [`TopicFromDevice::Log`](sensor_link_protocol::TopicFromDevice::Log) at a
+//! lower priority than events and sensor data, so a device that loses its
+//! connection still reports what happened once it reconnects.
 //!
-//! Queuing is lock-free and lossy by design: the logger never blocks, never
-//! allocates and never logs, so it is safe to call from any context (including
-//! interrupts). When the queue is full, records are dropped and counted in
-//! [`LogPublisher::dropped`].
+//! Queuing into that pipeline is lock-free and lossy by design: the logger never
+//! blocks, never allocates and never logs, so it is safe to call from any
+//! context (including interrupts). When the queue is full, records are dropped
+//! and counted in [`LogPublisher::dropped`].
+//!
+//! [`dispatch_task`]: crate::logic::dispatch::dispatch_task
 //!
 //! # Feedback loop
 //!
@@ -30,15 +36,11 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
 use rtic_sync::channel::{self, ReceiveError};
-use sensor_link_protocol::{
-    device_log::LogMessage, Topic, TopicFromDevice, TopicPayloadSerialize, MAX_LOG_LEN,
-};
+use sensor_link_protocol::device_log::LogMessage;
 use static_cell::StaticCell;
 
 use crate::{
-    drivers::time::timestamp_or_default_us,
-    mqtt::PUBLISH_LOG_TARGET,
-    serialize::{AsSendable, BuildError, BuilderWithTopic, SerializedSendable},
+    drivers::time::timestamp_or_default_us, logic::ReceiveChannel, mqtt::PUBLISH_LOG_TARGET,
 };
 
 /// Number of log records buffered between the logger and the task publishing them.
@@ -147,29 +149,35 @@ impl Log for MqttLogger {
     }
 }
 
-/// Receiving end of the log queue: the records waiting to be published.
+/// Receiving end of the log queue: the records waiting to be dispatched.
+///
+/// This is the log source [`dispatch_task`](crate::logic::dispatch::dispatch_task)
+/// takes as its `log_in`, via the [`ReceiveChannel`] impl below.
 pub struct LogPublisher {
     rx: LogReceiver,
     logger: &'static MqttLogger,
 }
 
 impl LogPublisher {
-    /// Await the next log record to publish.
-    ///
-    /// Returns `Err` only if the logger is gone, which cannot happen for a
-    /// logger installed by [`init`] (it lives for the rest of the program).
-    pub async fn recv(&mut self) -> Result<LogMessage, ReceiveError> {
-        self.rx.recv().await
-    }
-
-    /// Take the next log record to publish, if any is queued.
-    pub fn try_recv(&mut self) -> Result<LogMessage, ReceiveError> {
-        self.rx.try_recv()
-    }
-
     /// Number of log records dropped so far because the queue was full.
     pub fn dropped(&self) -> u32 {
         self.logger.dropped.load(Ordering::Relaxed)
+    }
+}
+
+impl ReceiveChannel<LogMessage> for LogPublisher {
+    type Error = ReceiveError;
+
+    /// Await the next log record to dispatch.
+    ///
+    /// Returns `Err` only if the logger is gone, which cannot happen for a
+    /// logger installed by [`init`] (it lives for the rest of the program).
+    async fn recv(&mut self) -> Result<LogMessage, Self::Error> {
+        self.rx.recv().await
+    }
+
+    fn try_recv(&mut self) -> Result<LogMessage, Self::Error> {
+        self.rx.try_recv()
     }
 }
 
@@ -206,32 +214,10 @@ pub fn init(
     Ok(LogPublisher { rx, logger })
 }
 
-/// Serializes a log message for the device's log topic.
-///
-/// As for events, the output topic is generic: the sendable is addressed to the
-/// caller's topic type, so a device whose topic type wraps the manufacturer-generic
-/// [`TopicFromDevice::Log`] gets the same payload on its own topic.
-impl<T: Topic + From<TopicFromDevice>> AsSendable<MAX_LOG_LEN, T> for LogMessage {
-    type Error = BuildError;
-    const MAX_SENDABLE_LENGTH: usize = MAX_LOG_LEN;
-
-    fn as_sendable(&self) -> Result<SerializedSendable<{ MAX_LOG_LEN }, T>, Self::Error> {
-        let mut builder = BuilderWithTopic::new(T::from(TopicFromDevice::Log));
-        let len = self
-            .serialize_topic_payload_to_slice(builder.payload_buffer())
-            .map_err(|_| BuildError::PayloadTooLong)?;
-        builder.create_with_payload_length(len)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use log::{Level, Metadata};
-    use sensor_link_protocol::{
-        device_log::LogLevel, TopicFromDevice, MAX_LOG_MSG_LEN, MAX_LOG_TARGET_LEN,
-    };
-
     use super::*;
+    use log::{Level, Metadata};
 
     fn metadata<'a>(level: Level, target: &'a str) -> Metadata<'a> {
         Metadata::builder().level(level).target(target).build()
@@ -293,33 +279,5 @@ mod tests {
         // Other network records do not recur per published message, so they
         // are published as usual.
         assert!(should_publish(&config, &metadata(Level::Error, "Network")));
-    }
-
-    /// A queued message must serialize onto the device's log topic.
-    #[test]
-    fn test_as_sendable() {
-        let message = LogMessage::new(LogLevel::Warn, "Network", "Connect Error", 17491303460000);
-
-        let sendable: SerializedSendable<MAX_LOG_LEN, TopicFromDevice> =
-            message.as_sendable().unwrap();
-
-        assert_eq!(sendable.topic().unwrap(), TopicFromDevice::Log);
-        assert_eq!(
-            core::str::from_utf8(sendable.payload_bytes()).unwrap(),
-            r#"{"l":"warn","tg":"Network","m":"Connect Error","t":17491303460000}"#
-        );
-    }
-
-    /// The worst-case log message must still fit the sendable's payload buffer.
-    #[test]
-    fn test_max_size_as_sendable() {
-        let message = LogMessage::new(
-            LogLevel::Error,
-            &"a".repeat(MAX_LOG_TARGET_LEN),
-            &"b".repeat(MAX_LOG_MSG_LEN),
-            i64::MIN,
-        );
-
-        AsSendable::<MAX_LOG_LEN, TopicFromDevice>::as_sendable(&message).unwrap();
     }
 }

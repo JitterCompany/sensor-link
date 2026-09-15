@@ -1,7 +1,8 @@
-//! Generic persistent store for dispatchable, serialized data (events + sensor data).
+//! Generic persistent store for dispatchable, serialized data (events + sensor data + logs).
 //!
 //! This is the sensor-agnostic backbone of the dispatch pipeline: it stores opaque serialized
-//! byte payloads ([`SerializedSendable`]) in two FIFO flash streams (events and sensor data) and
+//! byte payloads ([`SerializedSendable`]) in three FIFO flash streams (events, sensor data and
+//! device logs) and
 //! reconstructs them on read. It is generic over the wire [`Topic`] and over the application's
 //! stream-id type `S` (which defines the flash layout via [`flash_db::Circular`]). An
 //! implementation pins `Topic` to its concrete device topic type and supplies a concrete `S`.
@@ -21,14 +22,14 @@ use crate::{
         flash_db::{self, Circular, WriteableCircularStore},
     },
 };
-use sensor_link_protocol::{Topic, MAX_EVENT_LEN};
+use sensor_link_protocol::{Topic, MAX_EVENT_LEN, MAX_LOG_LEN};
 
 /// Handle used to confirm (acknowledge) that a peeked item has been processed and may be dropped.
 pub type ConfirmHandle = queue::ConfirmHandle<'static, MAX_PEEKS>;
 
-/// Trait to allow persistent storage of events and application-specific sensor data.
+/// Trait to allow persistent storage of events, application-specific sensor data and device logs.
 ///
-/// Implementation should guarantee FIFO ordering of events and sensor data and persistence
+/// Implementation should guarantee FIFO ordering within each kind and persistence
 /// (durability) of data from the moment of storage untill the [ConfirmHandle::confirm] method
 /// is called.
 ///
@@ -64,6 +65,14 @@ pub trait DispatchStore {
         )>,
         Self::Error,
     >;
+
+    async fn store_log(
+        &mut self,
+        log: &SerializedSendable<MAX_LOG_LEN, Self::Topic>,
+    ) -> Result<SeqNo, Self::Error>;
+    async fn peek_log(
+        &mut self,
+    ) -> Result<Option<(SerializedSendable<MAX_LOG_LEN, Self::Topic>, ConfirmHandle)>, Self::Error>;
 }
 
 /// Application stream-id type that designates which stream holds events and which holds sensor data.
@@ -76,9 +85,15 @@ pub trait DispatchStreams<const BLOCK_SIZE: usize>:
     fn event() -> Self;
     /// Stream that stores serialized sensor data.
     fn sensor_data() -> Self;
+    /// Stream that stores serialized device log records.
+    ///
+    /// Logs get a stream of their own rather than sharing the event stream
+    /// because a full stream overwrites its oldest entries: a burst of log
+    /// records must not be able to evict events that were never delivered.
+    fn log() -> Self;
 }
 
-/// Container for the [ConfirmChannel]s backing a [StreamPairStore].
+/// Container for the [ConfirmChannel]s backing a [StreamSetStore].
 pub struct ConfirmChannels<const NUM_CHANNELS: usize> {
     pub channels: [ConfirmChannel<MAX_PEEKS>; NUM_CHANNELS],
 }
@@ -91,25 +106,25 @@ impl<const NUM_CHANNELS: usize> ConfirmChannels<NUM_CHANNELS> {
     }
 }
 
-/// Persistent storage for events and sensor data.
+/// Persistent storage for events, sensor data and device logs.
 ///
-/// Events and sensor data each have their own dedicated FIFO flash stream. Data is accessed via the
-/// [DispatchStore] trait. Generic over the stream-id type `S`, the configured maximum sensor-data
-/// payload size, and the wire [`Topic`].
-pub struct StreamPairStore<'a, DB, S, const BLOCK_SIZE: usize, const MAX_SENSOR_DATA_LEN: usize, T>
-{
+/// Each kind has its own dedicated FIFO flash stream, so one kind can never evict another. Data is
+/// accessed via the [DispatchStore] trait. Generic over the stream-id type `S`, the configured
+/// maximum sensor-data payload size, and the wire [`Topic`].
+pub struct StreamSetStore<'a, DB, S, const BLOCK_SIZE: usize, const MAX_SENSOR_DATA_LEN: usize, T> {
     pub sensor_data: StreamStore<'a, DB, S, BLOCK_SIZE>,
     pub events: StreamStore<'a, DB, S, BLOCK_SIZE>,
+    pub logs: StreamStore<'a, DB, S, BLOCK_SIZE>,
     _topic: PhantomData<T>,
 }
 
 impl<'a, DB, S, const BLOCK_SIZE: usize, const MAX_SENSOR_DATA_LEN: usize, T>
-    StreamPairStore<'a, DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
+    StreamSetStore<'a, DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
 where
     DB: WriteableCircularStore<{ BLOCK_SIZE }, S> + Clone,
     S: DispatchStreams<BLOCK_SIZE>,
 {
-    pub fn new(db: DB, confirm_channels: &'a ConfirmChannels<2>) -> Self {
+    pub fn new(db: DB, confirm_channels: &'a ConfirmChannels<3>) -> Self {
         Self {
             sensor_data: StreamStore::new(
                 db.clone(),
@@ -117,18 +132,20 @@ where
                 &confirm_channels.channels[0],
             ),
             events: StreamStore::new(db.clone(), S::event(), &confirm_channels.channels[1]),
+            logs: StreamStore::new(db.clone(), S::log(), &confirm_channels.channels[2]),
             _topic: PhantomData,
         }
     }
     pub async fn initialize(&mut self) -> Result<(), flash_db::Error> {
         self.sensor_data.initialize().await?;
         self.events.initialize().await?;
+        self.logs.initialize().await?;
         Ok(())
     }
 }
 
 impl<DB, S, const BLOCK_SIZE: usize, const MAX_SENSOR_DATA_LEN: usize, T> DispatchStore
-    for StreamPairStore<'static, DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
+    for StreamSetStore<'static, DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
 where
     DB: WriteableCircularStore<{ BLOCK_SIZE }, S> + Clone,
     S: DispatchStreams<BLOCK_SIZE>,
@@ -190,31 +207,50 @@ where
             _ => Ok(None),
         }
     }
+
+    async fn store_log(
+        &mut self,
+        log: &SerializedSendable<MAX_LOG_LEN, T>,
+    ) -> Result<SeqNo, Self::Error> {
+        self.logs.enqueue(log.as_slice()).await
+    }
+
+    async fn peek_log(
+        &mut self,
+    ) -> Result<Option<(SerializedSendable<MAX_LOG_LEN, T>, ConfirmHandle)>, Self::Error> {
+        let mut buffer = Builder::new();
+        match self.logs.peek_next(&mut buffer.bytes).await? {
+            Some((len, handle)) => match buffer.create_with_total_length(len) {
+                Ok(buffer) => Ok(Some((buffer, handle))),
+                Err(deserialize_error) => {
+                    log::warn!("Failed to deserialize log: {deserialize_error:?}");
+                    handle.confirm(); // skip item: retry is likely to fail again!
+                    Err(flash_db::Error::FragmentNotReadable)
+                }
+            },
+            _ => Ok(None),
+        }
+    }
 }
 
-/// `'static` wrapper around [StreamPairStore].
+/// `'static` wrapper around [StreamSetStore].
 ///
 /// Without this wrapper the dispatch task does not compile (see ADR-0003).
-pub struct StaticStreamPairStore<
-    DB,
-    S,
-    const BLOCK_SIZE: usize,
-    const MAX_SENSOR_DATA_LEN: usize,
-    T,
-> {
-    store: StreamPairStore<'static, DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>,
+pub struct StaticStreamSetStore<DB, S, const BLOCK_SIZE: usize, const MAX_SENSOR_DATA_LEN: usize, T>
+{
+    store: StreamSetStore<'static, DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>,
 }
 
 impl<DB, S, const BLOCK_SIZE: usize, const MAX_SENSOR_DATA_LEN: usize, T>
-    StaticStreamPairStore<DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
+    StaticStreamSetStore<DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
 where
     DB: WriteableCircularStore<{ BLOCK_SIZE }, S> + Clone,
     S: DispatchStreams<BLOCK_SIZE>,
 {
     #[inline]
-    pub fn new(db: DB, confirm_channels: &'static ConfirmChannels<2>) -> Self {
+    pub fn new(db: DB, confirm_channels: &'static ConfirmChannels<3>) -> Self {
         Self {
-            store: StreamPairStore::new(db, confirm_channels),
+            store: StreamSetStore::new(db, confirm_channels),
         }
     }
 
@@ -226,7 +262,7 @@ where
 }
 
 impl<DB, S, const BLOCK_SIZE: usize, const MAX_SENSOR_DATA_LEN: usize, T> DispatchStore
-    for StaticStreamPairStore<DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
+    for StaticStreamSetStore<DB, S, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, T>
 where
     DB: WriteableCircularStore<{ BLOCK_SIZE }, S> + Clone,
     S: DispatchStreams<BLOCK_SIZE>,
@@ -264,5 +300,20 @@ where
     ) -> Result<Option<(SerializedSendable<{ MAX_PROCESSING_LEN }, T>, ConfirmHandle)>, Self::Error>
     {
         self.store.peek_sensor_data().await
+    }
+
+    #[inline]
+    async fn store_log(
+        &mut self,
+        log: &SerializedSendable<MAX_LOG_LEN, T>,
+    ) -> Result<SeqNo, Self::Error> {
+        self.store.store_log(log).await
+    }
+
+    #[inline]
+    async fn peek_log(
+        &mut self,
+    ) -> Result<Option<(SerializedSendable<MAX_LOG_LEN, T>, ConfirmHandle)>, Self::Error> {
+        self.store.peek_log().await
     }
 }

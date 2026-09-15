@@ -11,7 +11,7 @@ use crate::{
         NetworkStatus, SendChannel,
     },
     meta::DeviceMetaDataProvider,
-    mqtt::{Event, FileError, Message, MqttClient, Will},
+    mqtt::{Event, FileError, Message, MqttClient, MqttPublish, Will},
     serialize::{internal::Internal, Sendable},
 };
 use sensor_link_protocol::{

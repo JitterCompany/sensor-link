@@ -645,7 +645,15 @@ async fn insert_sensor_server_log(
     log_msg: &str,
     payload_for_log: String,
 ) {
-    insert_sensor_server_log_at(db, sensor_id, log_type, log_msg, payload_for_log, Utc::now()).await;
+    insert_sensor_server_log_at(
+        db,
+        sensor_id,
+        log_type,
+        log_msg,
+        payload_for_log,
+        Utc::now(),
+    )
+    .await;
 }
 
 /// As [`insert_sensor_server_log`], but for a record that happened at a known

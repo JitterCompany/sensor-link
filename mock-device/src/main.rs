@@ -87,14 +87,26 @@ struct Args {
     no_interactive: bool,
 }
 
-fn level_filter(name: &str) -> LevelFilter {
+/// Parse a log level, falling back to [`LevelFilter::Off`].
+///
+/// An unknown name falls back to the quietest level rather than a default in
+/// the middle: a typo in `--mqtt-log-level` then publishes nothing instead of
+/// putting more on the air than was asked for.
+fn level_filter(flag: &str, name: &str) -> LevelFilter {
     match name.to_lowercase().as_str() {
         "off" => LevelFilter::Off,
         "info" => LevelFilter::Info,
         "warn" => LevelFilter::Warn,
         "error" => LevelFilter::Error,
+        "debug" => LevelFilter::Debug,
         "trace" => LevelFilter::Trace,
-        _ => LevelFilter::Debug,
+        other => {
+            eprintln!(
+                "Warning: '{flag}' must be one of off, error, warn, info, debug, trace \
+                 (got '{other}'); logging is off."
+            );
+            LevelFilter::Off
+        }
     }
 }
 
@@ -123,8 +135,8 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let log_level = level_filter(&args.log_level);
-    let mqtt_log_level = level_filter(&args.mqtt_log_level);
+    let log_level = level_filter("--log-level", &args.log_level);
+    let mqtt_log_level = level_filter("--mqtt-log-level", &args.mqtt_log_level);
 
     let log_cfg = ConfigBuilder::new()
         .set_target_level(log_level)

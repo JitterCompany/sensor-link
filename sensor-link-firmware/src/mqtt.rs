@@ -1,3 +1,7 @@
+/// Publishing the device's own log records over MQTT (`mqtt-log` feature).
+#[cfg(feature = "mqtt-log")]
+pub mod log_publish;
+
 use core::fmt::Debug;
 
 use heapless::{String, Vec};

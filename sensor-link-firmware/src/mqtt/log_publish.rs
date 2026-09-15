@@ -40,7 +40,9 @@ use sensor_link_protocol::device_log::LogMessage;
 use static_cell::StaticCell;
 
 use crate::{
-    drivers::time::timestamp_or_default_us, logic::ReceiveChannel, mqtt::PUBLISH_LOG_TARGET,
+    drivers::time::timestamp_or_default_us,
+    logic::ReceiveChannel,
+    mqtt::{LOG_LANE_TARGET, PUBLISH_LOG_TARGET},
 };
 
 /// Number of log records buffered between the logger and the task publishing them.
@@ -103,10 +105,12 @@ impl MqttLogger {
     }
 }
 
-/// Whether a record is published, i.e. is not about publishing a message (which
-/// would recur forever) and passes the configured level and excluded targets.
+/// Whether a record is published, i.e. is not about publishing a message or
+/// about the log lane itself (either would recur forever) and passes the
+/// configured level and excluded targets.
 fn should_publish(config: &LogPublishConfig, metadata: &Metadata) -> bool {
     metadata.target() != PUBLISH_LOG_TARGET
+        && metadata.target() != LOG_LANE_TARGET
         && metadata.level() <= config.level
         && !config
             .exclude_targets
@@ -279,5 +283,21 @@ mod tests {
         // Other network records do not recur per published message, so they
         // are published as usual.
         assert!(should_publish(&config, &metadata(Level::Error, "Network")));
+    }
+
+    /// Records about handling a log record arrive back on the log lane, so they
+    /// are never published either.
+    #[test]
+    fn test_log_lane_target_always_excluded() {
+        let config = LogPublishConfig {
+            level: LevelFilter::Trace,
+            exclude_targets: &[],
+            ..Default::default()
+        };
+
+        assert!(!should_publish(
+            &config,
+            &metadata(Level::Error, LOG_LANE_TARGET)
+        ));
     }
 }

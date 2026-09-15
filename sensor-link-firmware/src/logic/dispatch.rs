@@ -13,6 +13,7 @@ use crate::{
         ReceiveChannel, SendChannel,
     },
     monotonic_time::delay_ms,
+    mqtt::LOG_LANE_TARGET,
     pool::MappedAllocator,
     serialize::{AsSendable, SerializedSendable},
     sync::reserving_sender::{ReservableSender, ReservationToken},
@@ -112,9 +113,9 @@ where
     log::info!(target: "Dispatch", "Starting dispatch task");
 
     // pending: to be enqueued to network task
-    let mut pending_event = Pending::none(upload_alloc.event());
-    let mut pending_data = Pending::none(upload_alloc.data());
-    let mut pending_log = Pending::none(upload_alloc.log());
+    let mut pending_event = Pending::none(upload_alloc.event(), "Dispatch");
+    let mut pending_data = Pending::none(upload_alloc.data(), "Dispatch");
+    let mut pending_log = Pending::none(upload_alloc.log(), LOG_LANE_TARGET);
 
     loop {
         // retry a failed read from the store on next iteration?
@@ -171,10 +172,11 @@ where
                     log_writer.write(log, handle);
                 }
                 Ok(None) => {}
-                // Deliberately not logged: a record about failing to move a log
-                // record is itself a log record, so a persistent failure here
-                // would feed itself.
-                Err(_error) => {
+                // Logged under `LOG_LANE_TARGET`: a record about failing to
+                // move a log record is itself a log record, so publishing it
+                // would feed the lane its own failures.
+                Err(error) => {
+                    log::warn!(target: LOG_LANE_TARGET, "Failed to read log from store: {error:?}");
                     store_retry = true;
                 }
             };
@@ -190,15 +192,23 @@ where
 
         // Future that transmits any pending data to the network, or never resolves if there is nothing to send.
         // This 'blocking' is intentional, so that the select() statement will wait for the other future to resolve
-        let transmit_network_or_block = try_transmit(&mut pending_event, &mut pending_data, &mut pending_log, upload_tx).then(|res| {
+        let transmit_network_or_block = try_transmit(
+            &mut pending_event,
+            &mut pending_data,
+            &mut pending_log,
+            upload_tx,
+        )
+        .then(|res| {
             async move {
                 match res {
                     // successful transmission: done
                     Ok(_) => {}
 
                     // failed: this should not happen in production. If it does, we retry after a timeout to prevent a busy loop.
+                    //
+                    // The failure is logged by the lane that hit it, which is
+                    // what keeps a failing log lane from logging about itself.
                     Err(TransmitError::UploadFailed) => {
-                        log::error!(target: "Dispatch", "Failed to upload: queue broken or multiple senders on this channel??");
                         delay_ms(PREVENT_BUSY_LOOP_DELAY_MS).await;
                     }
 
@@ -294,8 +304,10 @@ where
             Ok(_) => {
                 result = Ok(());
             }
-            // Deliberately not logged, unlike the lanes above: see `process_log`.
+            // Logged under `LOG_LANE_TARGET`, unlike the lanes above: a record
+            // about the log lane arrives back on it. See `process_log`.
             Err(_upl) => {
+                log::error!(target: LOG_LANE_TARGET, "Failed to upload: queue broken or multiple senders on this channel??");
                 return Err(TransmitError::UploadFailed);
             }
         }

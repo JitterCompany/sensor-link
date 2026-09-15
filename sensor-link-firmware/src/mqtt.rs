@@ -22,6 +22,16 @@ use sensor_link_protocol::{
 /// [`MqttClient::publish_message`].
 pub const PUBLISH_LOG_TARGET: &str = "MQTT Publish";
 
+/// Log target of the records emitted by the log lane of the dispatch pipeline
+/// itself, i.e. about storing, queueing or uploading a log record.
+///
+/// Like [`PUBLISH_LOG_TARGET`], these are never published to the device's MQTT
+/// log topic: a record about handling a log record arrives back on the same
+/// lane, so a persistent failure would feed itself one record at a time. Code
+/// on that lane logs under this target instead of staying silent, so the
+/// failure is still visible to whatever local logger the device has.
+pub const LOG_LANE_TARGET: &str = "Dispatch Log";
+
 /// Publishing over an [`MqttClient`], with the outcome logged under
 /// [`PUBLISH_LOG_TARGET`].
 ///

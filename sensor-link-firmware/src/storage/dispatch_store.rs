@@ -13,6 +13,7 @@
 use core::marker::PhantomData;
 
 use crate::{
+    mqtt::LOG_LANE_TARGET,
     serialize::{Builder, SerializedSendable},
     storage::{
         common::{
@@ -229,7 +230,9 @@ where
             Some((len, handle)) => match buffer.create_with_total_length(len) {
                 Ok(buffer) => Ok(Some((buffer, handle))),
                 Err(deserialize_error) => {
-                    log::warn!("Failed to deserialize log: {deserialize_error:?}");
+                    // Under `LOG_LANE_TARGET`, unlike the peeks above: a record
+                    // about a log record arrives back on the log lane.
+                    log::warn!(target: LOG_LANE_TARGET, "Failed to deserialize log: {deserialize_error:?}");
                     handle.confirm(); // skip item: retry is likely to fail again!
                     Err(flash_db::Error::FragmentNotReadable)
                 }

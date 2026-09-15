@@ -196,8 +196,11 @@ impl mqtt::MqttClient for Mqtt {
         _client_id: &str,
         will: Will,
     ) -> Result<(), Error<Self::ClientError>> {
-        // Flush internal events
+        // Flush internal events, acks included: an `InternalAck::Error` left
+        // over from the previous connection's event loop would otherwise fail
+        // the first subscribe or publish of this one.
         while self.rx.try_recv().is_ok() {}
+        while self.ack_rx.try_recv().is_ok() {}
 
         let lastwill = LastWill::new(
             will.topic.as_str(),

@@ -1,5 +1,6 @@
 use chrono::Utc;
 use sensor_link_protocol::{
+    device_log::LogMessage,
     event::{Event, EventPayload},
     parse_system_topic, parse_topic_from_device,
     server::{parse_device_info_v2, parse_device_info_v3, parse_online},
@@ -512,6 +513,16 @@ where
                     )
                     .await;
                 }
+                DeviceControlIn::DeviceLog(log_message) => {
+                    insert_sensor_server_log(
+                        db,
+                        msg.device_id.clone(),
+                        log_message.level.as_str().to_string(),
+                        &format!("[{}] {}", log_message.target, log_message.msg),
+                        String::from_utf8_lossy(&publish.payload).to_string(),
+                    )
+                    .await;
+                }
                 DeviceControlIn::Event(event) => {
                     if let Some(log_type) = C::event_log_type(&event.event) {
                         insert_sensor_server_log(
@@ -719,6 +730,14 @@ where
                 Ok(ParsedMqttIn::Control(ControlMessageIn {
                     device_id,
                     payload: DeviceControlIn::Event(event_payload),
+                }))
+            }
+            TopicFromDevice::Log => {
+                let log_message: LogMessage = serde_json::from_slice(payload)
+                    .map_err(|err| format!("Parse Device Log: {err:?}"))?;
+                Ok(ParsedMqttIn::Control(ControlMessageIn {
+                    device_id,
+                    payload: DeviceControlIn::DeviceLog(log_message),
                 }))
             }
             TopicFromDevice::FWStatus => {

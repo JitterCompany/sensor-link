@@ -16,5 +16,8 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 task-supervisor.workspace = true
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["macros", "time"] }
 tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }

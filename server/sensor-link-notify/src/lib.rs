@@ -1,5 +1,6 @@
 pub mod alarm;
 pub mod mail;
+pub mod mail_throttle;
 pub mod sms;
 
 #[repr(u32)]

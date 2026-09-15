@@ -206,8 +206,10 @@ async fn main() {
                     }
                 }
                 ["q"] => {
+                    // The device tasks run until the process ends, so joining
+                    // them here would hang instead of exiting.
                     println!("Exit now");
-                    break;
+                    return;
                 }
                 other => {
                     println!("Error, didn't understand '{other:?}'");

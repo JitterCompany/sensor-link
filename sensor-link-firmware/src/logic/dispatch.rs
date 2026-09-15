@@ -322,10 +322,8 @@ async fn process_event<DS, SQO, PA, T, E, S, IsUrgent>(
     let is_urgent = is_urgent(&event);
     log::debug!(target: "Dispatch", "Processing {} event...", if is_urgent { "urgent" } else { "" });
 
-    if is_urgent {
-        if let Err(_) = signal_out.send(Signal::UrgentEvent.into()).await {
-            log::error!("Dispatch: failed to send 'urgent event' signal");
-        }
+    if is_urgent && signal_out.send(Signal::UrgentEvent.into()).await.is_err() {
+        log::error!("Dispatch: failed to send 'urgent event' signal");
     }
 
     let now = Microseconds::from_raw_microseconds(time::timestamp_or_default_us());

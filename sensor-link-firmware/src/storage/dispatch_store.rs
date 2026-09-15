@@ -38,9 +38,9 @@ pub trait DispatchStore {
     type Error: core::fmt::Debug + Clone;
     type Topic: Topic;
 
-    async fn store_event<'a>(
+    async fn store_event(
         &mut self,
-        event: &'a SerializedSendable<MAX_EVENT_LEN, Self::Topic>,
+        event: &SerializedSendable<MAX_EVENT_LEN, Self::Topic>,
     ) -> Result<SeqNo, Self::Error>;
     async fn peek_event(
         &mut self,
@@ -52,9 +52,9 @@ pub trait DispatchStore {
         Self::Error,
     >;
 
-    async fn store_sensor_data<'a, const MAX_PROCESSING_LEN: usize>(
+    async fn store_sensor_data<const MAX_PROCESSING_LEN: usize>(
         &mut self,
-        processing: &'a SerializedSendable<{ MAX_PROCESSING_LEN }, Self::Topic>,
+        processing: &SerializedSendable<{ MAX_PROCESSING_LEN }, Self::Topic>,
     ) -> Result<SeqNo, Self::Error>;
     async fn peek_sensor_data<const MAX_PROCESSING_LEN: usize>(
         &mut self,
@@ -106,6 +106,12 @@ impl<const NUM_CHANNELS: usize> ConfirmChannels<NUM_CHANNELS> {
     }
 }
 
+impl<const NUM_CHANNELS: usize> Default for ConfirmChannels<NUM_CHANNELS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Persistent storage for events, sensor data and device logs.
 ///
 /// Each kind has its own dedicated FIFO flash stream, so one kind can never evict another. Data is
@@ -154,9 +160,9 @@ where
     type Error = flash_db::Error;
     type Topic = T;
 
-    async fn store_event<'a>(
+    async fn store_event(
         &mut self,
-        event: &'a SerializedSendable<MAX_EVENT_LEN, T>,
+        event: &SerializedSendable<MAX_EVENT_LEN, T>,
     ) -> Result<SeqNo, Self::Error> {
         self.events.enqueue(event.as_slice()).await
     }
@@ -272,9 +278,9 @@ where
     type Topic = T;
 
     #[inline]
-    async fn store_event<'a>(
+    async fn store_event(
         &mut self,
-        event: &'a SerializedSendable<MAX_EVENT_LEN, T>,
+        event: &SerializedSendable<MAX_EVENT_LEN, T>,
     ) -> Result<SeqNo, Self::Error> {
         self.store.store_event(event).await
     }

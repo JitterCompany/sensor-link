@@ -1,5 +1,11 @@
 [workspace]
-members = ["server/*", "sensor-link-firmware", "sensor-link-protocol", "sensor-link-provision"]
+members = [
+    "mock-device",
+    "server/*",
+    "sensor-link-firmware",
+    "sensor-link-protocol",
+    "sensor-link-provision",
+]
 resolver = "2"
 
 [workspace.package]

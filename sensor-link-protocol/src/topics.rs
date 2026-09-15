@@ -1,4 +1,5 @@
 pub mod cmd;
+pub mod device_log;
 pub mod event;
 pub mod fwupdate;
 pub mod info;
@@ -89,6 +90,7 @@ pub enum TopicFromDevice {
     Online,
     // Meta Topics
     Event,
+    Log,
     FWStatus,
     DeviceInfoV2,
     DeviceInfoV3,
@@ -119,6 +121,7 @@ impl TopicFromDevice {
         match self {
             TopicFromDevice::Online => "online",
             TopicFromDevice::Event => "events",
+            TopicFromDevice::Log => "log",
             TopicFromDevice::FWStatus => "fw_update/status",
             TopicFromDevice::DeviceInfoV2 => "info_v2",
             TopicFromDevice::DeviceInfoV3 => "info_v3",
@@ -286,6 +289,7 @@ pub fn parse_topic_from_device(
         "benchmark_data" => TopicFromDevice::BenchmarkData,
         "benchmark_event" => TopicFromDevice::BenchmarkEvent,
         "events" => TopicFromDevice::Event,
+        "log" => TopicFromDevice::Log,
         "status" => TopicFromDevice::Status,
         "charger_status" => TopicFromDevice::ChargerStatus,
         "info_v2" => TopicFromDevice::DeviceInfoV2,

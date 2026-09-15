@@ -14,3 +14,12 @@ pub const MAX_FILE_CHUNK_LEN: usize = 600;
 pub const MAX_EVENT_LEN: usize = 350;
 
 pub const MAX_ONLINE_PAYLOAD_LEN: usize = 34;
+
+/// Maximum length of the serialized device log payload
+pub const MAX_LOG_LEN: usize = 256;
+
+/// Maximum length of the `target` (module path) of a device log message
+pub const MAX_LOG_TARGET_LEN: usize = 24;
+
+/// Maximum length of the message body of a device log message
+pub const MAX_LOG_MSG_LEN: usize = 160;

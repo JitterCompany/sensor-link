@@ -115,6 +115,10 @@ impl<const N: usize> Write for Truncating<'_, N> {
 mod tests {
     use super::*;
 
+    /// Size of the topic header the firmware's serializer prepends to the
+    /// payload within `MAX_LOG_LEN` (`sensor_link_firmware::serialize`).
+    const TOPIC_HEADER_SIZE: usize = 8;
+
     #[test]
     fn test_serialization() {
         let message = LogMessage::new(LogLevel::Warn, "Network", "Connect Error", 17491303460000);
@@ -149,6 +153,10 @@ mod tests {
     }
 
     /// The worst-case message must still fit the payload buffer.
+    ///
+    /// Note that `MAX_LOG_LEN` covers the topic header too, so the buffer a
+    /// record is serialized into is smaller than `MAX_LOG_LEN` by the header
+    /// size the firmware's serializer prepends.
     #[test]
     fn test_max_size_fits() {
         let message = LogMessage::new(
@@ -157,6 +165,28 @@ mod tests {
             &"b".repeat(MAX_LOG_MSG_LEN),
             i64::MIN,
         );
-        assert!(message.serialize_topic_payload().is_ok());
+
+        let mut payload = [0u8; MAX_LOG_LEN - TOPIC_HEADER_SIZE];
+        assert!(message
+            .serialize_topic_payload_to_slice(&mut payload)
+            .is_ok());
+    }
+
+    /// A message with more escaped characters than the headroom on
+    /// [`MAX_LOG_LEN`] does not fit, and is reported as such rather than
+    /// silently producing a short payload.
+    #[test]
+    fn test_escape_heavy_message_does_not_fit() {
+        let message = LogMessage::new(
+            LogLevel::Error,
+            &"a".repeat(MAX_LOG_TARGET_LEN),
+            &"\"".repeat(MAX_LOG_MSG_LEN),
+            i64::MIN,
+        );
+
+        let mut payload = [0u8; MAX_LOG_LEN - TOPIC_HEADER_SIZE];
+        assert!(message
+            .serialize_topic_payload_to_slice(&mut payload)
+            .is_err());
     }
 }

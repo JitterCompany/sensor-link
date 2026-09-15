@@ -385,11 +385,13 @@ async fn process_sensor_data<DS, PA, T, const MAX_OUTPUT_SIZE: usize>(
 
 /// Store a log record for upload.
 ///
-/// Nothing here is logged, on purpose: every record this function could emit
-/// would arrive back on the log lane and be processed by this same function, so
-/// a persistent failure would feed itself. A log record that cannot be stored is
-/// dropped silently; the application sees the loss as a gap in the published
-/// stream and in [`LogPublisher::dropped`](crate::mqtt::log_publish::LogPublisher::dropped).
+/// Everything here logs under [`LOG_LANE_TARGET`], on purpose: a record this
+/// function emits under any other target would arrive back on the log lane and
+/// be processed by this same function, so a persistent failure would feed
+/// itself. Records under that target are never published, so a log record that
+/// cannot be stored is reported locally but lost from the published stream; the
+/// application also sees the loss in
+/// [`LogPublisher::dropped`](crate::mqtt::log_publish::LogPublisher::dropped).
 #[inline]
 async fn process_log<DS, PA, T>(store: &mut DS, pending: &mut Pending<PA>, record: LogMessage)
 where
@@ -399,6 +401,10 @@ where
     PA: MappedAllocator<Input = SerializedLog<T>>,
 {
     let Ok(sendable) = record.as_sendable() else {
+        // The record did not fit `MAX_LOG_LEN` once serialized: `LogMessage`
+        // truncates to the unescaped worst case, so a line with enough
+        // JSON-escaped characters still overflows. See `MAX_LOG_LEN`.
+        log::warn!(target: LOG_LANE_TARGET, "Dropping log record that does not fit: {:?}", record.target);
         return;
     };
 

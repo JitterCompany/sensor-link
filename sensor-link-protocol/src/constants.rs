@@ -15,7 +15,15 @@ pub const MAX_EVENT_LEN: usize = 350;
 
 pub const MAX_ONLINE_PAYLOAD_LEN: usize = 34;
 
-/// Maximum length of the serialized device log payload
+/// Maximum length of the serialized device log payload, topic header included
+///
+/// The worst-case [`LogMessage`](crate::device_log::LogMessage) (a full target,
+/// a full message body and the longest timestamp) serializes to 237 bytes,
+/// against a payload budget of `MAX_LOG_LEN` minus the 8-byte topic header. The
+/// remaining 11 bytes are the headroom for JSON escaping: a line with more than
+/// ~11 escaped characters does not fit and is dropped rather than truncated
+/// further. Raising this constant is what buys more headroom, at the cost of
+/// RAM per pending record and flash per stored one.
 pub const MAX_LOG_LEN: usize = 256;
 
 /// Maximum length of the `target` (module path) of a device log message

@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use sensor_link_protocol::{
     device_log::LogMessage,
     event::{Event, EventPayload},
@@ -514,12 +514,13 @@ where
                     .await;
                 }
                 DeviceControlIn::DeviceLog(log_message) => {
-                    insert_sensor_server_log(
+                    insert_sensor_server_log_at(
                         db,
                         msg.device_id.clone(),
                         log_message.level.as_str().to_string(),
                         &format!("[{}] {}", log_message.target, log_message.msg),
                         String::from_utf8_lossy(&publish.payload).to_string(),
+                        device_log_timestamp(log_message.ts),
                     )
                     .await;
                 }
@@ -626,6 +627,17 @@ async fn try_publish_to_device(
     insert_sensor_server_log(db, device_id, log_type, topic.as_str(), payload_for_log).await;
 }
 
+/// The time a device log record was written, as reported by the device.
+///
+/// A device whose clock was never set reports `0` (and a corrupt record could
+/// report anything), so an implausible stamp falls back to the arrival time.
+fn device_log_timestamp(ts: i64) -> DateTime<Utc> {
+    if ts <= 0 {
+        return Utc::now();
+    }
+    DateTime::from_timestamp_millis(ts).unwrap_or_else(Utc::now)
+}
+
 async fn insert_sensor_server_log(
     db: &impl DeviceStore,
     sensor_id: String,
@@ -633,10 +645,23 @@ async fn insert_sensor_server_log(
     log_msg: &str,
     payload_for_log: String,
 ) {
+    insert_sensor_server_log_at(db, sensor_id, log_type, log_msg, payload_for_log, Utc::now()).await;
+}
+
+/// As [`insert_sensor_server_log`], but for a record that happened at a known
+/// time other than now.
+async fn insert_sensor_server_log_at(
+    db: &impl DeviceStore,
+    sensor_id: String,
+    log_type: String,
+    log_msg: &str,
+    payload_for_log: String,
+    timestamp: DateTime<Utc>,
+) {
     let _ = db
         .insert_sensor_server_log(SensorServerLog {
             id: None,
-            timestamp: Utc::now(),
+            timestamp,
             sensor_id,
             group_id: None,
             user_id: "auto".to_string(),

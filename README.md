@@ -1,5 +1,5 @@
 # sensor-link
-Jitter Sensor Link Libraries
+Jitter sensor-link Libraries
 
 Reusable building blocks for Jitter sensor platforms, in three groups:
 

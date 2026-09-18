@@ -7,6 +7,7 @@ pub use client::*;
 
 use sensor_link_protocol::{
     cmd::CommandPayload,
+    device_log::LogMessage,
     event::{Event, EventPayload},
     fwupdate::{FWAnnounce, FWStatus},
     info::DeviceInfoV3,
@@ -39,6 +40,8 @@ pub enum DeviceControlIn<D, S, EV = Event> {
     DeviceInfo(DeviceInfoV3<D>),
     DeviceStatus(S),
     Event(EventPayload<EV>),
+    /// A log record published by the device itself, on the `log` topic.
+    DeviceLog(LogMessage),
     FirmwareUpdateStatus(FWStatus),
 }
 

@@ -6,6 +6,13 @@ use super::*;
 pub struct Pending<A: MappedAllocator> {
     allocator: A,
     data: Option<Confirmable<A::Output>>,
+
+    /// Log target of the records this lane's failures are reported under.
+    ///
+    /// Carried per lane because the log lane needs its own: a record about
+    /// handling a log record arrives back on that lane, so it must not be
+    /// published. See [`LOG_LANE_TARGET`](crate::mqtt::LOG_LANE_TARGET).
+    log_target: &'static str,
 }
 
 pub struct PendWriter<'w, A: MappedAllocator> {
@@ -55,11 +62,13 @@ impl<A: MappedAllocator> Pending<A> {
         }
     }
 
-    /// Initialize a new, empty pending item
-    pub fn none(allocator: A) -> Self {
+    /// Initialize a new, empty pending item, reporting its failures under
+    /// `log_target`.
+    pub fn none(allocator: A, log_target: &'static str) -> Self {
         Self {
             allocator,
             data: None,
+            log_target,
         }
     }
 
@@ -77,7 +86,7 @@ impl<A: MappedAllocator> Pending<A> {
             if !data.can_be_retried() {
                 // TODO how can we keep track if this happens in production without triggering an avalance of events?
                 // maybe track 'store health' stats?
-                log::error!(target: "Dispatch", "Data loss: permanently dropping pending data!");
+                log::error!(target: self.log_target, "Data loss: permanently dropping pending data!");
             }
         }
         // Note: this drops confirm handle (if any) for previous data: store should retry eventually..
@@ -93,7 +102,7 @@ impl<A: MappedAllocator> Pending<A> {
             // Should never happen: pool should be large enough to fit maximum amount of instances
             Err(_data) => {
                 debug_assert!(false, "Alloc failed: pool too small!");
-                log::error!(target: "Dispatch", "Alloc failed!");
+                log::error!(target: self.log_target, "Alloc failed!");
             }
         }
     }

@@ -1,8 +1,5 @@
-//! Allocation of the items the network task uploads.
-//!
-//! Ported from `btb-firmware-core`'s `logic::network::upload` and
-//! `logic::network::hub_upload`, extended with the log kind the generic
-//! [`UploadAlloc`] now requires.
+//! Allocation of the items the network task uploads, implementing the generic
+//! [`UploadAlloc`] for the mock's sensor data, events and log records.
 
 use sensor_link_firmware::{
     logic::network::{

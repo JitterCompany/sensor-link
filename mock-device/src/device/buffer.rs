@@ -1,10 +1,9 @@
 //! Buffering and serialization of the mock's sensor data.
 //!
-//! Ported from `btb-firmware-core`'s `logic::dispatch::zonneboiler_buffer`. The
-//! buffering machinery it builds on ([`BufferManager`], [`DrainManager`],
+//! The buffering machinery ([`BufferManager`], [`DrainManager`],
 //! [`LatencyControlledSerializer`]) is generic and comes from
-//! `sensor-link-firmware`; what was zonneboiler-specific is replaced here by the
-//! mock's own channel count and wire format.
+//! `sensor-link-firmware`; this module adds the mock's channel count and wire
+//! format.
 //!
 //! All of the mock's measurements share a single timebase, so they are buffered
 //! together as one multi-measurement data stream.
@@ -45,11 +44,8 @@ pub const NUM_CH_MOCK: usize = 4;
 
 const MAX_MESSAGE_LEN: usize = MAX_SENSOR_DATA_LEN;
 
-/// Serializer producing the mock's wire format.
-///
-/// The zonneboiler had its own `ZonneboilerDataSerializer` in `btb-protocol`;
-/// the mock uses the manufacturer-generic uniform-sample format instead, so
-/// there is nothing product-specific left to define here.
+/// Serializer producing the mock's wire format: the generic uniform-sample
+/// format.
 type DataSerializer = UniformSampleSerializer<NUM_CH_MOCK, MAX_MESSAGE_LEN>;
 
 /// Maximum number of samples (per measurement) in a single result from the

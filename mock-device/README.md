@@ -3,14 +3,11 @@
 A mock sensor device that speaks the sensor-link MQTT protocol from a host
 machine, for exercising a broker and server without hardware.
 
-Ported from the btb-zonneboiler firmware repo. That version drove a full
-zonneboiler orchestrator; this one keeps the parts that are generic to
-sensor-link (the rumqttc MQTT driver, the CLI, the signal generator, the
-dispatch store, buffer and upload allocator) and defines mock types where the
-original depended on `btb-protocol`. There is no orchestrator: the pieces
-`network_task` is generic over (status payload, device metadata, action queue)
-are implemented as the smallest thing that satisfies each trait, and the mock
-reconnects on its own rather than being respawned by one.
+It consists of a rumqttc MQTT driver, a CLI, a signal generator, and the
+dispatch store, buffer and upload allocator. The pieces `network_task` is
+generic over (status payload, device metadata, action queue) are implemented
+as the smallest thing that satisfies each trait. The mock reconnects on its
+own when the connection drops.
 
 ## Running
 

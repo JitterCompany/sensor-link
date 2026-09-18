@@ -6,8 +6,7 @@
 //! type aliases that pin the generic store to
 //! [`TopicFromDevice`](sensor_link_protocol::TopicFromDevice).
 //!
-//! Ported from `btb-firmware-core`'s `storage::hub_stream_store`, with the
-//! zonneboiler's hardware flash layout kept as-is: the mock runs the store
+//! The flash layout matches that of a real device: the mock runs the store
 //! against an in-memory flash of the same size, so the same block ranges apply.
 
 use sensor_link_firmware::{

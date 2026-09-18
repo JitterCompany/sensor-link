@@ -1,7 +1,5 @@
-//! Pools backing the upload queue.
-//!
-//! Ported from `mock-device`'s `device::zonneboiler::pools`, with a third pool
-//! for the log records the dispatch pipeline now carries.
+//! Pools backing the upload queue: one each for sensor data, events and log
+//! records.
 
 #![allow(non_upper_case_globals)]
 

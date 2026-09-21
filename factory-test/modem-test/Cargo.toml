@@ -1,0 +1,51 @@
+[package]
+name = "modem-test"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+default-run = "factory_test"
+autobins = false
+
+# A standalone embedded workspace, excluded from the host workspace at the repo
+# root: it builds for thumbv7em-none-eabihf only (see .cargo/config.toml).
+[workspace]
+members = [".", "bsp"]
+resolver = "2"
+
+[workspace.dependencies]
+sensor-link-firmware = { path = "../../sensor-link-firmware" }
+
+[dependencies]
+critical-section = "1.2.0"
+# The trimmed board support package in bsp/, under the name the sources use.
+hardware = { package = "sl23-modem-tester-bsp", path = "bsp" }
+sensor-link-firmware = { workspace = true }
+log = "0.4"
+embedded-io-async = "0.6"
+rtic = { version = "2.1.3", features = ["thumbv7-backend"] }
+rtt-target = "0.6.2"
+cortex-m-rt = "0.7.3"
+
+# The factory self-test. See docs/factory-test.md.
+#
+# Deliberately featureless: a factory image's link type and behaviour must be
+# pinned. It is always standalone -- the factory flashes only this, bootloader
+# and application are written later.
+#
+# Explicit path because it owns a module tree under src/factory/ rather than
+# being a single file under src/bin/.
+[[bin]]
+name = "factory_test"
+path = "src/factory_test.rs"
+test = false
+bench = false
+
+[profile.dev]
+opt-level = 'z'
+lto = "thin"
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 4

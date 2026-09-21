@@ -1,0 +1,25 @@
+[package]
+name = "sl23-modem-tester-bsp"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Board support for the SL23-modem-tester board (STM32L4R7), trimmed to what the modem test uses."
+
+[dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+embassy-sync = "0.5.0"
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"
+embedded-io-async = { version = "0.6.1" }
+fugit = "0.3"
+log = "0.4.19"
+paste = "1"
+sensor-link-firmware = { workspace = true }
+static_cell = "2.0.0"
+stm32ral = { git = "https://github.com/JitterCompany/stm32ral", rev = "1ef30a9b267904f0f791d38f73426f499f404512", features = ["stm32l4r5", "rtic", "rt"] }
+
+[lib]
+test = false
+doctest = false
+bench = false

@@ -1,20 +1,28 @@
-# sensor-link
-Jitter sensor-link Libraries
+# Jitter sensor-link
 
-Reusable building blocks for Jitter sensor platforms, in three groups:
+The Jitter Sensor Link platform: the shared code behind Jitter sensor devices, from the
+firmware on the device to the server it reports to. It also holds the tooling used
+to produce devices.
+
+## Libraries
+
+| Crate | Contents |
+|---|---|
+| [sensor-link-firmware](sensor-link-firmware/) | Firmware building blocks: drivers, storage, bootloader etc |
+| [sensor-link-protocol](sensor-link-protocol/) | Device ↔ server protocol |
+| [server/sensor-link-server-core](server/sensor-link-server-core/) | Server core: devices, sensor data and time series, events, etc |
+| [server/sensor-link-mqtt](server/sensor-link-mqtt/) | Server-side MQTT client |
+| [server/sensor-link-notify](server/sensor-link-notify/) | Server-side Notifications: alarms, e-mail and SMS |
+| [server/task-supervisor](server/task-supervisor/) | Supervised tokio background tasks: auto-restart on panic, graceful shutdown with timeout |
+
+## Production tooling
+
+Tools to help build & test hardware during manufacturing.
 
 | Directory | Contents |
 |---|---|
-| [server/](server/) | Server-side crates |
-| sensor-link-protocol/ | Device ↔ server protocol crate |
-| sensor-link-firmware/ | Firmware library crate |
-
-## Crates
-
-| Crate | Description |
-|---|---|
-| [server/task-supervisor](server/task-supervisor/) | Supervised tokio background tasks: auto-restart on panic, graceful shutdown with timeout |
-| [sensor-link-provision](sensor-link-provision/) | Desktop provisioning tool: flashes bootloader, firmware and device config over J-Link, signs device certificates with a YubiKey-held CA |
+| [sensor-link-provision/](sensor-link-provision/) | Desktop provisioning tool: flashes bootloader, firmware and device config over J-Link, signs device certificates with a YubiKey-held CA |
+| [factory-test/](factory-test/) | Factory test firmware for test jigs, each its own embedded workspace excluded from the root workspace |
 
 ## Linting
 

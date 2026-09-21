@@ -20,6 +20,11 @@ const METER: &str = "mail";
 /// Helper for metrics without attributes (an empty slice needs a concrete attribute type).
 const NO_ATTRIBUTES: &[(&str, &str)] = &[];
 
+/// `mail_dropped` reason: the throttle queue was full and the oldest queued e-mail made room.
+const DROP_QUEUE_FULL: &str = "queue_full";
+/// `mail_dropped` reason: the shutdown grace period expired before the e-mail was sent.
+const DROP_SHUTDOWN: &str = "shutdown";
+
 /// How long the task keeps draining its throttle queue after a shutdown request.
 ///
 /// Draining happens at the throttled rate, so a large backlog would take hours. Shutdown is not
@@ -170,6 +175,8 @@ async fn send_task(
     mut shutdown_rx: Receiver<()>,
     feedback_tx: Option<mpsc::Sender<EmailSendFeedback>>,
 ) {
+    init_metrics();
+
     // Create the mailer once at startup if config is available
     let mailer: Option<AsyncSmtpTransport<Tokio1Executor>> = config.as_ref().and_then(|cfg| {
         match AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.smtp_server) {
@@ -262,7 +269,7 @@ async fn send_task(
                                     throttle.max_queued,
                                     dropped.mail.subject
                                 );
-                                report_dropped(feedback_tx.as_ref(), &dropped.mail, "queue_full");
+                                report_dropped(feedback_tx.as_ref(), &dropped.mail, DROP_QUEUE_FULL);
                             }
                         }
                         queue.push_back(QueuedEmail { mail, queued_at: Instant::now() });
@@ -309,7 +316,7 @@ async fn send_task(
                     queue.len()
                 );
                 for dropped in queue.drain(..) {
-                    report_dropped(feedback_tx.as_ref(), &dropped.mail, "shutdown");
+                    report_dropped(feedback_tx.as_ref(), &dropped.mail, DROP_SHUTDOWN);
                 }
                 break;
             }
@@ -599,19 +606,7 @@ fn report_send_result(
     status: EmailSendStatus,
     error: Option<String>,
 ) {
-    let status_name = match status {
-        EmailSendStatus::Sent => "sent",
-        EmailSendStatus::Failed => "failed",
-    };
-    metrics::increment_counter(
-        METER,
-        "mail_sent",
-        1u64,
-        &[
-            ("urgent", mail.urgent.to_string()),
-            ("status", status_name.to_string()),
-        ],
-    );
+    count_sent(mail.urgent, status, 1);
 
     if let Some(tx) = feedback_tx {
         let _ = tx.try_send(EmailSendFeedback {
@@ -621,6 +616,40 @@ fn report_send_result(
             error,
         });
     }
+}
+
+/// Adds `count` send attempts with the given urgency and outcome to the `mail_sent` counter.
+fn count_sent(urgent: bool, status: EmailSendStatus, count: u64) {
+    let status_name = match status {
+        EmailSendStatus::Sent => "sent",
+        EmailSendStatus::Failed => "failed",
+    };
+    metrics::increment_counter(
+        METER,
+        "mail_sent",
+        count,
+        &[
+            ("urgent", urgent.to_string()),
+            ("status", status_name.to_string()),
+        ],
+    );
+}
+
+/// Creates every email metric series at zero.
+///
+/// A counter series only appears once something is counted, and Prometheus' `increase()` cannot
+/// see what was counted before the first sample it scraped. Without this, the first email(s) after
+/// a (re)start would be missing from rates and quota sums.
+fn init_metrics() {
+    for urgent in [false, true] {
+        for status in [EmailSendStatus::Sent, EmailSendStatus::Failed] {
+            count_sent(urgent, status, 0);
+        }
+    }
+    for reason in [DROP_QUEUE_FULL, DROP_SHUTDOWN] {
+        metrics::increment_counter_with_attribute(METER, "mail_dropped", 0u64, "reason", reason);
+    }
+    metrics::record_gauge(METER, "mail_throttle_queue_depth", 0u64, NO_ATTRIBUTES);
 }
 
 #[cfg(test)]

@@ -14,7 +14,10 @@ members = [".", "bsp"]
 resolver = "2"
 
 [workspace.dependencies]
-sensor-link-firmware = { path = "../../sensor-link-firmware" }
+# Pinned like any application outside this repo would, so library changes on
+# master cannot break the factory image. Moving to newer libraries is a deliberate
+# bump of this rev (then `cargo update -p sensor-link-firmware` and a re-test).
+sensor-link-firmware = { git = "https://github.com/JitterCompany/sensor-link.git", rev = "cfeaf6cd0298c48c974efe02de72a8fc2a17a993" }
 
 [dependencies]
 critical-section = "1.2.0"

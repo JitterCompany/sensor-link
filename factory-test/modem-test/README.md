@@ -72,13 +72,17 @@ behind it, are in [docs/factory-test.md](docs/factory-test.md).
 ## Building
 
 This is a separate embedded workspace (thumbv7em-none-eabihf), excluded from the host
-workspace at the repo root. It builds on `sensor-link-firmware` by path, plus `bsp/`, a
-trimmed STM32L4R7 board support package.
+workspace at the repo root. It builds on a pinned commit of `sensor-link-firmware` (see
+`Cargo.toml`), plus `bsp/`, a trimmed STM32L4R7 board support package.
 
 ```bash
 cargo build --release --bin factory_test
 probe-rs run --chip STM32L4R7ZITx target/thumbv7em-none-eabihf/release/factory_test
 ```
+
+For a factory image, run the **Modem factory test release build** workflow (manual, in
+GitHub Actions). It uploads `modem-test-<version>-<run>.elf` and `.bin`. Every push and PR
+also runs `cargo check` on this workspace (the `modem-test` job in `rust.yml`).
 
 ## Documentation
 

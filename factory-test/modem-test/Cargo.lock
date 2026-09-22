@@ -1036,6 +1036,7 @@ checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 [[package]]
 name = "sensor-link-firmware"
 version = "0.2.0"
+source = "git+https://github.com/JitterCompany/sensor-link.git?rev=cfeaf6cd0298c48c974efe02de72a8fc2a17a993#cfeaf6cd0298c48c974efe02de72a8fc2a17a993"
 dependencies = [
  "atat",
  "chrono",
@@ -1069,6 +1070,7 @@ dependencies = [
 [[package]]
 name = "sensor-link-protocol"
 version = "0.1.0"
+source = "git+https://github.com/JitterCompany/sensor-link.git?rev=cfeaf6cd0298c48c974efe02de72a8fc2a17a993#cfeaf6cd0298c48c974efe02de72a8fc2a17a993"
 dependencies = [
  "base64",
  "chrono",

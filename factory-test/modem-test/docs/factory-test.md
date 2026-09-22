@@ -237,7 +237,8 @@ whose `hw_v0_1`/`hw_v0_2` straps read other than low/high.
 
 Peripherals the jig does not use (SPI flash, SD card, and v0's external SRAM) get no
 driver, but init puts their pins in the idle state those drivers would leave them in. The copy is not kept in sync with the BSP it came from.
-Everything else comes from `sensor-link-firmware`, by path.
+Everything else comes from `sensor-link-firmware`, pinned to a commit in `Cargo.toml`
+like any application outside this repo, so library changes on master cannot break it.
 
 ## Current state
 

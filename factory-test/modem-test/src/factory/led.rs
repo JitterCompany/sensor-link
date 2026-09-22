@@ -211,10 +211,19 @@ pub async fn led_task(mut leds: Indicators) -> ! {
     leds.show_all(Lamps::OFF);
 
     let mut tick = 0u32;
+    // Each pair's pattern restarts when what it shows changes, so a blink code
+    // always begins with a complete group rather than wherever the cycle was.
+    let mut current = [(Show::Dark, 0u32); Zone::COUNT];
     loop {
         let run_active = result::phase() == Phase::Running;
         for zone in Zone::ALL {
-            leds.show(zone, show_for(zone, run_active).lamps(tick));
+            let show = show_for(zone, run_active);
+            let (shown, since) = &mut current[zone.index()];
+            if *shown != show {
+                *shown = show;
+                *since = tick;
+            }
+            leds.show(zone, show.lamps(tick.wrapping_sub(*since)));
         }
         // A jig error lights every Fail LED, including the one no zone uses,
         // so nothing on the board can be read as a result.

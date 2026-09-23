@@ -22,7 +22,7 @@ More modem types or hardware platforms can be added later, within the same modem
 
 Press **Reset** to start a run. **Busy** blinks for about 15 s, and the result is final once it
 stops. The step-by-step operator version is
-[docs/factory-test-instruction.md](docs/factory-test-instruction.md).
+[docs/factory-test-instruction.pdf](docs/factory-test-instruction.pdf).
 
 There are two LED pairs. At power-up or reset, every LED lights for about 0.4 s as a lamp test.
 
@@ -88,8 +88,13 @@ also runs `cargo check` on this workspace (the `modem-test` job in `rust.yml`).
 
 - [docs/factory-test.md](docs/factory-test.md): engineering reference. Covers steps, gates and
   where each number came from, the log grammar, and building and flashing.
-- [docs/factory-test-instruction.md](docs/factory-test-instruction.md): the one-page
-  operator instruction.
+- [docs/factory-test-instruction.pdf](docs/factory-test-instruction.pdf): the operator
+  instruction, to print.
+- [docs/programming-guide.pdf](docs/programming-guide.pdf): how to program a board, needed
+  once per board.
+
+  Both are written in [typst](https://typst.app); the `.typ` sources sit next to the PDFs.
+  Rebuild after an edit with `typst compile docs/<name>.typ docs/<name>.pdf`.
 - Hardware: schematic, layout and the pin map this firmware follows
   ([`SL23-modem-tester/pinmap.toml`](https://github.com/JitterCompany/debug-tools/blob/master/SL23-modem-tester/pinmap.toml))
   are in [JitterCompany/debug-tools](https://github.com/JitterCompany/debug-tools).

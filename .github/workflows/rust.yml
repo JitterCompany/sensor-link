@@ -26,6 +26,10 @@ jobs:
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --all -- --check
+      # Separate embedded workspace, not reached by the root `--all`
+      - name: Check formatting (modem factory test)
+        working-directory: factory-test/modem-test
+        run: cargo +nightly fmt --all -- --check
 
   test:
     timeout-minutes: 20
@@ -49,3 +53,25 @@ jobs:
         run: ./scripts/clippy-changed.sh "origin/${{ github.base_ref || github.ref_name }}"
       - name: Run Tests
         run: cargo test --workspace --features sensor-link-firmware/test-mono
+
+  # The modem factory test firmware is its own embedded workspace (pinned to a
+  # sensor-link commit), so the root workspace jobs above never build it.
+  modem-test:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: factory-test/modem-test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: thumbv7em-none-eabihf
+          components: rust-src, rustfmt, llvm-tools
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: factory-test/modem-test
+      - name: Check
+        run: cargo check --release

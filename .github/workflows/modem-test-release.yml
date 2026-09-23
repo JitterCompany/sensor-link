@@ -1,0 +1,56 @@
+name: Modem factory test release build
+
+# Manual: builds the factory image from the selected branch and uploads it.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: factory-test/modem-test
+
+jobs:
+  build:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: thumbv7em-none-eabihf
+          components: rust-src, rustfmt, llvm-tools
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: factory-test/modem-test
+
+      # --locked: a factory image is built from exactly the committed Cargo.lock
+      - name: Build
+        run: cargo build --release --locked --bin factory_test
+
+      - name: Package
+        run: |
+          VERSION=$(awk -F '"' '/^version/ {print $2; exit}' Cargo.toml)-${{ github.run_number }}
+          ELF=target/thumbv7em-none-eabihf/release/factory_test
+          LLVM="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+
+          # Capture tools attach to RTT at this fixed address; fail rather than
+          # ship an image they cannot read.
+          "$LLVM/llvm-nm" "$ELF" | grep -q '^2009ff00 B _SEGGER_RTT$' \
+            || { echo "RTT control block is not at 0x2009FF00"; exit 1; }
+
+          mkdir -p dist
+          cp "$ELF" "dist/modem-test-$VERSION.elf"
+          "$LLVM/llvm-objcopy" -O binary "$ELF" "dist/modem-test-$VERSION.bin"
+          "$LLVM/llvm-size" "$ELF"
+          ls -l dist
+
+      - name: Archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: modem-test-${{ github.run_number }}
+          path: factory-test/modem-test/dist/*
+          retention-days: 90

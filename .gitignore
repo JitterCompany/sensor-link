@@ -1,2 +1,4 @@
 **/target
 Cargo.lock
+# Firmware images pin their dependencies.
+!factory-test/modem-test/Cargo.lock

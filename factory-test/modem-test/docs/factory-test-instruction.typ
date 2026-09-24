@@ -101,7 +101,7 @@ Leave the 12 V connected all day. The *Reset* button starts each new test.
     remove the modem.
 
     *Error blinking:* the test board itself is broken. Its results cannot be
-    trusted. Set the board aside and tell the engineer.
+    trusted.
   ],
 )
 
@@ -125,8 +125,7 @@ Look at the two LEDs marked *Modem test*, next to the modem slot.
 #v(4pt)
 
 The *Fail* LED gives a group of flashes, then a pause, then the same group
-again. Count the flashes in one group, and count twice to be sure. The smallest
-number is 2: there is never a single flash.
+again. Count the flashes in one group. The smallest number is 2: there is never a single flash.
 
 #table(
   columns: (auto, 1fr),

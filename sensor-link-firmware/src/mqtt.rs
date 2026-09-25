@@ -19,7 +19,7 @@ use sensor_link_protocol::{
 /// record emits another one, which would publish itself forever. Only
 /// [`MqttPublish::publish`] logs under this target, which is why drivers do
 /// not report the outcome of a publish themselves — see
-/// [`MqttClient::publish_message`].
+/// [`MqttClient::publish_raw`].
 pub const PUBLISH_LOG_TARGET: &str = "MQTT Publish";
 
 /// Log target of the records emitted by the log lane of the dispatch pipeline
@@ -48,7 +48,7 @@ pub trait MqttPublish: MqttClient {
         message: &[u8],
     ) -> Result<(), Error<Self::ClientError>> {
         let topic_for_log = topic_name.clone();
-        let result = self.publish_message(topic_name, message).await;
+        let result = self.publish_raw(topic_name, message).await;
         match &result {
             Ok(_) => log::debug!(target: PUBLISH_LOG_TARGET, "Mqtt published to {topic_for_log:?}"),
             Err(err) => log::error!(target: PUBLISH_LOG_TARGET, "Failed to publish: {err:?}"),
@@ -119,7 +119,7 @@ pub trait MqttClient {
     /// published log stream, and only [`MqttPublish::publish`] can guarantee
     /// that. Logging anything else (the steps of a publish, protocol errors) is
     /// fine.
-    async fn publish_message(
+    async fn publish_raw(
         &mut self,
         topic_name: String<MAX_TOPIC_LEN>,
         message: &[u8],

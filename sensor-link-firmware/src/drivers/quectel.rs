@@ -1235,7 +1235,7 @@ where
         result
     }
 
-    pub async fn publish_message(
+    pub async fn publish_raw(
         &mut self,
         topic: String<{ MAX_TOPIC_LEN }>,
         message: &[u8],
@@ -1746,12 +1746,12 @@ where
         self.unsubscribe(topic_name).await
     }
 
-    async fn publish_message(
+    async fn publish_raw(
         &mut self,
         topic_name: heapless::String<{ MAX_TOPIC_LEN }>,
         message: &[u8],
     ) -> Result<(), Error<Self::ClientError>> {
-        self.publish_message(topic_name, message).await
+        self.publish_raw(topic_name, message).await
     }
 
     async fn handle_response(&mut self) -> Result<Event, ()> {

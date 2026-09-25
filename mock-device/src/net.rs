@@ -236,7 +236,7 @@ impl mqtt::MqttClient for Mqtt {
         Ok(())
     }
 
-    async fn publish_message(
+    async fn publish_raw(
         &mut self,
         topic_name: heapless::String<{ MAX_TOPIC_LEN }>,
         message: &[u8],

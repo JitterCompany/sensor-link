@@ -33,11 +33,18 @@ Passing `--cacert` enables TLS and requires `--client-cert` and `--client-key`.
 | `blink` | `t/<device-id>/commands` | `{"cmd":"blink"}` |
 | `reboot` | `t/<device-id>/commands` | `{"cmd":"reboot"}` |
 | `time` | `t/<device-id>/time` | the current time, `{"time":<µs since epoch>}` |
+| `diagnostics on` | `t/<device-id>/commands` | `{"cmd":"diagnostics_on"}` |
+| `diagnostics off` | `t/<device-id>/commands` | `{"cmd":"diagnostics_off"}` |
 | `fwupdate <url>` | `t/<device-id>/fw_update/meta` | `{"url":"<url>","timestamp":null}` |
 | `q` | | exit |
 
 `fwupdate` announces a firmware update: the device downloads the image from
 `<url>` (at most 128 bytes) and reports its progress on `fw_update/status`.
+
+`diagnostics on` and `diagnostics off` switch publishing the device's own log
+records on `log` on and off. Only firmware built with the `mqtt-log` feature
+acts on them; other firmware ignores them. The device starts in the state its
+application configured.
 
 Each command is published with QoS 1 and the tool waits for the broker's
 acknowledgement before reading the next line. The tool also exits when stdin

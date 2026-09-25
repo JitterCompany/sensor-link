@@ -156,6 +156,8 @@ async fn main() {
             // The MQTT driver logs a line per publish; publishing those would
             // keep the device talking to itself.
             exclude_targets: &["mqtt"],
+            // Switched on and off remotely via the diagnostics commands.
+            enabled: false,
         },
         Some(Box::leak(local_logger)),
     )

@@ -73,6 +73,10 @@ device's own log records are published on its log topic. `--log-level` sets what
 reaches the terminal and `--mqtt-log-level` (default `warn`) what is also
 published; the latter cannot be more verbose than the former.
 
+Publishing starts switched off. It is switched on and off again by the
+`diagnostics_on` and `diagnostics_off` commands, for example with
+`diagnostics on` in `sensor-link-console`.
+
 Take care when logging in response to dispatch activity: a record published over
 MQTT can trigger the signal that produced it, which publishes another record,
 forever. `Signal::DispatchQueueEmpty` is raised once per dispatch-task

@@ -21,6 +21,18 @@
 //!
 //! [`dispatch_task`]: crate::logic::dispatch::dispatch_task
 //!
+//! # Switching publishing on and off at runtime
+//!
+//! Publishing can additionally be switched on and off while running, via
+//! [`set_enabled`]. The client does so when it receives the
+//! [`Cmd::DiagnosticsOn`] or [`Cmd::DiagnosticsOff`] command. The initial
+//! state is [`LogPublishConfig::enabled`]. While switched off, records
+//! still reach the wrapped local logger but are not queued; records queued
+//! before switching off are still published.
+//!
+//! [`Cmd::DiagnosticsOn`]: sensor_link_protocol::cmd::Cmd::DiagnosticsOn
+//! [`Cmd::DiagnosticsOff`]: sensor_link_protocol::cmd::Cmd::DiagnosticsOff
+//!
 //! # Feedback loop
 //!
 //! A driver logs the outcome of every message it publishes, so publishing such
@@ -32,7 +44,7 @@
 //! silence noisy targets (the modem driver in particular) via
 //! [`LogPublishConfig::exclude_targets`].
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
 use rtic_sync::channel::{self, ReceiveError};
@@ -79,6 +91,11 @@ pub struct LogPublishConfig {
     /// `'static` because the config is owned by the global logger, which `log`
     /// requires to be `'static` itself.
     pub exclude_targets: &'static [&'static str],
+
+    /// Whether publishing is switched on from the start.
+    ///
+    /// Publishing can be switched on and off later on via [`set_enabled`].
+    pub enabled: bool,
 }
 
 impl Default for LogPublishConfig {
@@ -87,8 +104,28 @@ impl Default for LogPublishConfig {
             level: LevelFilter::Warn,
             max_level: LevelFilter::Info,
             exclude_targets: &[],
+            enabled: false,
         }
     }
+}
+
+/// Whether publishing is switched on, see [`set_enabled`].
+///
+/// A static rather than a field of [`MqttLogger`] so that it can be switched
+/// without a reference to the installed logger.
+static ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Switch publishing log records over MQTT on or off.
+///
+/// Only affects records logged from now on: records already queued are still
+/// published. Has no effect on the wrapped local logger.
+pub fn set_enabled(enabled: bool) {
+    ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether publishing log records over MQTT is switched on, see [`set_enabled`].
+pub fn is_enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
 }
 
 /// [`log::Log`] implementation that queues records for publication over MQTT.
@@ -101,7 +138,7 @@ pub struct MqttLogger {
 
 impl MqttLogger {
     fn should_publish(&self, metadata: &Metadata) -> bool {
-        should_publish(&self.config, metadata)
+        is_enabled() && should_publish(&self.config, metadata)
     }
 }
 
@@ -203,6 +240,7 @@ pub fn init(
     inner: Option<&'static dyn Log>,
 ) -> Result<LogPublisher, SetLoggerError> {
     let max_level = config.max_level;
+    let enabled = config.enabled;
     let (tx, rx) = CHANNEL.init(LogChannel::new()).split();
 
     let logger = LOGGER.init(MqttLogger {
@@ -214,6 +252,7 @@ pub fn init(
 
     log::set_logger(logger)?;
     log::set_max_level(max_level);
+    set_enabled(enabled);
 
     Ok(LogPublisher { rx, logger })
 }

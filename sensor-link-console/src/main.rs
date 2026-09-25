@@ -304,6 +304,8 @@ async fn main() {
             ["blink"] => Message::command(device_id, Cmd::Blink),
             ["reboot"] => Message::command(device_id, Cmd::Reboot),
             ["time"] => Message::time(device_id),
+            ["diagnostics", "on"] => Message::command(device_id, Cmd::DiagnosticsOn),
+            ["diagnostics", "off"] => Message::command(device_id, Cmd::DiagnosticsOff),
             ["fwupdate", url] => match Message::fw_update(device_id, url) {
                 Ok(message) => message,
                 Err(err) => {
@@ -318,7 +320,8 @@ async fn main() {
             other => {
                 println!(
                     "Error, didn't understand '{other:?}'. \
-                     Commands: start, stop, blink, reboot, time, fwupdate <url>, q"
+                     Commands: start, stop, blink, reboot, time, diagnostics on|off, \
+                     fwupdate <url>, q"
                 );
                 continue;
             }

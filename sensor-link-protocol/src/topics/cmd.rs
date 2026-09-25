@@ -4,12 +4,18 @@ use serde::{Deserialize, Serialize};
 
 /// Command variants that can be send over the cmd topic
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Cmd {
     Start,
     Stop,
     Blink,
     Reboot,
+    /// Start publishing the device's own log records on
+    /// [TopicFromDevice::Log](crate::TopicFromDevice::Log).
+    DiagnosticsOn,
+    /// Stop publishing the device's own log records on
+    /// [TopicFromDevice::Log](crate::TopicFromDevice::Log).
+    DiagnosticsOff,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -36,6 +42,27 @@ mod tests {
         let cmd = parse_json_payload::<CommandPayload>(s.as_bytes());
 
         assert!(cmd.is_some());
+    }
+
+    /// The command names on the wire, in both directions.
+    #[test]
+    fn json_command_names() {
+        let names = [
+            (Cmd::Start, "start"),
+            (Cmd::Stop, "stop"),
+            (Cmd::Blink, "blink"),
+            (Cmd::Reboot, "reboot"),
+            (Cmd::DiagnosticsOn, "diagnostics_on"),
+            (Cmd::DiagnosticsOff, "diagnostics_off"),
+        ];
+        for (cmd, name) in names {
+            let json: heapless::String<100> =
+                serde_json_core::to_string(&CommandPayload { cmd: cmd.clone() }).unwrap();
+            assert_eq!(json, format!("{{\"cmd\":\"{name}\"}}").as_str());
+
+            let decoded = parse_json_payload::<CommandPayload>(json.as_bytes());
+            assert_eq!(decoded.map(|c| c.cmd), Some(cmd));
+        }
     }
 
     #[test]

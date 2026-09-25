@@ -2,6 +2,7 @@
 members = [
     "mock-device",
     "server/*",
+    "sensor-link-console",
     "sensor-link-firmware",
     "sensor-link-protocol",
     "sensor-link-provision",

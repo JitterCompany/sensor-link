@@ -6,6 +6,8 @@ members = [
     "sensor-link-protocol",
     "sensor-link-provision",
 ]
+# Embedded workspaces with their own target and toolchain.
+exclude = ["factory-test/modem-test"]
 resolver = "2"
 
 [workspace.package]

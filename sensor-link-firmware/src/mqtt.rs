@@ -1,3 +1,7 @@
+/// Publishing the device's own log records over MQTT (`mqtt-log` feature).
+#[cfg(feature = "mqtt-log")]
+pub mod log_publish;
+
 use core::fmt::Debug;
 
 use heapless::{String, Vec};
@@ -6,6 +10,54 @@ use sensor_link_protocol::{
     info::VersionString, Error, MAX_FILE_CHUNK_LEN, MAX_MESSAGE_LEN, MAX_ONLINE_PAYLOAD_LEN,
     MAX_TOPIC_LEN,
 };
+
+/// Log target of the records [`MqttPublish::publish`] emits about its own
+/// outcome, i.e. once per published message.
+///
+/// These are never published to the device's MQTT log topic (see the
+/// `log_publish` module, behind the `mqtt-log` feature): publishing such a
+/// record emits another one, which would publish itself forever. Only
+/// [`MqttPublish::publish`] logs under this target, which is why drivers do
+/// not report the outcome of a publish themselves — see
+/// [`MqttClient::publish_raw`].
+pub const PUBLISH_LOG_TARGET: &str = "MQTT Publish";
+
+/// Log target of the records emitted by the log lane of the dispatch pipeline
+/// itself, i.e. about storing, queueing or uploading a log record.
+///
+/// Like [`PUBLISH_LOG_TARGET`], these are never published to the device's MQTT
+/// log topic: a record about handling a log record arrives back on the same
+/// lane, so a persistent failure would feed itself one record at a time. Code
+/// on that lane logs under this target instead of staying silent, so the
+/// failure is still visible to whatever local logger the device has.
+pub const LOG_LANE_TARGET: &str = "Dispatch Log";
+
+/// Publishing over an [`MqttClient`], with the outcome logged under
+/// [`PUBLISH_LOG_TARGET`].
+///
+/// Blanket-implemented for every [`MqttClient`], which is what makes the target
+/// enforceable: an implementor cannot provide its own [`publish`](Self::publish)
+/// (a second impl would collide with the blanket one), so every publish in the
+/// system reports through this one function, under the one target that the log
+/// publisher excludes.
+pub trait MqttPublish: MqttClient {
+    /// Publish a message on a specific topic and report the outcome.
+    async fn publish(
+        &mut self,
+        topic_name: String<MAX_TOPIC_LEN>,
+        message: &[u8],
+    ) -> Result<(), Error<Self::ClientError>> {
+        let topic_for_log = topic_name.clone();
+        let result = self.publish_raw(topic_name, message).await;
+        match &result {
+            Ok(_) => log::debug!(target: PUBLISH_LOG_TARGET, "Mqtt published to {topic_for_log:?}"),
+            Err(err) => log::error!(target: PUBLISH_LOG_TARGET, "Failed to publish: {err:?}"),
+        }
+        result
+    }
+}
+
+impl<C: MqttClient> MqttPublish for C {}
 
 /// Events the network client implementation can return
 // `ReceivedMessage` carries inline topic/payload buffers, which dwarf the empty `Disconnected`.
@@ -58,8 +110,16 @@ pub trait MqttClient {
         topic_name: String<MAX_TOPIC_LEN>,
     ) -> Result<(), Error<Self::ClientError>>;
 
-    /// Ask client to publish a message on a specific topics.
-    async fn publish(
+    /// Ask client to publish a message on a specific topic.
+    ///
+    /// This is the raw publish primitive. Callers should use
+    /// [`MqttPublish::publish`], which wraps it and reports the outcome, so an
+    /// implementation of this method must not log that outcome itself: those
+    /// records have to carry [`PUBLISH_LOG_TARGET`] to stay out of the
+    /// published log stream, and only [`MqttPublish::publish`] can guarantee
+    /// that. Logging anything else (the steps of a publish, protocol errors) is
+    /// fine.
+    async fn publish_raw(
         &mut self,
         topic_name: String<MAX_TOPIC_LEN>,
         message: &[u8],

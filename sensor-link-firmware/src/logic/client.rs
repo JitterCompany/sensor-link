@@ -11,7 +11,7 @@ use crate::{
         NetworkStatus, SendChannel,
     },
     meta::DeviceMetaDataProvider,
-    mqtt::{Event, FileError, Message, MqttClient, Will},
+    mqtt::{Event, FileError, Message, MqttClient, MqttPublish, Will},
     serialize::{internal::Internal, Sendable},
 };
 use sensor_link_protocol::{
@@ -254,8 +254,21 @@ impl<M: MqttClient, S> Client<M, S> {
         payload: &[u8],
     ) -> Option<ClientEvent> {
         match topic {
-            TopicToDevice::Command => parse_json_payload::<cmd::CommandPayload>(payload)
-                .map(|c| ClientEvent::CommandReceived(c.cmd)),
+            TopicToDevice::Command => {
+                match parse_json_payload::<cmd::CommandPayload>(payload)?.cmd {
+                    // Handled here rather than by the application, which never
+                    // sees them.
+                    cmd::Cmd::DiagnosticsOn => {
+                        Self::set_diagnostics(true);
+                        None
+                    }
+                    cmd::Cmd::DiagnosticsOff => {
+                        Self::set_diagnostics(false);
+                        None
+                    }
+                    cmd => Some(ClientEvent::CommandReceived(cmd)),
+                }
+            }
             TopicToDevice::Time => parse_json_payload::<time::Timestamp>(payload)
                 .map(|t| ClientEvent::TimestampReceived(t.time)),
             TopicToDevice::FWUpdateAnnounce => {
@@ -267,6 +280,27 @@ impl<M: MqttClient, S> Client<M, S> {
                 }
             }
         }
+    }
+
+    /// Switch publishing the device's own log records on or off, as requested
+    /// by [cmd::Cmd::DiagnosticsOn] / [cmd::Cmd::DiagnosticsOff].
+    #[cfg(feature = "mqtt-log")]
+    fn set_diagnostics(enabled: bool) {
+        crate::mqtt::log_publish::set_enabled(enabled);
+        log::info!(
+            target: "Diagnostics",
+            "Publishing logs over MQTT switched {}",
+            if enabled { "on" } else { "off" }
+        );
+    }
+
+    /// Without the `mqtt-log` feature there are no logs to publish.
+    #[cfg(not(feature = "mqtt-log"))]
+    fn set_diagnostics(_enabled: bool) {
+        log::warn!(
+            target: "Diagnostics",
+            "Ignored diagnostics request: publishing logs over MQTT is not supported"
+        );
     }
 
     pub async fn send_online(&mut self, since: Milliseconds) -> Result<(), Error<M::ClientError>> {

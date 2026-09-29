@@ -135,27 +135,34 @@ where
             };
         }
 
-        // Barrier reached: everything received so far is stored, sent and confirmed
-        if barrier_active
-            && !data_in.is_flushing()
-            && !pending_event.is_pending()
-            && !pending_data.is_pending()
-        {
-            match store.is_drained().await {
-                Ok(true) => {
-                    log::info!(target: "Dispatch", "Barrier reached: drained");
-                    signal_out.send(Signal::DispatchDrained.into()).await.ok();
-                    barrier_active = false;
+        // Nothing left to hand to the network task
+        if !pending_event.is_pending() && !pending_data.is_pending() {
+            if barrier_active {
+                // Force buffered data out: store it, then send it from the next iteration on
+                let mut flushed = false;
+                while let Some(data) = data_in.flush() {
+                    process_sensor_data(store, &mut pending_data, data).await;
+                    flushed = true;
                 }
-                Ok(false) => {}
-                Err(error) => {
-                    log::warn!(target: "Dispatch", "Failed to check if store is drained: {error:?}");
+                if flushed {
+                    continue;
+                }
+
+                // Barrier reached: everything received so far is stored, sent and confirmed
+                match store.is_drained().await {
+                    Ok(true) => {
+                        log::info!(target: "Dispatch", "Barrier reached: drained");
+                        signal_out.send(Signal::DispatchDrained.into()).await.ok();
+                        barrier_active = false;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        log::warn!(target: "Dispatch", "Failed to check if store is drained: {error:?}");
+                    }
                 }
             }
-        }
 
-        // Signal orchestrator that queue is empty
-        if !pending_event.is_pending() && !pending_data.is_pending() {
+            // Signal orchestrator that queue is empty
             signal_out
                 .send(Signal::DispatchQueueEmpty.into())
                 .await
@@ -224,12 +231,8 @@ where
                 }
             },
             Select3::B(BarrierWake::Requested) => {
+                // Handled once nothing is left to send: buffered data is flushed then
                 log::info!(target: "Dispatch", "Barrier requested");
-                // Force buffered data out, and store any events that are still queued
-                data_in.flush();
-                while let Ok(event) = event_in.try_recv() {
-                    process_event(store, &mut pending_event, event, signal_out, &is_urgent).await;
-                }
                 barrier_active = true;
             }
             Select3::B(BarrierWake::Recheck) => {}
@@ -509,7 +512,6 @@ mod tests {
     /// Serializer holding buffered packets that are only released by a flush
     struct MockSerializer {
         buffered: VecDeque<Data>,
-        flushing: bool,
     }
 
     impl LatencyControlledSerializer<DATA_LEN> for MockSerializer {
@@ -517,25 +519,14 @@ mod tests {
         type Topic = T;
 
         async fn next_packet(&mut self) -> Result<Option<Data>, Self::Error> {
-            if self.flushing {
-                let packet = self.buffered.pop_front();
-                self.flushing = !self.buffered.is_empty();
-                if packet.is_some() {
-                    return Ok(packet);
-                }
-            }
             core::future::pending().await
         }
 
         fn set_timeout(&mut self, _timeout_ms: u32) {}
         fn set_buffer_timeout(&mut self, _timeout_ms: u32) {}
 
-        fn flush(&mut self) {
-            self.flushing = !self.buffered.is_empty();
-        }
-
-        fn is_flushing(&self) -> bool {
-            self.flushing
+        fn flush(&mut self) -> Option<Data> {
+            self.buffered.pop_front()
         }
     }
 
@@ -636,7 +627,6 @@ mod tests {
             // A data packet waiting in the bulk buffer: only a flush releases it
             let mut serializer = MockSerializer {
                 buffered: VecDeque::from([data_packet()]),
-                flushing: false,
             };
             dispatch_task::<_, _, _, _, _, _, _, _, Signal, _, DATA_LEN>(
                 &mut store,
@@ -692,7 +682,6 @@ mod tests {
             };
             let mut serializer = MockSerializer {
                 buffered: VecDeque::new(),
-                flushing: false,
             };
             dispatch_task::<_, _, _, _, _, _, _, _, Signal, _, DATA_LEN>(
                 &mut store,

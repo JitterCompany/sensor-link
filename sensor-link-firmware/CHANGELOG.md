@@ -8,8 +8,8 @@
   a `&DispatchBarrier` argument.
 - `DispatchStore::is_drained` reports whether every stored event and sensor data
   item has been confirmed. Breaking for `DispatchStore` implementations.
-- `LatencyControlledSerializer::flush`/`is_flushing` force buffered data out
-  without waiting for a timeout. Breaking for implementations.
+- `LatencyControlledSerializer::flush` forces buffered data out, one packet per
+  call, without waiting for a timeout. Breaking for implementations.
 - The network task sends `Signal::StatusSent` after publishing a status, carrying
   the new `NetworkStatus::confirmation_token`. Breaking for `NetworkStatus`
   implementations.

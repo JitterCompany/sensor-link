@@ -130,11 +130,15 @@ pub enum Signal {
     UrgentEvent,
 
     /// The dispatch pipeline has no more data pending for upload.
+    ///
+    /// Sent whenever dispatch has nothing left to hand to the network task. Items
+    /// handed over may not be confirmed yet, and data still buffered for serialization
+    /// is not included: see [`Signal::DispatchDrained`] for that.
     DispatchQueueEmpty,
 
     /// Reply to a [`DispatchBarrier`](crate::logic::dispatch::barrier::DispatchBarrier)
-    /// request: everything dispatch received before the request has been sent and
-    /// confirmed by the network task.
+    /// request: everything dispatch received before the request, including buffered
+    /// data, has been sent and confirmed by the network task.
     DispatchDrained,
 
     /// A status payload has been published. Carries the payload's

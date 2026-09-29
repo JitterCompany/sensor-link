@@ -327,7 +327,7 @@ impl<const MAX_PEEKS: usize> PeekQueue<MAX_PEEKS> {
                     // (this only happens after recovering from one or more unconfirmed reads)
                     let target_slot = (alloc_index % (MAX_PEEKS as u32)) as usize;
                     if slot_id == target_slot {
-                        self.read_index_next = alloc_index + 1;
+                        self.read_index_next = alloc_index.wrapping_add(1);
 
                         self.reader_slots[slot_id] = ReadState::Busy(alloc_index);
                         return Ok(alloc_index);

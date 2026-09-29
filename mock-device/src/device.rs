@@ -5,8 +5,9 @@
 //! (status payload, device metadata, action queue) are implemented here as the
 //! smallest thing that satisfies each trait. The dispatch pipeline behind it is
 //! the real one: simulated measurements are buffered, serialized, persisted to
-//! an in-memory flash store and uploaded, as are events and the device's own log
-//! records.
+//! an in-memory flash store and uploaded, as are events. The device's own log
+//! records bypass it: in diagnostic mode the network task publishes them
+//! straight from memory.
 
 pub mod buffer;
 pub mod pools;
@@ -85,9 +86,8 @@ type DB =
 
 type EventRef = <pools::EventPool as Pool>::Arc;
 type SensorDataRef = <pools::SensorDataPool as Pool>::Arc;
-type LogRef = <pools::LogPool as Pool>::Arc;
 
-type MockUpload = Upload<EventRef, SensorDataRef, LogRef>;
+type MockUpload = Upload<EventRef, SensorDataRef>;
 
 /// Device-status payload the mock publishes on the `status` topic.
 ///
@@ -172,7 +172,7 @@ impl NetworkActionNotifyReader<MockStatus> for &ActionQueue {
 ///
 /// `log_source` is the receiving end of the `mqtt-log` queue. Only one instance
 /// can own it (the logger is global), so instances spawned beyond the first get
-/// `None` and upload no log records of their own.
+/// `None` and publish no log records of their own.
 pub async fn run_instance(
     args: SensorArgs,
     log_source: Option<LogPublisher>,
@@ -224,15 +224,7 @@ pub async fn run_instance(
     {
         let signal_tx = signal_tx.clone();
         tokio::spawn(async move {
-            dispatch_task_for(
-                persistent_store,
-                data_rx,
-                event_rx,
-                log_source,
-                signal_tx,
-                upload_tx,
-            )
-            .await;
+            dispatch_task_for(persistent_store, data_rx, event_rx, signal_tx, upload_tx).await;
         });
     }
 
@@ -244,18 +236,21 @@ pub async fn run_instance(
 
     let mut descriptor = MockDescriptor;
     let mut upload_rx = upload_rx;
+    let mut log_source = LogSource::from(log_source);
 
     // Stand in for the orchestrator's `Action::SpawnNetwork`: run the network
     // task once per sync, then stay offline until the next one. Everything
     // produced in between waits in the store and is uploaded on the next sync.
+    // In diagnostic mode the network task itself keeps the sync going.
     //
     // The first sync happens immediately, so the device reports itself at boot.
     loop {
-        network_task::<_, _, _, _, monotonic_time::Time, _, _>(
+        network_task::<_, _, _, _, monotonic_time::Time, _, _, _>(
             &mut signal_tx,
             &mut client,
             &action_list,
             &mut upload_rx,
+            &mut log_source,
             &mut descriptor,
         )
         .await;
@@ -290,16 +285,12 @@ pub enum SyncReason {
     Triggered,
 }
 
-/// Persists and serializes everything the device has to say, then hands it to
-/// the network task in priority order.
-///
-/// `log_source` is optional because only one instance can own the global
-/// logger's queue; an instance without it simply has no log records to dispatch.
+/// Persists and serializes the device's measurements and events, then hands
+/// them to the network task in priority order.
 async fn dispatch_task_for<U>(
     db: &'static DB,
     data_rx: Receiver<MockResults>,
     mut event_rx: Receiver<Event>,
-    log_source: Option<LogPublisher>,
     mut signal_tx: Sender<Signal>,
     mut upload_tx: U,
 ) where
@@ -319,16 +310,12 @@ async fn dispatch_task_for<U>(
     let mut upload_allocator = UploadAllocator::new(
         pools::EventPool.allocator(),
         pools::SensorDataPool.allocator(),
-        pools::LogPool.allocator(),
     );
-
-    let mut log_source = NoLogs::or(log_source);
 
     dispatch_task(
         &mut store,
         &mut buffer,
         &mut event_rx,
-        &mut log_source,
         &mut signal_tx,
         &mut upload_allocator,
         &mut upload_tx,
@@ -337,17 +324,15 @@ async fn dispatch_task_for<U>(
     .await
 }
 
-/// Log source for an instance that does not own the global logger's queue.
-///
-/// It never yields a record, so the dispatch task simply never has a log to
-/// persist.
-enum NoLogs {
+/// Log source of an instance: the global logger's queue if the instance owns
+/// it, otherwise one that never yields a record.
+enum LogSource {
     Publisher(LogPublisher),
     Silent,
 }
 
-impl NoLogs {
-    fn or(publisher: Option<LogPublisher>) -> Self {
+impl From<Option<LogPublisher>> for LogSource {
+    fn from(publisher: Option<LogPublisher>) -> Self {
         match publisher {
             Some(publisher) => Self::Publisher(publisher),
             None => Self::Silent,
@@ -355,7 +340,7 @@ impl NoLogs {
     }
 }
 
-impl ReceiveChannel<LogMessage> for NoLogs {
+impl ReceiveChannel<LogMessage> for LogSource {
     type Error = ();
 
     async fn recv(&mut self) -> Result<LogMessage, Self::Error> {

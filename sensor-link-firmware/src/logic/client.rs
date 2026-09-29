@@ -258,12 +258,12 @@ impl<M: MqttClient, S> Client<M, S> {
                 match parse_json_payload::<cmd::CommandPayload>(payload)?.cmd {
                     // Handled here rather than by the application, which never
                     // sees them.
-                    cmd::Cmd::DiagnosticsOn => {
-                        Self::set_diagnostics(true);
+                    cmd::Cmd::DiagnosticsOn { timeout_s } => {
+                        Self::start_diagnostics(timeout_s);
                         None
                     }
                     cmd::Cmd::DiagnosticsOff => {
-                        Self::set_diagnostics(false);
+                        Self::stop_diagnostics();
                         None
                     }
                     cmd => Some(ClientEvent::CommandReceived(cmd)),
@@ -282,26 +282,34 @@ impl<M: MqttClient, S> Client<M, S> {
         }
     }
 
-    /// Switch publishing the device's own log records on or off, as requested
-    /// by [cmd::Cmd::DiagnosticsOn] / [cmd::Cmd::DiagnosticsOff].
+    /// Enter [diagnostic mode](crate::logic::diagnostics), as requested by
+    /// [cmd::Cmd::DiagnosticsOn].
     #[cfg(feature = "mqtt-log")]
-    fn set_diagnostics(enabled: bool) {
-        crate::mqtt::log_publish::set_enabled(enabled);
-        log::info!(
-            target: "Diagnostics",
-            "Publishing logs over MQTT switched {}",
-            if enabled { "on" } else { "off" }
-        );
+    fn start_diagnostics(timeout_s: u32) {
+        let timeout_s = crate::logic::diagnostics::start(timeout_s);
+        log::info!(target: "Diagnostics", "Diagnostic mode on for {timeout_s}s");
     }
 
-    /// Without the `mqtt-log` feature there are no logs to publish.
+    /// Leave [diagnostic mode](crate::logic::diagnostics), as requested by
+    /// [cmd::Cmd::DiagnosticsOff].
+    #[cfg(feature = "mqtt-log")]
+    fn stop_diagnostics() {
+        crate::logic::diagnostics::stop();
+        log::info!(target: "Diagnostics", "Diagnostic mode off");
+    }
+
+    /// Without the `mqtt-log` feature there are no logs to publish, so staying
+    /// online for them would only drain the battery.
     #[cfg(not(feature = "mqtt-log"))]
-    fn set_diagnostics(_enabled: bool) {
+    fn start_diagnostics(_timeout_s: u32) {
         log::warn!(
             target: "Diagnostics",
             "Ignored diagnostics request: publishing logs over MQTT is not supported"
         );
     }
+
+    #[cfg(not(feature = "mqtt-log"))]
+    fn stop_diagnostics() {}
 
     pub async fn send_online(&mut self, since: Milliseconds) -> Result<(), Error<M::ClientError>> {
         let online = Online::yes(since);

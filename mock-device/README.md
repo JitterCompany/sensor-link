@@ -53,7 +53,7 @@ sync finishes.
 | `status` | operational status, published once per sync |
 | `events` | `Started` / `Stopped` around the measuring task |
 | `benchmark_data` | simulated sensor data, 4 channels at 1 Hz |
-| `log` | the device's own log records (see below) |
+| `log` | the device's own log records, in diagnostic mode (see below) |
 
 Sensor data goes through the real dispatch pipeline: the measuring task feeds
 `MockBuffer`, which accumulates samples until the buffer is full or its 30 s
@@ -69,13 +69,16 @@ test topic.
 ## Logs over MQTT
 
 The crate enables the `mqtt-log` feature of `sensor-link-firmware`, so the
-device's own log records are published on its log topic. `--log-level` sets what
-reaches the terminal and `--mqtt-log-level` (default `warn`) what is also
+device's own log records can be published on its log topic. `--log-level` sets
+what reaches the terminal and `--mqtt-log-level` (default `warn`) what is also
 published; the latter cannot be more verbose than the former.
 
-Publishing starts switched off. It is switched on and off again by the
-`diagnostics_on` and `diagnostics_off` commands, for example with
-`diagnostics on` in `sensor-link-console`.
+Records are only published in diagnostic mode, which starts off. The
+`diagnostics_on` command starts it for the timeout it carries, and
+`diagnostics_off` or the timeout ends it. In `sensor-link-console` that is
+`diagnostics on [<seconds>]` and `diagnostics off`. While it lasts, the sync in
+progress does not end when the connection goes idle, so records are published as
+they are logged.
 
 Take care when logging in response to dispatch activity: a record published over
 MQTT can trigger the signal that produced it, which publishes another record,
@@ -83,7 +86,8 @@ forever. `Signal::DispatchQueueEmpty` is raised once per dispatch-task
 iteration for exactly this reason and is logged at `trace`, below any level
 worth publishing.
 
-Log records travel the same dispatch pipeline as sensor data: persisted to their
-own flash stream and uploaded at a lower priority than events and sensor data.
-With `-n > 1` only the first instance publishes log records, since the logger
-they come from is global to the process.
+Log records bypass the dispatch pipeline: they are queued in memory only and the
+network task publishes them whenever it has nothing else to send. With `-n > 1`
+only the first instance publishes log records, since the logger they come from
+is global to the process. Diagnostic mode is global too, so it keeps every
+instance online.

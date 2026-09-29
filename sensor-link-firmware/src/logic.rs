@@ -1,5 +1,6 @@
 pub mod active_config;
 pub mod client;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod network;
 pub mod serializer;
@@ -34,7 +35,7 @@ pub trait ReceiveChannel<T> {
     fn try_recv(&mut self) -> Result<T, Self::Error>;
 }
 
-impl<'a, R, T> ReceiveChannel<T> for &'a mut R
+impl<R, T> ReceiveChannel<T> for &mut R
 where
     R: ReceiveChannel<T>,
 {

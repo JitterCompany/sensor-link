@@ -123,9 +123,10 @@ async fn main() {
         .build();
 
     // The MQTT logger wraps the local one: records still reach the terminal, and
-    // those passing `mqtt_log_level` are additionally queued for publication.
-    // Both loggers only ever see records up to `log_level`, so that has to be
-    // the more verbose of the two.
+    // those passing `mqtt_log_level` are additionally queued for publication
+    // while in diagnostic mode, which the diagnostics commands switch on and off
+    // remotely. Both loggers only ever see records up to `log_level`, so that
+    // has to be the more verbose of the two.
     let local_logger = SimpleLogger::new(log_level, log_cfg);
     let log_source = log_publish::init(
         LogPublishConfig {
@@ -134,8 +135,6 @@ async fn main() {
             // The MQTT driver logs a line per publish; publishing those would
             // keep the device talking to itself.
             exclude_targets: &["mqtt"],
-            // Switched on and off remotely via the diagnostics commands.
-            enabled: false,
         },
         Some(Box::leak(local_logger)),
     )

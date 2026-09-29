@@ -27,3 +27,10 @@ pub const MAX_LOG_TARGET_LEN: usize = 24;
 
 /// Maximum length of the message body of a device log message
 pub const MAX_LOG_MSG_LEN: usize = 160;
+
+/// Longest diagnostic mode a single [`Cmd::DiagnosticsOn`](crate::cmd::Cmd::DiagnosticsOn)
+/// can request, in seconds
+///
+/// A device in diagnostic mode stays online, so a longer request is cut short
+/// to this rather than drain the battery. Send the command again to extend it.
+pub const MAX_DIAGNOSTICS_TIMEOUT_S: u32 = 60 * 60;

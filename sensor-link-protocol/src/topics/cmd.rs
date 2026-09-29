@@ -10,11 +10,17 @@ pub enum Cmd {
     Stop,
     Blink,
     Reboot,
-    /// Start publishing the device's own log records on
+    /// Enter diagnostic mode for `timeout_s` seconds: the device stays online
+    /// and publishes its own log records on
     /// [TopicFromDevice::Log](crate::TopicFromDevice::Log).
-    DiagnosticsOn,
-    /// Stop publishing the device's own log records on
-    /// [TopicFromDevice::Log](crate::TopicFromDevice::Log).
+    ///
+    /// On the wire: `{"cmd":{"diagnostics_on":{"timeout_s":600}}}`. The device
+    /// caps the timeout at [MAX_DIAGNOSTICS_TIMEOUT_S](crate::MAX_DIAGNOSTICS_TIMEOUT_S).
+    /// Sending it again while in diagnostic mode restarts the timeout.
+    DiagnosticsOn {
+        timeout_s: u32,
+    },
+    /// Leave diagnostic mode before its timeout expires.
     DiagnosticsOff,
 }
 
@@ -44,24 +50,38 @@ mod tests {
         assert!(cmd.is_some());
     }
 
-    /// The command names on the wire, in both directions.
+    /// The commands on the wire, in both directions.
     #[test]
-    fn json_command_names() {
-        let names = [
-            (Cmd::Start, "start"),
-            (Cmd::Stop, "stop"),
-            (Cmd::Blink, "blink"),
-            (Cmd::Reboot, "reboot"),
-            (Cmd::DiagnosticsOn, "diagnostics_on"),
-            (Cmd::DiagnosticsOff, "diagnostics_off"),
+    fn json_commands() {
+        let commands = [
+            (Cmd::Start, r#""start""#),
+            (Cmd::Stop, r#""stop""#),
+            (Cmd::Blink, r#""blink""#),
+            (Cmd::Reboot, r#""reboot""#),
+            (
+                Cmd::DiagnosticsOn { timeout_s: 600 },
+                r#"{"diagnostics_on":{"timeout_s":600}}"#,
+            ),
+            (Cmd::DiagnosticsOff, r#""diagnostics_off""#),
         ];
-        for (cmd, name) in names {
+        for (cmd, wire) in commands {
             let json: heapless::String<100> =
                 serde_json_core::to_string(&CommandPayload { cmd: cmd.clone() }).unwrap();
-            assert_eq!(json, format!("{{\"cmd\":\"{name}\"}}").as_str());
+            assert_eq!(json, format!("{{\"cmd\":{wire}}}").as_str());
 
             let decoded = parse_json_payload::<CommandPayload>(json.as_bytes());
             assert_eq!(decoded.map(|c| c.cmd), Some(cmd));
+        }
+    }
+
+    /// The timeout is what bounds diagnostic mode, so it cannot be left out.
+    #[test]
+    fn json_decode_diagnostics_on_requires_timeout() {
+        for payload in [
+            r#"{"cmd":"diagnostics_on"}"#,
+            r#"{"cmd":{"diagnostics_on":{}}}"#,
+        ] {
+            assert!(parse_json_payload::<CommandPayload>(payload.as_bytes()).is_none());
         }
     }
 

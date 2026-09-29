@@ -10,10 +10,10 @@
 //! against an in-memory flash of the same size, so the same block ranges apply.
 
 use sensor_link_firmware::{
-    sensor_link_protocol::{TopicFromDevice, MAX_EVENT_LEN, MAX_LOG_LEN, MAX_MESSAGE_LEN},
+    sensor_link_protocol::{TopicFromDevice, MAX_EVENT_LEN, MAX_MESSAGE_LEN},
     storage::{
         common::stream_store::STREAM_OVERHEAD_BYTES,
-        dispatch_store::{DispatchStreams, StaticStreamSetStore, StreamSetStore},
+        dispatch_store::{DispatchStreams, StaticStreamPairStore, StreamPairStore},
         flash_db,
     },
 };
@@ -70,7 +70,6 @@ impl flash_db::File<{ BLOCK_SIZE }> for File {}
 pub enum Stream {
     Event,
     ProcessingResult,
-    Log,
 }
 
 impl Stream {
@@ -78,7 +77,6 @@ impl Stream {
         match self {
             Stream::Event => MAX_SERIALIZED_EVENT_LEN + STREAM_OVERHEAD_BYTES,
             Stream::ProcessingResult => MAX_SENSOR_DATA_LEN + STREAM_OVERHEAD_BYTES,
-            Stream::Log => MAX_LOG_LEN + STREAM_OVERHEAD_BYTES,
         }
     }
 }
@@ -98,7 +96,6 @@ impl flash_db::Object<{ BLOCK_SIZE }> for Stream {
             // 1024 blocks = 4MB. Must stay below block 2048: the flash this
             // layout was written for (S25FL064L) is 8MB total.
             Stream::ProcessingResult => 1024..2048,
-            Stream::Log => 512..768, // 256 blocks = ca 1MB
         }
     }
 }
@@ -119,22 +116,19 @@ impl DispatchStreams<{ BLOCK_SIZE }> for Stream {
     fn sensor_data() -> Self {
         Stream::ProcessingResult
     }
-    fn log() -> Self {
-        Stream::Log
-    }
 }
 
-/// Persistent storage for events, sensor data and log records.
+/// Persistent storage for events and sensor data.
 ///
-/// Thin alias over the generic [`StreamSetStore`], pinned to the mock [`Stream`]
+/// Thin alias over the generic [`StreamPairStore`], pinned to the mock [`Stream`]
 /// layout and [`TopicFromDevice`].
 #[allow(dead_code)]
 pub type MockStore<'a, DB> =
-    StreamSetStore<'a, DB, Stream, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, TopicFromDevice>;
+    StreamPairStore<'a, DB, Stream, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, TopicFromDevice>;
 
 /// `'static` wrapper around [`MockStore`] (see ADR-0003). Used by the dispatch task.
 pub type StaticMockStore<DB> =
-    StaticStreamSetStore<DB, Stream, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, TopicFromDevice>;
+    StaticStreamPairStore<DB, Stream, BLOCK_SIZE, MAX_SENSOR_DATA_LEN, TopicFromDevice>;
 
 #[cfg(test)]
 mod test {
@@ -191,7 +185,6 @@ mod test {
 
         let mut ranges = [
             <File as Object<BLOCK_SIZE>>::flash_blocks(&File::Firmware),
-            Stream::Log.flash_blocks(),
             Stream::Event.flash_blocks(),
             Stream::ProcessingResult.flash_blocks(),
         ];

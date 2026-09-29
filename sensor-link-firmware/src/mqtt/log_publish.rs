@@ -3,32 +3,36 @@
 //! Enabled by the `mqtt-log` cargo feature. Because this crate is a library,
 //! the decision to publish logs (and how verbosely) belongs to the application:
 //! it enables the feature, picks the levels via [`LogPublishConfig`] and hands
-//! the resulting [`LogPublisher`] to [`dispatch_task`] as its `log_in`.
+//! the resulting [`LogPublisher`] to [`network_task`] as its `log_in`.
 //!
 //! [`MqttLogger`] is a [`log::Log`] implementation that wraps the application's
-//! existing (local) logger: records still reach that logger, and those passing
-//! the configured [`LogPublishConfig::level`] are additionally queued as
-//! [`LogMessage`]s. From there the ordinary dispatch pipeline carries them:
-//! persisted to the log stream, then uploaded on
-//! [`TopicFromDevice::Log`](sensor_link_protocol::TopicFromDevice::Log) at a
-//! lower priority than events and sensor data, so a device that loses its
-//! connection still reports what happened once it reconnects.
+//! existing (local) logger: records still reach that logger, and while the
+//! device is in [diagnostic mode](crate::logic::diagnostics) those passing the
+//! configured [`LogPublishConfig::level`] are additionally queued as
+//! [`LogMessage`]s. The network task publishes them from that queue on
+//! [`TopicFromDevice::Log`](sensor_link_protocol::TopicFromDevice::Log), at a
+//! lower priority than everything else it sends.
 //!
-//! Queuing into that pipeline is lock-free and lossy by design: the logger never
-//! blocks, never allocates and never logs, so it is safe to call from any
-//! context (including interrupts). When the queue is full, records are dropped
-//! and counted in [`LogPublisher::dropped`].
+//! Records are kept in memory only, never persisted. That is what diagnostic
+//! mode is for: it keeps the device online, so the queue is drained as it
+//! fills. Records that do not make it out before the device goes offline or
+//! reboots are lost.
 //!
-//! [`dispatch_task`]: crate::logic::dispatch::dispatch_task
+//! Queuing is lock-free and lossy by design: the logger never blocks, never
+//! allocates, never reads the clock and never logs, so it is safe to call from
+//! any context (including interrupts). When the queue is full, records are
+//! dropped and counted in [`LogPublisher::dropped`].
+//!
+//! [`network_task`]: crate::logic::network::network_task
 //!
 //! # Switching publishing on and off at runtime
 //!
-//! Publishing can additionally be switched on and off while running, via
-//! [`set_enabled`]. The client does so when it receives the
-//! [`Cmd::DiagnosticsOn`] or [`Cmd::DiagnosticsOff`] command. The initial
-//! state is [`LogPublishConfig::enabled`]. While switched off, records
-//! still reach the wrapped local logger but are not queued; records queued
-//! before switching off are still published.
+//! Records are only queued in diagnostic mode, which the client starts on
+//! [`Cmd::DiagnosticsOn`] and ends on [`Cmd::DiagnosticsOff`] or when its
+//! timeout expires. An application may also start it itself, e.g. at boot, via
+//! [`diagnostics::start`](crate::logic::diagnostics::start). Outside diagnostic
+//! mode records still reach the wrapped local logger; records queued before it
+//! ended are still published while the connection lasts.
 //!
 //! [`Cmd::DiagnosticsOn`]: sensor_link_protocol::cmd::Cmd::DiagnosticsOn
 //! [`Cmd::DiagnosticsOff`]: sensor_link_protocol::cmd::Cmd::DiagnosticsOff
@@ -44,7 +48,7 @@
 //! silence noisy targets (the modem driver in particular) via
 //! [`LogPublishConfig::exclude_targets`].
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use log::{LevelFilter, Log, Metadata, Record, SetLoggerError};
 use rtic_sync::channel::{self, ReceiveError};
@@ -53,14 +57,15 @@ use static_cell::StaticCell;
 
 use crate::{
     drivers::time::timestamp_or_default_us,
-    logic::ReceiveChannel,
-    mqtt::{LOG_LANE_TARGET, PUBLISH_LOG_TARGET},
+    logic::{diagnostics, ReceiveChannel},
+    mqtt::PUBLISH_LOG_TARGET,
 };
 
-/// Number of log records buffered between the logger and the task publishing them.
+/// Number of log records buffered between the logger and the network task
+/// publishing them.
 ///
 /// Records logged while the queue is full are dropped, so this trades RAM for
-/// how long a burst the publisher may lag behind.
+/// how long a burst the publisher may lag behind, e.g. while it reconnects.
 pub const LOG_QUEUE_LEN: usize = 16;
 
 type LogChannel = channel::Channel<LogMessage, LOG_QUEUE_LEN>;
@@ -91,11 +96,6 @@ pub struct LogPublishConfig {
     /// `'static` because the config is owned by the global logger, which `log`
     /// requires to be `'static` itself.
     pub exclude_targets: &'static [&'static str],
-
-    /// Whether publishing is switched on from the start.
-    ///
-    /// Publishing can be switched on and off later on via [`set_enabled`].
-    pub enabled: bool,
 }
 
 impl Default for LogPublishConfig {
@@ -104,28 +104,8 @@ impl Default for LogPublishConfig {
             level: LevelFilter::Warn,
             max_level: LevelFilter::Info,
             exclude_targets: &[],
-            enabled: false,
         }
     }
-}
-
-/// Whether publishing is switched on, see [`set_enabled`].
-///
-/// A static rather than a field of [`MqttLogger`] so that it can be switched
-/// without a reference to the installed logger.
-static ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Switch publishing log records over MQTT on or off.
-///
-/// Only affects records logged from now on: records already queued are still
-/// published. Has no effect on the wrapped local logger.
-pub fn set_enabled(enabled: bool) {
-    ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-/// Whether publishing log records over MQTT is switched on, see [`set_enabled`].
-pub fn is_enabled() -> bool {
-    ENABLED.load(Ordering::Relaxed)
 }
 
 /// [`log::Log`] implementation that queues records for publication over MQTT.
@@ -138,16 +118,14 @@ pub struct MqttLogger {
 
 impl MqttLogger {
     fn should_publish(&self, metadata: &Metadata) -> bool {
-        is_enabled() && should_publish(&self.config, metadata)
+        diagnostics::is_active() && should_publish(&self.config, metadata)
     }
 }
 
-/// Whether a record is published, i.e. is not about publishing a message or
-/// about the log lane itself (either would recur forever) and passes the
-/// configured level and excluded targets.
+/// Whether a record is published, i.e. is not about publishing a message (which
+/// would recur forever) and passes the configured level and excluded targets.
 fn should_publish(config: &LogPublishConfig, metadata: &Metadata) -> bool {
     metadata.target() != PUBLISH_LOG_TARGET
-        && metadata.target() != LOG_LANE_TARGET
         && metadata.level() <= config.level
         && !config
             .exclude_targets
@@ -190,9 +168,9 @@ impl Log for MqttLogger {
     }
 }
 
-/// Receiving end of the log queue: the records waiting to be dispatched.
+/// Receiving end of the log queue: the records waiting to be published.
 ///
-/// This is the log source [`dispatch_task`](crate::logic::dispatch::dispatch_task)
+/// This is the log source [`network_task`](crate::logic::network::network_task)
 /// takes as its `log_in`, via the [`ReceiveChannel`] impl below.
 pub struct LogPublisher {
     rx: LogReceiver,
@@ -209,7 +187,7 @@ impl LogPublisher {
 impl ReceiveChannel<LogMessage> for LogPublisher {
     type Error = ReceiveError;
 
-    /// Await the next log record to dispatch.
+    /// Await the next log record to publish.
     ///
     /// Returns `Err` only if the logger is gone, which cannot happen for a
     /// logger installed by [`init`] (it lives for the rest of the program).
@@ -228,8 +206,9 @@ static LOGGER: StaticCell<MqttLogger> = StaticCell::new();
 /// Install the MQTT logger as the global logger, wrapping `inner` (the
 /// application's local logger, e.g. an RTT one) if there is one.
 ///
-/// Returns the [`LogPublisher`] the application drains to publish records on
-/// [`TopicFromDevice::Log`].
+/// Returns the [`LogPublisher`] the application hands to the network task, which
+/// publishes the records on
+/// [`TopicFromDevice::Log`](sensor_link_protocol::TopicFromDevice::Log).
 ///
 /// Must be called at most once, and only if no other logger was installed:
 /// `log` allows setting the global logger a single time. A second call returns
@@ -240,7 +219,6 @@ pub fn init(
     inner: Option<&'static dyn Log>,
 ) -> Result<LogPublisher, SetLoggerError> {
     let max_level = config.max_level;
-    let enabled = config.enabled;
     let (tx, rx) = CHANNEL.init(LogChannel::new()).split();
 
     let logger = LOGGER.init(MqttLogger {
@@ -252,7 +230,6 @@ pub fn init(
 
     log::set_logger(logger)?;
     log::set_max_level(max_level);
-    set_enabled(enabled);
 
     Ok(LogPublisher { rx, logger })
 }
@@ -322,21 +299,5 @@ mod tests {
         // Other network records do not recur per published message, so they
         // are published as usual.
         assert!(should_publish(&config, &metadata(Level::Error, "Network")));
-    }
-
-    /// Records about handling a log record arrive back on the log lane, so they
-    /// are never published either.
-    #[test]
-    fn test_log_lane_target_always_excluded() {
-        let config = LogPublishConfig {
-            level: LevelFilter::Trace,
-            exclude_targets: &[],
-            ..Default::default()
-        };
-
-        assert!(!should_publish(
-            &config,
-            &metadata(Level::Error, LOG_LANE_TARGET)
-        ));
     }
 }

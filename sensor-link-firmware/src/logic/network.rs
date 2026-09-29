@@ -1,13 +1,14 @@
 //! Network logic
 //!
 
-use sensor_link_protocol::{Error, Milliseconds, Topic};
+use sensor_link_protocol::{device_log::LogMessage, Error, Milliseconds, Topic, MAX_LOG_LEN};
 use serde::Serialize;
 
 use crate::{
     drivers::time::{self, timestamp_or_default_us},
     logic::{
         client::ClientEvent,
+        diagnostics,
         dispatch::confirmable::Confirmable,
         network::upload::NetworkUploadItem,
         signal::{CmdSource, DisconnectInfo, NetworkSignal, Signal},
@@ -15,8 +16,8 @@ use crate::{
     },
     meta::DeviceMetaDataProvider,
     monotonic_time::{self, delay_ms, traits::MonotonicTime, FutureTimeout},
-    serialize::Sendable,
-    utils::select::{select3, Select3},
+    serialize::{AsSendable, Sendable},
+    utils::select::{select2, select3, Select2, Select3},
 };
 
 use super::{NetworkAction, NetworkActionNotifyReader, NetworkStatus, ReceiveChannel, SendChannel};
@@ -138,10 +139,37 @@ pub const INFINITE_TIMEOUT_S: u32 = 86400;
 pub const DEFAULT_TIMEOUT_S: u32 = 20;
 const MINIMUM_TIMEOUT_S: u32 = 5;
 
+/// [`ReceiveChannel`] of log records that never yields one.
+///
+/// Pass this as `log_in` to [`network_task`] when the application does not
+/// publish its own logs (see the `mqtt-log` feature).
+pub struct NoLogs;
+
+/// Error type of [`NoLogs`], which never yields a value to fail on.
+#[derive(Debug)]
+pub struct NoLogsReceived;
+
+impl ReceiveChannel<LogMessage> for NoLogs {
+    type Error = NoLogsReceived;
+
+    async fn recv(&mut self) -> Result<LogMessage, Self::Error> {
+        core::future::pending().await
+    }
+
+    fn try_recv(&mut self) -> Result<LogMessage, Self::Error> {
+        Err(NoLogsReceived)
+    }
+}
+
 /// Operation to be performed by network task
+// `Log` carries an inline `LogMessage`, which dwarfs the other variants.
+// Boxing it is not an option: this crate is `no_std` with no global allocator.
+#[allow(clippy::large_enum_variant)]
 enum Op<'u, U, S> {
     Action(NetworkAction<S>),
     Upload(&'u U),
+    /// Publish one of the device's own log records.
+    Log(LogMessage),
     Read,
     Stop,
     None,
@@ -180,6 +208,16 @@ struct State<U> {
     pending_upload: Option<Confirmable<U>>,
 }
 
+/// Connect, handle network traffic until done, and retry a lost connection.
+///
+/// `log_in` is the source of the device's own log records, published whenever
+/// there is nothing else to send: the `mqtt-log` feature's
+/// [`LogPublisher`](crate::mqtt::log_publish::LogPublisher), or [`NoLogs`].
+/// Its `recv` must only fail if it can never yield a record again.
+///
+/// While in [diagnostic mode](diagnostics) the connection is kept open: a
+/// [`NetworkAction::Disconnect`] is held back until diagnostic mode ends, and
+/// the connection is not closed for being idle.
 pub async fn network_task<
     SignalTx: SendChannel<C::Signal>,
     ActionList: NetworkActionNotifyReader<C::Status>,
@@ -188,14 +226,17 @@ pub async fn network_task<
     T: MonotonicTime,
     U: NetworkUploadItem<C>,
     P: DeviceMetaDataProvider,
+    LogRx: ReceiveChannel<LogMessage>,
 >(
     signal_queue: &mut SignalTx,
     client: &mut C,
     action_list: ActionList,
     msg_qeue: &mut MsgRx,
+    log_in: &mut LogRx,
     provider: &mut P,
 ) where
     P::DeviceType: Serialize,
+    LogMessage: AsSendable<MAX_LOG_LEN, C::Topic>,
 {
     // TODO fix bug #481: this state gets lost after disconnect.
     // The pending message is lost and the timeout changes back to default
@@ -241,15 +282,17 @@ pub async fn network_task<
                     .ok();
 
                 // Handle network traffic as long as the connection is open
-                let disconnect_reason = handle_connection::<SignalTx, ActionList, MsgRx, C, U, P>(
-                    &mut state,
-                    signal_queue,
-                    client,
-                    &action_list,
-                    msg_qeue,
-                    provider,
-                )
-                .await;
+                let disconnect_reason =
+                    handle_connection::<SignalTx, ActionList, MsgRx, C, U, P, LogRx>(
+                        &mut state,
+                        signal_queue,
+                        client,
+                        &action_list,
+                        msg_qeue,
+                        log_in,
+                        provider,
+                    )
+                    .await;
 
                 // Make sure client is disconnected
                 match client.disconnect().await {
@@ -325,22 +368,36 @@ async fn handle_connection<
     C: NetworkClient,
     U: NetworkUploadItem<C>,
     P: DeviceMetaDataProvider,
+    LogRx: ReceiveChannel<LogMessage>,
 >(
     state: &mut State<U>,
     signal_queue: &mut SignalTx,
     client: &mut C,
     action_list: &ActionList,
     msg_qeue: &mut MsgRx,
+    log_in: &mut LogRx,
     provider: &P,
 ) -> DisconnectReason
 where
     P::DeviceType: Serialize,
+    LogMessage: AsSendable<MAX_LOG_LEN, C::Topic>,
 {
     // Disconnect is treated as a hint: once set, drain action_list + background
     // channels (NOT upload_r) and exit only when everything in-flight is gone.
     let mut disconnect_pending = false;
 
+    // A disconnect hint received in diagnostic mode, held back until it ends.
+    let mut disconnect_deferred = false;
+
     loop {
+        // Also what ends diagnostic mode once its timeout has expired.
+        let diagnostics_remaining_s = diagnostics::remaining_s();
+        if disconnect_deferred && diagnostics_remaining_s.is_none() {
+            log::info!(target: "Network", "Diagnostic mode ended; draining");
+            disconnect_deferred = false;
+            disconnect_pending = true;
+        }
+
         let mut op = {
             // Upload still pending for retry
             if let Some(upload) = &state.pending_upload {
@@ -357,6 +414,8 @@ where
                     Op::Action(action)
                 } else if let Some(msg) = msg_qeue.try_recv_drain_only() {
                     Op::Upload(state.pending_upload.insert(msg))
+                } else if let Ok(record) = log_in.try_recv() {
+                    Op::Log(record)
                 } else {
                     break DisconnectReason::Success;
                 }
@@ -365,23 +424,47 @@ where
             } else {
                 // Futures for commands / requests from other tasks
                 let cmd_fut = action_list.next_action();
-                let msg_fut = msg_qeue.recv();
+                // Log records only go out when there is no upload waiting.
+                // NOTE: select2 is biased towards its first future.
+                let msg_or_log_fut = select2(msg_qeue.recv(), log_in.recv());
 
-                // Future for incoming events from the network client
-                let poll_fut = client.await_response(state.timeout_s);
+                // Future for incoming events from the network client. In
+                // diagnostic mode it also wakes up when that mode ends, to act
+                // on a disconnect held back until then.
+                let wait_s = match diagnostics_remaining_s {
+                    Some(remaining_s) => remaining_s.min(state.timeout_s),
+                    None => state.timeout_s,
+                };
+                let wait_start = monotonic_time::now();
+                let poll_fut = client.await_response(wait_s);
 
                 // Wait for an event on either future
-                match select3(poll_fut, cmd_fut, msg_fut).await {
+                match select3(poll_fut, cmd_fut, msg_or_log_fut).await {
                     // Incomming messages from the network are already parsed by the Client
                     Select3::A(recv) => match recv {
                         Some(_) => Op::Read,
+                        // Idle in diagnostic mode: stay connected. Only a full
+                        // wait counts as idle, as the client returns early on
+                        // an uart error, which still ends the connection.
+                        None if diagnostics_remaining_s.is_some()
+                            && wait_start.elapsed_us() >= u64::from(wait_s) * 1_000_000 =>
+                        {
+                            Op::None
+                        }
                         None => Op::Stop, // Timeout or uart error.
                     },
                     Select3::B(action) => Op::Action(action),
-                    Select3::C(msg) => match msg {
+                    Select3::C(Select2::A(msg)) => match msg {
                         Ok(msg) => Op::Upload(state.pending_upload.insert(msg)),
                         Err(err) => {
                             log::error!("Failed to read upload queue: {err:?}");
+                            Op::None
+                        }
+                    },
+                    Select3::C(Select2::B(record)) => match record {
+                        Ok(record) => Op::Log(record),
+                        Err(err) => {
+                            log::error!("Failed to read log queue: {err:?}");
                             Op::None
                         }
                     },
@@ -401,8 +484,16 @@ where
                 ReadOutcome::Disconnected => break DisconnectReason::Unexpected,
             },
             Op::Action(NetworkAction::Disconnect) => {
-                log::info!(target: "Network", "Disconnect hint received; draining");
-                disconnect_pending = true;
+                if diagnostics::remaining_s().is_some() {
+                    log::info!(
+                        target: "Network",
+                        "Disconnect hint received; deferred until diagnostic mode ends"
+                    );
+                    disconnect_deferred = true;
+                } else {
+                    log::info!(target: "Network", "Disconnect hint received; draining");
+                    disconnect_pending = true;
+                }
             }
             Op::Action(NetworkAction::SetTimeout(new_timeout)) => {
                 state.timeout_s = new_timeout.max(MINIMUM_TIMEOUT_S);
@@ -435,6 +526,19 @@ where
                     log::error!("Network: Failed to send upload");
                 }
             }
+            // Not persisted, so not retried either: a record that fails to
+            // publish is lost.
+            Op::Log(record) => match AsSendable::<MAX_LOG_LEN, C::Topic>::as_sendable(&record) {
+                Ok(sendable) => op_result = client.send_sendable(&sendable).await,
+                // `LogMessage` truncates to the unescaped worst case, so a line
+                // with enough JSON-escaped characters still overflows. See
+                // `MAX_LOG_LEN`.
+                Err(_) => log::warn!(
+                    target: "Network",
+                    "Dropped log record that does not fit: {:?}",
+                    record.target
+                ),
+            },
             Op::None => {}
             Op::Stop => break DisconnectReason::Success,
         };

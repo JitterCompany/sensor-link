@@ -15,7 +15,7 @@ use sensor_link_protocol::{
     cmd::{Cmd, CommandPayload},
     fwupdate::{FWAnnounce, FWUpdateURL},
     time::Timestamp,
-    TopicToDevice,
+    TopicToDevice, MAX_DIAGNOSTICS_TIMEOUT_S,
 };
 use simplelog::*;
 use tokio::sync::mpsc;
@@ -25,6 +25,10 @@ const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Delay before the event loop retries a failed connection.
 const RECONNECT_DELAY: Duration = Duration::from_secs(1);
+
+/// How long `diagnostics on` keeps the device in diagnostic mode when no
+/// timeout is given.
+const DEFAULT_DIAGNOSTICS_TIMEOUT_S: u32 = 10 * 60;
 
 /// Sensor Link console
 ///
@@ -106,6 +110,25 @@ impl Message {
     fn command(device_id: &str, cmd: Cmd) -> Message {
         let payload = serde_json::to_string(&CommandPayload { cmd }).unwrap();
         Message::new(TopicToDevice::Command, device_id, payload)
+    }
+
+    /// `diagnostics on`, with the timeout in seconds as typed, if any.
+    fn diagnostics_on(device_id: &str, timeout_s: Option<&str>) -> Result<Message, String> {
+        let timeout_s = match timeout_s {
+            None => DEFAULT_DIAGNOSTICS_TIMEOUT_S,
+            Some(timeout_s) => match timeout_s.parse() {
+                Ok(timeout_s @ 1..=MAX_DIAGNOSTICS_TIMEOUT_S) => timeout_s,
+                _ => {
+                    return Err(format!(
+                    "timeout must be 1 to {MAX_DIAGNOSTICS_TIMEOUT_S} seconds, not '{timeout_s}'"
+                ))
+                }
+            },
+        };
+        Ok(Message::command(
+            device_id,
+            Cmd::DiagnosticsOn { timeout_s },
+        ))
     }
 
     fn time(device_id: &str) -> Message {
@@ -285,7 +308,15 @@ async fn main() {
             ["blink"] => Message::command(device_id, Cmd::Blink),
             ["reboot"] => Message::command(device_id, Cmd::Reboot),
             ["time"] => Message::time(device_id),
-            ["diagnostics", "on"] => Message::command(device_id, Cmd::DiagnosticsOn),
+            ["diagnostics", "on", timeout_s @ ..] if timeout_s.len() <= 1 => {
+                match Message::diagnostics_on(device_id, timeout_s.first().copied()) {
+                    Ok(message) => message,
+                    Err(err) => {
+                        println!("Error: {err}");
+                        continue;
+                    }
+                }
+            }
             ["diagnostics", "off"] => Message::command(device_id, Cmd::DiagnosticsOff),
             ["fwupdate", url] => match Message::fw_update(device_id, url) {
                 Ok(message) => message,
@@ -301,8 +332,8 @@ async fn main() {
             other => {
                 println!(
                     "Error, didn't understand '{other:?}'. \
-                     Commands: start, stop, blink, reboot, time, diagnostics on|off, \
-                     fwupdate <url>, q"
+                     Commands: start, stop, blink, reboot, time, \
+                     diagnostics on [<seconds>], diagnostics off, fwupdate <url>, q"
                 );
                 continue;
             }

@@ -257,12 +257,12 @@ where
                                     handle.confirm();
                                     return Err(Error::FragmentNotReadable);
                                 }
-                                return Ok(Some((len, handle)));
+                                Ok(Some((len, handle)))
                             }
                             Err(error) => {
                                 log::error!(target: "StreamStore", "Stream {stream:?}: failed to read data for #{seq_no}: {error:?}");
                                 handle.confirm();
-                                return Err(error);
+                                Err(error)
                             }
                         }
                     }

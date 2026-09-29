@@ -79,6 +79,12 @@ impl<const MAX_PEEKS: usize> ConfirmChannel<MAX_PEEKS> {
     }
 }
 
+impl<const MAX_PEEKS: usize> Default for ConfirmChannel<MAX_PEEKS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'ch, const _N: usize> Drop for ConfirmHandle<'ch, _N> {
     fn drop(&mut self) {
         self.try_abort()
@@ -352,7 +358,7 @@ impl<const MAX_PEEKS: usize> PeekQueue<MAX_PEEKS> {
             }
         }
 
-        return Err(ReadBlocked::Unknown);
+        Err(ReadBlocked::Unknown)
     }
 
     /// True if nothing before `write_index` is left to peek, confirm or retry.
@@ -547,7 +553,7 @@ impl<'ch, const MAX_PEEKS: usize> Queue<'ch, MAX_PEEKS> {
 
         self.update_reader_slots(); // TODO async version of this could await completion/cancelation of in-flight fragments
         let seqno = self.try_alloc_reader()?;
-        let sender = self.confirm_channel.0.sender().into();
+        let sender = self.confirm_channel.0.sender();
         Ok(ConfirmHandle::new(seqno, sender))
     }
 }

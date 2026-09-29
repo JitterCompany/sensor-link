@@ -306,10 +306,8 @@ async fn process_event<DS, SQO, PA, T, E, S, IsUrgent>(
     let is_urgent = is_urgent(&event);
     log::debug!(target: "Dispatch", "Processing {} event...", if is_urgent { "urgent" } else { "" });
 
-    if is_urgent {
-        if let Err(_) = signal_out.send(Signal::UrgentEvent.into()).await {
-            log::error!("Dispatch: failed to send 'urgent event' signal");
-        }
+    if is_urgent && signal_out.send(Signal::UrgentEvent.into()).await.is_err() {
+        log::error!("Dispatch: failed to send 'urgent event' signal");
     }
 
     let now = Microseconds::from_raw_microseconds(time::timestamp_or_default_us());
@@ -399,8 +397,8 @@ where
         Select2::A(event) => {
             log::debug!(target: "Dispatch", "Incoming event...");
             match event {
-                Ok(event) => return Ok(Incoming::Event(event)),
-                Err(_) => return Err(IncomingError::EventQueueError),
+                Ok(event) => Ok(Incoming::Event(event)),
+                Err(_) => Err(IncomingError::EventQueueError),
             }
         }
         Select2::B(data_result) => data_result,

@@ -43,6 +43,7 @@ const PREVENT_BUSY_LOOP_DELAY_MS: u32 = 100;
 /// The final confirmation comes from the network task, which does not wake dispatch.
 const BARRIER_RECHECK_MS: u32 = 1_000;
 
+#[allow(clippy::too_many_arguments)] // Task entry point: one parameter per resource it is wired to.
 pub async fn dispatch_task<
     DS,
     LCS,

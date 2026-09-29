@@ -74,40 +74,18 @@ struct Args {
     #[arg(long, default_value_t = device::DEFAULT_SYNC_INTERVAL.as_secs())]
     sync_interval: u64,
 
-    /// Log level.
+    /// Log level: off, error, warn, info, debug or trace.
     #[arg(short, long, default_value = "info")]
-    log_level: String,
+    log_level: LevelFilter,
 
-    /// Maximum log level published to the MQTT log topic.
+    /// Maximum log level published to the MQTT log topic: off, error, warn,
+    /// info, debug or trace.
     #[arg(long, default_value = "warn")]
-    mqtt_log_level: String,
+    mqtt_log_level: LevelFilter,
 
     /// Disable interactive input
     #[arg(long, default_value_t = false)]
     no_interactive: bool,
-}
-
-/// Parse a log level, falling back to [`LevelFilter::Off`].
-///
-/// An unknown name falls back to the quietest level rather than a default in
-/// the middle: a typo in `--mqtt-log-level` then publishes nothing instead of
-/// putting more on the air than was asked for.
-fn level_filter(flag: &str, name: &str) -> LevelFilter {
-    match name.to_lowercase().as_str() {
-        "off" => LevelFilter::Off,
-        "info" => LevelFilter::Info,
-        "warn" => LevelFilter::Warn,
-        "error" => LevelFilter::Error,
-        "debug" => LevelFilter::Debug,
-        "trace" => LevelFilter::Trace,
-        other => {
-            eprintln!(
-                "Warning: '{flag}' must be one of off, error, warn, info, debug, trace \
-                 (got '{other}'); logging is off."
-            );
-            LevelFilter::Off
-        }
-    }
 }
 
 async fn read_line() -> String {
@@ -135,8 +113,8 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let log_level = level_filter("--log-level", &args.log_level);
-    let mqtt_log_level = level_filter("--mqtt-log-level", &args.mqtt_log_level);
+    let log_level = args.log_level;
+    let mqtt_log_level = args.mqtt_log_level;
 
     let log_cfg = ConfigBuilder::new()
         .set_target_level(log_level)

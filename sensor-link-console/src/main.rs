@@ -61,28 +61,9 @@ struct Args {
     #[arg(long, default_value_t = false)]
     raw: bool,
 
-    /// Log level.
+    /// Log level: off, error, warn, info, debug or trace.
     #[arg(short, long, default_value = "info")]
-    log_level: String,
-}
-
-/// Parse a log level, falling back to [`LevelFilter::Off`].
-fn level_filter(flag: &str, name: &str) -> LevelFilter {
-    match name.to_lowercase().as_str() {
-        "off" => LevelFilter::Off,
-        "info" => LevelFilter::Info,
-        "warn" => LevelFilter::Warn,
-        "error" => LevelFilter::Error,
-        "debug" => LevelFilter::Debug,
-        "trace" => LevelFilter::Trace,
-        other => {
-            eprintln!(
-                "Warning: '{flag}' must be one of off, error, warn, info, debug, trace \
-                 (got '{other}'); logging is off."
-            );
-            LevelFilter::Off
-        }
-    }
+    log_level: LevelFilter,
 }
 
 /// Read a line from stdin, or `None` once stdin is closed.
@@ -233,7 +214,7 @@ async fn publish(client: &AsyncClient, ack_rx: &mut mpsc::Receiver<()>, message:
 async fn main() {
     let args = Args::parse();
 
-    let log_level = level_filter("--log-level", &args.log_level);
+    let log_level = args.log_level;
     let log_cfg = ConfigBuilder::new()
         .set_target_level(log_level)
         .set_thread_level(LevelFilter::Off)

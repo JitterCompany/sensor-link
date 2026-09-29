@@ -15,6 +15,9 @@
   implementations.
 - Fix: the queue's read index no longer overflows when peeking sequence number
   `u32::MAX`.
+- Fix: the dispatch task wakes when the network task confirms or aborts an
+  upload, so an aborted upload is retried without waiting for new data. Adds
+  `DispatchStore::wait_confirmation`, breaking for implementations.
 
 ## 0.2.0 - 2026-09-04
 

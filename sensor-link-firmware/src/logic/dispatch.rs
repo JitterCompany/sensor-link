@@ -39,10 +39,6 @@ pub type SerializedEvent<T> = SerializedSendable<MAX_EVENT_LEN, T>;
 /// for normal upload throughput
 const PREVENT_BUSY_LOOP_DELAY_MS: u32 = 100;
 
-/// How often to re-check whether a requested barrier is reached.
-/// The final confirmation comes from the network task, which does not wake dispatch.
-const BARRIER_RECHECK_MS: u32 = 1_000;
-
 #[allow(clippy::too_many_arguments)] // Task entry point: one parameter per resource it is wired to.
 pub async fn dispatch_task<
     DS,
@@ -196,25 +192,18 @@ where
             }
         });
 
-        // Future that resolves on a new barrier request, or periodically while one is active
-        let barrier_or_recheck = async move {
-            if barrier_active {
-                delay_ms(BARRIER_RECHECK_MS).await;
-                BarrierWake::Recheck
-            } else {
-                barrier.wait().await;
-                BarrierWake::Requested
-            }
-        };
+        // Future that resolves on a barrier request, or once the network task confirms or aborts an
+        // upload: an aborted upload must be retried, and a confirmation may complete a barrier
+        let barrier_or_confirmation = select2(barrier.wait(), store.wait_confirmation());
 
-        // Select between incoming data, barrier requests and transmission of pending data
+        // Select between incoming data, barrier requests / confirmations and transmission of pending data
         // NOTE: select3 has a bias to the first future, so storing incoming data always takes priority
         // over transmitting network data. This is important to prevent the incoming data queue from overflowing
         // in case of a super fast network connection.
         // It also means the incoming queues are empty when a barrier request is taken.
         match select3(
             incoming(data_in, event_in),
-            barrier_or_recheck,
+            barrier_or_confirmation,
             transmit_network_or_block,
         )
         .await
@@ -230,20 +219,15 @@ where
                     log::error!(target: "Dispatch", "Data loss while receiving: {error:?}");
                 }
             },
-            Select3::B(BarrierWake::Requested) => {
+            Select3::B(Select2::A(())) => {
                 // Handled once nothing is left to send: buffered data is flushed then
                 log::info!(target: "Dispatch", "Barrier requested");
                 barrier_active = true;
             }
-            Select3::B(BarrierWake::Recheck) => {}
+            Select3::B(Select2::B(())) => {}
             Select3::C(()) => {}
         }
     }
-}
-
-enum BarrierWake {
-    Requested,
-    Recheck,
 }
 
 enum TransmitError {
@@ -507,6 +491,14 @@ mod tests {
         async fn is_drained(&mut self) -> Result<bool, Self::Error> {
             Ok(self.events.queue.is_drained() && self.data.queue.is_drained())
         }
+
+        async fn wait_confirmation(&mut self) {
+            select2(
+                self.events.queue.wait_confirmation(),
+                self.data.queue.wait_confirmation(),
+            )
+            .await;
+        }
     }
 
     /// Serializer holding buffered packets that are only released by a flush
@@ -660,6 +652,46 @@ mod tests {
 
         // One reply per request
         assert!(!wait_drained(&mut signal_rx, Duration::from_millis(1500)).await);
+    }
+
+    /// An aborted upload is retried right away, without waiting for new data.
+    #[tokio::test]
+    async fn aborted_upload_retried_without_new_data() {
+        let barrier: &'static DispatchBarrier = Box::leak(Box::new(DispatchBarrier::new()));
+        let notifier: &'static ChangeNotification = Box::leak(Box::new(ChangeNotification::new()));
+
+        let (mut event_tx, mut event_rx) = make_channel::<Event>(4);
+        let (mut signal_tx, _signal_rx) = make_channel::<Signal>(16);
+        let (upload_tx, upload_rx) = make_channel::<Confirmable<MockUpload>>(1);
+        let (mut upload_tx, mut upload_rx): (_, NotifyingReceiver<_, Receiver<_>, _>) =
+            create_reserving_channel(upload_tx, upload_rx, notifier);
+
+        tokio::spawn(async move {
+            let mut store = MockStore {
+                events: MockStream::new(),
+                data: MockStream::new(),
+            };
+            let mut serializer = MockSerializer {
+                buffered: VecDeque::new(),
+            };
+            dispatch_task::<_, _, _, _, _, _, _, _, Signal, _, DATA_LEN>(
+                &mut store,
+                &mut serializer,
+                &mut event_rx,
+                &mut signal_tx,
+                &mut MockUploadAlloc,
+                &mut upload_tx,
+                |_: &Event| false,
+                barrier,
+            )
+            .await
+        });
+
+        event_tx.send(Event::Blink).await.unwrap();
+
+        drop(next_upload(&mut upload_rx).await);
+        let retry = next_upload(&mut upload_rx).await;
+        assert!(matches!(retry.inner(), MockUpload::Event(_)));
     }
 
     /// An aborted upload (dropped without confirming) keeps the barrier waiting until

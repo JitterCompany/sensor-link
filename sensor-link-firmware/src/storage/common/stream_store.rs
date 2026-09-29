@@ -172,6 +172,13 @@ where
         Ok(self.queue.is_drained())
     }
 
+    /// Wait until a peeked item is confirmed or aborted.
+    ///
+    /// See [Queue::wait_confirmation].
+    pub async fn wait_confirmation(&mut self) {
+        self.queue.wait_confirmation().await
+    }
+
     pub async fn peek_next(
         &mut self,
         read_buffer: &mut [u8],

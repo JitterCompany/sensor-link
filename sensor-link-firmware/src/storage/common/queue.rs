@@ -465,6 +465,14 @@ impl<'ch, const MAX_PEEKS: usize> Queue<'ch, MAX_PEEKS> {
         }
     }
 
+    /// Wait until a peeked item is confirmed or aborted, and process that.
+    ///
+    /// Cancel safe: a confirmation is only taken from the channel when it is processed.
+    pub async fn wait_confirmation(&mut self) {
+        let confirm = self.confirm_channel.0.receive().await;
+        self.readers.update(confirm);
+    }
+
     fn try_alloc_reader(&mut self) -> Result<SeqNo, ReadBlocked> {
         self.readers.find_reader(self.write_index)
     }

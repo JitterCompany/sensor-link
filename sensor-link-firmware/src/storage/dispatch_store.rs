@@ -20,6 +20,7 @@ use crate::{
         },
         flash_db::{self, Circular, WriteableCircularStore},
     },
+    utils::select::select2,
 };
 use sensor_link_protocol::{Topic, MAX_EVENT_LEN};
 
@@ -70,6 +71,11 @@ pub trait DispatchStore {
     /// Items that were peeked but not confirmed yet, or aborted and waiting for a
     /// retry, count as not drained.
     async fn is_drained(&mut self) -> Result<bool, Self::Error>;
+
+    /// Wait until a peeked event or sensor data item is confirmed or aborted.
+    ///
+    /// Must be cancel safe.
+    async fn wait_confirmation(&mut self);
 }
 
 /// Application stream-id type that designates which stream holds events and which holds sensor data.
@@ -206,6 +212,14 @@ where
     async fn is_drained(&mut self) -> Result<bool, Self::Error> {
         Ok(self.events.is_drained().await? && self.sensor_data.is_drained().await?)
     }
+
+    async fn wait_confirmation(&mut self) {
+        select2(
+            self.events.wait_confirmation(),
+            self.sensor_data.wait_confirmation(),
+        )
+        .await;
+    }
 }
 
 /// `'static` wrapper around [StreamPairStore].
@@ -285,5 +299,10 @@ where
     #[inline]
     async fn is_drained(&mut self) -> Result<bool, Self::Error> {
         self.store.is_drained().await
+    }
+
+    #[inline]
+    async fn wait_confirmation(&mut self) {
+        self.store.wait_confirmation().await
     }
 }

@@ -164,6 +164,14 @@ where
         Ok(())
     }
 
+    /// True if every item in the stream has been peeked and confirmed.
+    ///
+    /// See [Queue::is_drained].
+    pub async fn is_drained(&mut self) -> Result<bool, Error> {
+        self.initialize().await?;
+        Ok(self.queue.is_drained())
+    }
+
     pub async fn peek_next(
         &mut self,
         read_buffer: &mut [u8],

@@ -132,6 +132,15 @@ pub enum Signal {
     /// The dispatch pipeline has no more data pending for upload.
     DispatchQueueEmpty,
 
+    /// Reply to a [`DispatchBarrier`](crate::logic::dispatch::barrier::DispatchBarrier)
+    /// request: everything dispatch received before the request has been sent and
+    /// confirmed by the network task.
+    DispatchDrained,
+
+    /// A status payload has been published. Carries the payload's
+    /// [`NetworkStatus::confirmation_token`](crate::logic::NetworkStatus::confirmation_token).
+    StatusSent(u64),
+
     /// First signal expected when initialization is done.
     /// This will start off the Orchestrator State Machine.
     Booted(BootReason),

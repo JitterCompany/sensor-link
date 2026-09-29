@@ -1,3 +1,4 @@
+pub mod barrier;
 pub mod buffer;
 pub mod confirmable;
 pub mod drain;
@@ -7,7 +8,10 @@ pub mod serialization;
 use crate::{
     drivers::time,
     logic::{
-        dispatch::{confirmable::Confirmable, serialization::LatencyControlledSerializer},
+        dispatch::{
+            barrier::DispatchBarrier, confirmable::Confirmable,
+            serialization::LatencyControlledSerializer,
+        },
         network::upload::UploadAlloc,
         signal::Signal,
         ReceiveChannel, SendChannel,
@@ -16,7 +20,7 @@ use crate::{
     pool::MappedAllocator,
     serialize::{AsSendable, SerializedSendable},
     sync::reserving_sender::{ReservableSender, ReservationToken},
-    utils::select::{select2, Select2},
+    utils::select::{select2, select3, Select2, Select3},
 };
 use sensor_link_protocol::{event::EventPayload, Microseconds, Topic, MAX_EVENT_LEN};
 
@@ -34,6 +38,10 @@ pub type SerializedEvent<T> = SerializedSendable<MAX_EVENT_LEN, T>;
 /// which is a reasonable order-of-magnitude
 /// for normal upload throughput
 const PREVENT_BUSY_LOOP_DELAY_MS: u32 = 100;
+
+/// How often to re-check whether a requested barrier is reached.
+/// The final confirmation comes from the network task, which does not wake dispatch.
+const BARRIER_RECHECK_MS: u32 = 1_000;
 
 pub async fn dispatch_task<
     DS,
@@ -55,6 +63,7 @@ pub async fn dispatch_task<
     upload_alloc: &mut UA,
     upload_tx: &mut US,
     is_urgent: IsUrgent,
+    barrier: &DispatchBarrier,
 ) -> !
 where
     T: Topic,
@@ -77,6 +86,9 @@ where
     // pending: to be enqueued to network task
     let mut pending_event = Pending::none(upload_alloc.event());
     let mut pending_data = Pending::none(upload_alloc.data());
+
+    // A barrier was requested and has not been replied to yet
+    let mut barrier_active = false;
 
     loop {
         // retry a failed read from the store on next iteration?
@@ -122,6 +134,25 @@ where
             };
         }
 
+        // Barrier reached: everything received so far is stored, sent and confirmed
+        if barrier_active
+            && !data_in.is_flushing()
+            && !pending_event.is_pending()
+            && !pending_data.is_pending()
+        {
+            match store.is_drained().await {
+                Ok(true) => {
+                    log::info!(target: "Dispatch", "Barrier reached: drained");
+                    signal_out.send(Signal::DispatchDrained.into()).await.ok();
+                    barrier_active = false;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    log::warn!(target: "Dispatch", "Failed to check if store is drained: {error:?}");
+                }
+            }
+        }
+
         // Signal orchestrator that queue is empty
         if !pending_event.is_pending() && !pending_data.is_pending() {
             signal_out
@@ -157,12 +188,30 @@ where
             }
         });
 
-        // Select between incoming data and transmission of pending data
-        // NOTE: select2 has a bias to the first future, so storing incoming data always takes priority
+        // Future that resolves on a new barrier request, or periodically while one is active
+        let barrier_or_recheck = async move {
+            if barrier_active {
+                delay_ms(BARRIER_RECHECK_MS).await;
+                BarrierWake::Recheck
+            } else {
+                barrier.wait().await;
+                BarrierWake::Requested
+            }
+        };
+
+        // Select between incoming data, barrier requests and transmission of pending data
+        // NOTE: select3 has a bias to the first future, so storing incoming data always takes priority
         // over transmitting network data. This is important to prevent the incoming data queue from overflowing
         // in case of a super fast network connection.
-        match select2(incoming(data_in, event_in), transmit_network_or_block).await {
-            Select2::A(incoming) => match incoming {
+        // It also means the incoming queues are empty when a barrier request is taken.
+        match select3(
+            incoming(data_in, event_in),
+            barrier_or_recheck,
+            transmit_network_or_block,
+        )
+        .await
+        {
+            Select3::A(incoming) => match incoming {
                 Ok(Incoming::Event(event)) => {
                     process_event(store, &mut pending_event, event, signal_out, &is_urgent).await;
                 }
@@ -173,9 +222,24 @@ where
                     log::error!(target: "Dispatch", "Data loss while receiving: {error:?}");
                 }
             },
-            Select2::B(()) => {}
+            Select3::B(BarrierWake::Requested) => {
+                log::info!(target: "Dispatch", "Barrier requested");
+                // Force buffered data out, and store any events that are still queued
+                data_in.flush();
+                while let Ok(event) = event_in.try_recv() {
+                    process_event(store, &mut pending_event, event, signal_out, &is_urgent).await;
+                }
+                barrier_active = true;
+            }
+            Select3::B(BarrierWake::Recheck) => {}
+            Select3::C(()) => {}
         }
     }
+}
+
+enum BarrierWake {
+    Requested,
+    Recheck,
 }
 
 enum TransmitError {
@@ -340,5 +404,320 @@ where
             }
         }
         Select2::B(data_result) => data_result,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::VecDeque, sync::Arc, time::Duration};
+
+    use sensor_link_protocol::{event::Event, TopicFromDevice};
+
+    use super::*;
+    use crate::{
+        logic::network::upload::UploadTrait,
+        storage::common::{
+            queue::{ConfirmChannel, Queue, SeqNo},
+            stream_store::MAX_PEEKS,
+        },
+        sync::reserving_sender::{create_reserving_channel, NotifyingReceiver},
+        utils::{
+            channels::{make_channel, Receiver},
+            sync::ChangeNotification,
+        },
+    };
+
+    type T = TopicFromDevice;
+    const DATA_LEN: usize = 64;
+    type Data = SerializedSendable<DATA_LEN, T>;
+
+    /// In-memory stream backed by the real [Queue], so peeks and confirmations
+    /// behave like the flash-backed store.
+    struct MockStream {
+        queue: Queue<'static, MAX_PEEKS>,
+        items: Vec<Vec<u8>>,
+    }
+
+    impl MockStream {
+        fn new() -> Self {
+            let channel: &'static ConfirmChannel<MAX_PEEKS> =
+                Box::leak(Box::new(ConfirmChannel::new()));
+            Self {
+                queue: Queue::new(channel),
+                items: Vec::new(),
+            }
+        }
+
+        fn store(&mut self, bytes: &[u8]) -> SeqNo {
+            let seq_no = self.queue.enqueue().unwrap();
+            assert_eq!(seq_no as usize, self.items.len());
+            self.items.push(bytes.to_vec());
+            seq_no
+        }
+
+        fn peek<const N: usize>(&mut self) -> Option<(SerializedSendable<N, T>, ConfirmHandle)> {
+            let handle = self.queue.peek_next().ok()?;
+            let bytes = &self.items[handle.seq_no() as usize];
+            let mut builder = crate::serialize::Builder::<N>::new();
+            builder.bytes[..bytes.len()].copy_from_slice(bytes);
+            Some((
+                builder.create_with_total_length(bytes.len()).unwrap(),
+                handle,
+            ))
+        }
+    }
+
+    struct MockStore {
+        events: MockStream,
+        data: MockStream,
+    }
+
+    impl DispatchStore for MockStore {
+        type Error = ();
+        type Topic = T;
+
+        async fn store_event<'a>(
+            &mut self,
+            event: &'a SerializedEvent<T>,
+        ) -> Result<SeqNo, Self::Error> {
+            Ok(self.events.store(event.as_slice()))
+        }
+
+        async fn peek_event(
+            &mut self,
+        ) -> Result<Option<(SerializedEvent<T>, ConfirmHandle)>, Self::Error> {
+            Ok(self.events.peek())
+        }
+
+        async fn store_sensor_data<'a, const N: usize>(
+            &mut self,
+            data: &'a SerializedSendable<N, T>,
+        ) -> Result<SeqNo, Self::Error> {
+            Ok(self.data.store(data.as_slice()))
+        }
+
+        async fn peek_sensor_data<const N: usize>(
+            &mut self,
+        ) -> Result<Option<(SerializedSendable<N, T>, ConfirmHandle)>, Self::Error> {
+            Ok(self.data.peek())
+        }
+
+        async fn is_drained(&mut self) -> Result<bool, Self::Error> {
+            Ok(self.events.queue.is_drained() && self.data.queue.is_drained())
+        }
+    }
+
+    /// Serializer holding buffered packets that are only released by a flush
+    struct MockSerializer {
+        buffered: VecDeque<Data>,
+        flushing: bool,
+    }
+
+    impl LatencyControlledSerializer<DATA_LEN> for MockSerializer {
+        type Error = ();
+        type Topic = T;
+
+        async fn next_packet(&mut self) -> Result<Option<Data>, Self::Error> {
+            if self.flushing {
+                let packet = self.buffered.pop_front();
+                self.flushing = !self.buffered.is_empty();
+                if packet.is_some() {
+                    return Ok(packet);
+                }
+            }
+            core::future::pending().await
+        }
+
+        fn set_timeout(&mut self, _timeout_ms: u32) {}
+        fn set_buffer_timeout(&mut self, _timeout_ms: u32) {}
+
+        fn flush(&mut self) {
+            self.flushing = !self.buffered.is_empty();
+        }
+
+        fn is_flushing(&self) -> bool {
+            self.flushing
+        }
+    }
+
+    #[derive(Clone)]
+    enum MockUpload {
+        Event(Arc<SerializedEvent<T>>),
+        Data(Arc<Data>),
+    }
+
+    impl UploadTrait for MockUpload {
+        type Topic = T;
+        fn sendable(&self) -> &dyn crate::serialize::Sendable<T> {
+            match self {
+                MockUpload::Event(event) => &**event,
+                MockUpload::Data(data) => &**data,
+            }
+        }
+    }
+
+    struct EventAlloc;
+    impl MappedAllocator for EventAlloc {
+        type Input = SerializedEvent<T>;
+        type Output = MockUpload;
+        fn alloc(&self, value: Self::Input) -> Result<Self::Output, Self::Input> {
+            Ok(MockUpload::Event(Arc::new(value)))
+        }
+    }
+
+    struct DataAlloc;
+    impl MappedAllocator for DataAlloc {
+        type Input = Data;
+        type Output = MockUpload;
+        fn alloc(&self, value: Self::Input) -> Result<Self::Output, Self::Input> {
+            Ok(MockUpload::Data(Arc::new(value)))
+        }
+    }
+
+    struct MockUploadAlloc;
+    impl UploadAlloc for MockUploadAlloc {
+        type Upload = MockUpload;
+        type Event = SerializedEvent<T>;
+        type SensorData = Data;
+        fn event(&self) -> impl MappedAllocator<Input = Self::Event, Output = Self::Upload> {
+            EventAlloc
+        }
+        fn data(&self) -> impl MappedAllocator<Input = Self::SensorData, Output = Self::Upload> {
+            DataAlloc
+        }
+    }
+
+    fn data_packet() -> Data {
+        let mut builder = crate::serialize::Builder::<DATA_LEN>::new();
+        builder.bytes[..16].copy_from_slice(&[1; 16]);
+        builder.create_with_total_length(16).unwrap()
+    }
+
+    /// Next upload handed to the network task
+    async fn next_upload<R: ReceiveChannel<Confirmable<MockUpload>>>(
+        upload_rx: &mut R,
+    ) -> Confirmable<MockUpload> {
+        match tokio::time::timeout(Duration::from_secs(3), upload_rx.recv()).await {
+            Ok(Ok(upload)) => upload,
+            _ => panic!("no upload"),
+        }
+    }
+
+    /// Wait until dispatch reports drained, ignoring other signals
+    async fn wait_drained(signal_rx: &mut Receiver<Signal>, timeout: Duration) -> bool {
+        tokio::time::timeout(timeout, async {
+            loop {
+                if let Ok(Signal::DispatchDrained) = signal_rx.recv().await {
+                    return;
+                }
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    /// A barrier is reached only once everything received before it, including
+    /// buffered data, has been sent and confirmed by the network task.
+    #[tokio::test]
+    async fn barrier_drained_after_all_confirmed() {
+        let barrier: &'static DispatchBarrier = Box::leak(Box::new(DispatchBarrier::new()));
+        let notifier: &'static ChangeNotification = Box::leak(Box::new(ChangeNotification::new()));
+
+        let (mut event_tx, mut event_rx) = make_channel::<Event>(4);
+        let (mut signal_tx, mut signal_rx) = make_channel::<Signal>(16);
+        let (upload_tx, upload_rx) = make_channel::<Confirmable<MockUpload>>(1);
+        let (mut upload_tx, mut upload_rx): (_, NotifyingReceiver<_, Receiver<_>, _>) =
+            create_reserving_channel(upload_tx, upload_rx, notifier);
+
+        tokio::spawn(async move {
+            let mut store = MockStore {
+                events: MockStream::new(),
+                data: MockStream::new(),
+            };
+            // A data packet waiting in the bulk buffer: only a flush releases it
+            let mut serializer = MockSerializer {
+                buffered: VecDeque::from([data_packet()]),
+                flushing: false,
+            };
+            dispatch_task::<_, _, _, _, _, _, _, _, Signal, _, DATA_LEN>(
+                &mut store,
+                &mut serializer,
+                &mut event_rx,
+                &mut signal_tx,
+                &mut MockUploadAlloc,
+                &mut upload_tx,
+                |_: &Event| false,
+                barrier,
+            )
+            .await
+        });
+
+        event_tx.send(Event::Blink).await.unwrap();
+        barrier.request();
+
+        // The event is sent, but not confirmed yet: not drained
+        let event = next_upload(&mut upload_rx).await;
+        assert!(matches!(event.inner(), MockUpload::Event(_)));
+        assert!(!wait_drained(&mut signal_rx, Duration::from_millis(1500)).await);
+        event.confirm();
+
+        // The flush released the buffered data: not drained until it's confirmed
+        let data = next_upload(&mut upload_rx).await;
+        assert!(matches!(data.inner(), MockUpload::Data(_)));
+        assert!(!wait_drained(&mut signal_rx, Duration::from_millis(1500)).await);
+        data.confirm();
+
+        assert!(wait_drained(&mut signal_rx, Duration::from_secs(3)).await);
+
+        // One reply per request
+        assert!(!wait_drained(&mut signal_rx, Duration::from_millis(1500)).await);
+    }
+
+    /// An aborted upload (dropped without confirming) keeps the barrier waiting until
+    /// the retry is confirmed.
+    #[tokio::test]
+    async fn barrier_waits_for_retry_of_aborted_upload() {
+        let barrier: &'static DispatchBarrier = Box::leak(Box::new(DispatchBarrier::new()));
+        let notifier: &'static ChangeNotification = Box::leak(Box::new(ChangeNotification::new()));
+
+        let (mut event_tx, mut event_rx) = make_channel::<Event>(4);
+        let (mut signal_tx, mut signal_rx) = make_channel::<Signal>(16);
+        let (upload_tx, upload_rx) = make_channel::<Confirmable<MockUpload>>(1);
+        let (mut upload_tx, mut upload_rx): (_, NotifyingReceiver<_, Receiver<_>, _>) =
+            create_reserving_channel(upload_tx, upload_rx, notifier);
+
+        tokio::spawn(async move {
+            let mut store = MockStore {
+                events: MockStream::new(),
+                data: MockStream::new(),
+            };
+            let mut serializer = MockSerializer {
+                buffered: VecDeque::new(),
+                flushing: false,
+            };
+            dispatch_task::<_, _, _, _, _, _, _, _, Signal, _, DATA_LEN>(
+                &mut store,
+                &mut serializer,
+                &mut event_rx,
+                &mut signal_tx,
+                &mut MockUploadAlloc,
+                &mut upload_tx,
+                |_: &Event| false,
+                barrier,
+            )
+            .await
+        });
+
+        event_tx.send(Event::Blink).await.unwrap();
+        barrier.request();
+
+        // Upload fails (dropped): the event must be retried before the barrier is reached
+        drop(next_upload(&mut upload_rx).await);
+        assert!(!wait_drained(&mut signal_rx, Duration::from_millis(1500)).await);
+
+        // Retried
+        next_upload(&mut upload_rx).await.confirm();
+
+        assert!(wait_drained(&mut signal_rx, Duration::from_secs(3)).await);
     }
 }

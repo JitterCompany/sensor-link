@@ -64,6 +64,12 @@ pub trait DispatchStore {
         )>,
         Self::Error,
     >;
+
+    /// True if every stored event and sensor data item has been confirmed.
+    ///
+    /// Items that were peeked but not confirmed yet, or aborted and waiting for a
+    /// retry, count as not drained.
+    async fn is_drained(&mut self) -> Result<bool, Self::Error>;
 }
 
 /// Application stream-id type that designates which stream holds events and which holds sensor data.
@@ -190,6 +196,10 @@ where
             _ => Ok(None),
         }
     }
+
+    async fn is_drained(&mut self) -> Result<bool, Self::Error> {
+        Ok(self.events.is_drained().await? && self.sensor_data.is_drained().await?)
+    }
 }
 
 /// `'static` wrapper around [StreamPairStore].
@@ -264,5 +274,10 @@ where
     ) -> Result<Option<(SerializedSendable<{ MAX_PROCESSING_LEN }, T>, ConfirmHandle)>, Self::Error>
     {
         self.store.peek_sensor_data().await
+    }
+
+    #[inline]
+    async fn is_drained(&mut self) -> Result<bool, Self::Error> {
+        self.store.is_drained().await
     }
 }

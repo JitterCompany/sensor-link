@@ -72,4 +72,13 @@ pub trait LatencyControlledSerializer<const MAX_OUTPUT_SIZE: usize> {
     /// Controls how long data can remain in buffers before forced serialization,
     /// preventing data from becoming stale in low-throughput scenarios.
     fn set_buffer_timeout(&mut self, timeout_ms: u32);
+
+    /// Forces all buffered data out, without waiting for any timeout.
+    ///
+    /// The following [`next_packet`](Self::next_packet) calls return the buffered
+    /// data as packets, until [`is_flushing`](Self::is_flushing) returns `false`.
+    fn flush(&mut self);
+
+    /// True while buffered data forced out by [`flush`](Self::flush) remains.
+    fn is_flushing(&self) -> bool;
 }

@@ -164,6 +164,21 @@ where
         Ok(())
     }
 
+    /// True if every item in the stream has been peeked and confirmed.
+    ///
+    /// See [Queue::is_drained].
+    pub async fn is_drained(&mut self) -> Result<bool, Error> {
+        self.initialize().await?;
+        Ok(self.queue.is_drained())
+    }
+
+    /// Wait until a peeked item is confirmed or aborted.
+    ///
+    /// See [Queue::wait_confirmation].
+    pub async fn wait_confirmation(&mut self) {
+        self.queue.wait_confirmation().await
+    }
+
     pub async fn peek_next(
         &mut self,
         read_buffer: &mut [u8],
@@ -249,12 +264,12 @@ where
                                     handle.confirm();
                                     return Err(Error::FragmentNotReadable);
                                 }
-                                return Ok(Some((len, handle)));
+                                Ok(Some((len, handle)))
                             }
                             Err(error) => {
                                 log::error!(target: "StreamStore", "Stream {stream:?}: failed to read data for #{seq_no}: {error:?}");
                                 handle.confirm();
-                                return Err(error);
+                                Err(error)
                             }
                         }
                     }

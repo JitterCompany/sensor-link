@@ -79,6 +79,12 @@ impl<const MAX_PEEKS: usize> ConfirmChannel<MAX_PEEKS> {
     }
 }
 
+impl<const MAX_PEEKS: usize> Default for ConfirmChannel<MAX_PEEKS> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'ch, const _N: usize> Drop for ConfirmHandle<'ch, _N> {
     fn drop(&mut self) {
         self.try_abort()
@@ -327,7 +333,7 @@ impl<const MAX_PEEKS: usize> PeekQueue<MAX_PEEKS> {
                     // (this only happens after recovering from one or more unconfirmed reads)
                     let target_slot = (alloc_index % (MAX_PEEKS as u32)) as usize;
                     if slot_id == target_slot {
-                        self.read_index_next = alloc_index + 1;
+                        self.read_index_next = alloc_index.wrapping_add(1);
 
                         self.reader_slots[slot_id] = ReadState::Busy(alloc_index);
                         return Ok(alloc_index);
@@ -352,7 +358,22 @@ impl<const MAX_PEEKS: usize> PeekQueue<MAX_PEEKS> {
             }
         }
 
-        return Err(ReadBlocked::Unknown);
+        Err(ReadBlocked::Unknown)
+    }
+
+    /// True if nothing before `write_index` is left to peek, confirm or retry.
+    ///
+    /// Aborted reads that are out of bounds can no longer be retried (their data
+    /// was overwritten), so they don't count as outstanding.
+    fn is_drained(&self, write_index: u32) -> bool {
+        if self.read_index_next != write_index {
+            return false;
+        }
+        self.reader_slots.iter().all(|slot| match *slot {
+            ReadState::None => true,
+            ReadState::Busy(_) => false,
+            ReadState::Abort(index) => !self.is_in_bounds(index),
+        })
     }
 
     /// Circular increase to the next slot
@@ -444,6 +465,14 @@ impl<'ch, const MAX_PEEKS: usize> Queue<'ch, MAX_PEEKS> {
         }
     }
 
+    /// Wait until a peeked item is confirmed or aborted, and process that.
+    ///
+    /// Cancel safe: a confirmation is only taken from the channel when it is processed.
+    pub async fn wait_confirmation(&mut self) {
+        let confirm = self.confirm_channel.0.receive().await;
+        self.readers.update(confirm);
+    }
+
     fn try_alloc_reader(&mut self) -> Result<SeqNo, ReadBlocked> {
         self.readers.find_reader(self.write_index)
     }
@@ -505,6 +534,16 @@ impl<'ch, const MAX_PEEKS: usize> Queue<'ch, MAX_PEEKS> {
         self.write_index
     }
 
+    /// True if every enqueued item has been peeked and confirmed.
+    ///
+    /// Unlike [Self::existing_range], this does not depend on the lazily updated
+    /// read lower bound: pending confirmations are processed first, then the queue
+    /// is drained if nothing is left to peek and no peek awaits confirmation or retry.
+    pub fn is_drained(&mut self) -> bool {
+        self.update_reader_slots();
+        self.readers.is_drained(self.write_index)
+    }
+
     /// Read an iten from the queue
     ///
     /// Each time this method is called, the next item is returned.
@@ -522,7 +561,7 @@ impl<'ch, const MAX_PEEKS: usize> Queue<'ch, MAX_PEEKS> {
 
         self.update_reader_slots(); // TODO async version of this could await completion/cancelation of in-flight fragments
         let seqno = self.try_alloc_reader()?;
-        let sender = self.confirm_channel.0.sender().into();
+        let sender = self.confirm_channel.0.sender();
         Ok(ConfirmHandle::new(seqno, sender))
     }
 }
@@ -791,5 +830,49 @@ mod tests {
         log::debug!("Batch confirmed");
 
         assert_eq!(ReadBlocked::Empty, q.peek_next().unwrap_err());
+    }
+
+    #[test]
+    fn is_drained_only_after_all_confirmed() {
+        let channel = ConfirmChannel::new();
+        let mut q = Queue::<3>::new(&channel);
+        assert!(q.is_drained());
+
+        q.enqueue().unwrap();
+        q.enqueue().unwrap();
+        assert!(!q.is_drained(), "never peeked");
+
+        let h0 = q.peek_next().unwrap();
+        let h1 = q.peek_next().unwrap();
+        assert!(!q.is_drained(), "peeked but not confirmed");
+
+        h1.confirm();
+        drop(h0);
+        assert!(!q.is_drained(), "aborted read must be retried");
+
+        let h0 = q.peek_next().unwrap();
+        assert_eq!(0, h0.seq_no());
+        h0.confirm();
+        assert!(q.is_drained());
+
+        q.enqueue().unwrap();
+        assert!(!q.is_drained(), "new item after drain");
+    }
+
+    #[test]
+    fn is_drained_after_reinit() {
+        let channel = ConfirmChannel::new();
+        let mut q = Queue::<3>::new(&channel);
+
+        // Items restored from persistent storage are not drained
+        q.reinit_with_existing_range((1000, 1002));
+        assert!(!q.is_drained());
+
+        for expected in 1000..1002 {
+            let h = q.peek_next().unwrap();
+            assert_eq!(expected, h.seq_no());
+            h.confirm();
+        }
+        assert!(q.is_drained());
     }
 }

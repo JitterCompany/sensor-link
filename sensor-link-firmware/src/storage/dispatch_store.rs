@@ -20,6 +20,7 @@ use crate::{
         },
         flash_db::{self, Circular, WriteableCircularStore},
     },
+    utils::select::select2,
 };
 use sensor_link_protocol::{Topic, MAX_EVENT_LEN};
 
@@ -37,9 +38,9 @@ pub trait DispatchStore {
     type Error: core::fmt::Debug + Clone;
     type Topic: Topic;
 
-    async fn store_event<'a>(
+    async fn store_event(
         &mut self,
-        event: &'a SerializedSendable<MAX_EVENT_LEN, Self::Topic>,
+        event: &SerializedSendable<MAX_EVENT_LEN, Self::Topic>,
     ) -> Result<SeqNo, Self::Error>;
     async fn peek_event(
         &mut self,
@@ -51,9 +52,9 @@ pub trait DispatchStore {
         Self::Error,
     >;
 
-    async fn store_sensor_data<'a, const MAX_PROCESSING_LEN: usize>(
+    async fn store_sensor_data<const MAX_PROCESSING_LEN: usize>(
         &mut self,
-        processing: &'a SerializedSendable<{ MAX_PROCESSING_LEN }, Self::Topic>,
+        processing: &SerializedSendable<{ MAX_PROCESSING_LEN }, Self::Topic>,
     ) -> Result<SeqNo, Self::Error>;
     async fn peek_sensor_data<const MAX_PROCESSING_LEN: usize>(
         &mut self,
@@ -64,6 +65,17 @@ pub trait DispatchStore {
         )>,
         Self::Error,
     >;
+
+    /// True if every stored event and sensor data item has been confirmed.
+    ///
+    /// Items that were peeked but not confirmed yet, or aborted and waiting for a
+    /// retry, count as not drained.
+    async fn is_drained(&mut self) -> Result<bool, Self::Error>;
+
+    /// Wait until a peeked event or sensor data item is confirmed or aborted.
+    ///
+    /// Must be cancel safe.
+    async fn wait_confirmation(&mut self);
 }
 
 /// Application stream-id type that designates which stream holds events and which holds sensor data.
@@ -88,6 +100,12 @@ impl<const NUM_CHANNELS: usize> ConfirmChannels<NUM_CHANNELS> {
         Self {
             channels: [const { ConfirmChannel::new() }; NUM_CHANNELS],
         }
+    }
+}
+
+impl<const NUM_CHANNELS: usize> Default for ConfirmChannels<NUM_CHANNELS> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -137,9 +155,9 @@ where
     type Error = flash_db::Error;
     type Topic = T;
 
-    async fn store_event<'a>(
+    async fn store_event(
         &mut self,
-        event: &'a SerializedSendable<MAX_EVENT_LEN, T>,
+        event: &SerializedSendable<MAX_EVENT_LEN, T>,
     ) -> Result<SeqNo, Self::Error> {
         self.events.enqueue(event.as_slice()).await
     }
@@ -190,6 +208,18 @@ where
             _ => Ok(None),
         }
     }
+
+    async fn is_drained(&mut self) -> Result<bool, Self::Error> {
+        Ok(self.events.is_drained().await? && self.sensor_data.is_drained().await?)
+    }
+
+    async fn wait_confirmation(&mut self) {
+        select2(
+            self.events.wait_confirmation(),
+            self.sensor_data.wait_confirmation(),
+        )
+        .await;
+    }
 }
 
 /// `'static` wrapper around [StreamPairStore].
@@ -236,9 +266,9 @@ where
     type Topic = T;
 
     #[inline]
-    async fn store_event<'a>(
+    async fn store_event(
         &mut self,
-        event: &'a SerializedSendable<MAX_EVENT_LEN, T>,
+        event: &SerializedSendable<MAX_EVENT_LEN, T>,
     ) -> Result<SeqNo, Self::Error> {
         self.store.store_event(event).await
     }
@@ -264,5 +294,15 @@ where
     ) -> Result<Option<(SerializedSendable<{ MAX_PROCESSING_LEN }, T>, ConfirmHandle)>, Self::Error>
     {
         self.store.peek_sensor_data().await
+    }
+
+    #[inline]
+    async fn is_drained(&mut self) -> Result<bool, Self::Error> {
+        self.store.is_drained().await
+    }
+
+    #[inline]
+    async fn wait_confirmation(&mut self) {
+        self.store.wait_confirmation().await
     }
 }

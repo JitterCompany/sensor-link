@@ -34,7 +34,7 @@ pub trait ReceiveChannel<T> {
     fn try_recv(&mut self) -> Result<T, Self::Error>;
 }
 
-impl<'a, R, T> ReceiveChannel<T> for &'a mut R
+impl<R, T> ReceiveChannel<T> for &mut R
 where
     R: ReceiveChannel<T>,
 {
@@ -105,6 +105,11 @@ pub trait NetworkStatus: TopicPayloadSerialize<MAX_MESSAGE_LEN> {
     /// Inject the live modem signal strength, sampled by the network client at
     /// send time.
     fn set_signal_strength(&mut self, dbm: i32);
+
+    /// Value reported back in [`Signal::StatusSent`](signal::Signal::StatusSent)
+    /// once this payload has been published, so the application can tell which
+    /// status went out.
+    fn confirmation_token(&self) -> u64;
 }
 
 /// Requests to send to the network connection.

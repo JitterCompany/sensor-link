@@ -412,6 +412,13 @@ where
             }
             Op::Action(NetworkAction::SendStatus(ref mut device_status)) => {
                 op_result = client.send_status(device_status).await;
+                if op_result.is_ok() {
+                    let token = device_status.confirmation_token();
+                    signal_queue
+                        .send(Signal::StatusSent(token).into())
+                        .await
+                        .ok();
+                }
             }
             Op::Action(NetworkAction::DownloadUpdate) => {
                 match client.download_firmware_update().await {

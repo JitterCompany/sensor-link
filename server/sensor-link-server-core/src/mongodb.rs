@@ -1816,8 +1816,9 @@ where
             filter.insert("contact_details", doc! { "$exists": true });
             filter.remove("has_contact_details");
         }
-        // Resolve group_id → project_ids so all three event collections share a
-        // project-led $match. s2d has no group_id; events are project-scoped.
+        // Resolve group_id → project_ids so all event collections share a
+        // project-led $match; not every collection sets group_id. Events of devices
+        // that are not in a project (project_id null) are matched on group_id instead.
         if !filter.contains_key("project_id") {
             if let Some(group_id) = query.params.group_id.as_deref() {
                 let project_ids: Vec<MeteorId> = self
@@ -1830,11 +1831,17 @@ where
                     .into_iter()
                     .filter_map(|d| d.get_str("project_id").ok().map(str::to_string))
                     .collect();
-                filter.insert("project_id", doc! { "$in": project_ids });
+                filter.insert(
+                    "$or",
+                    vec![
+                        doc! { "project_id": { "$in": project_ids } },
+                        doc! { "project_id": null, "group_id": group_id },
+                    ],
+                );
             }
         }
-        // After adding project_id fields, we no longer need group_id.
-        // Also s2d.events don't set group_id so we must not query on it
+        // group_id is either resolved above or superseded by project_id, and must
+        // not be queried at top level since not every event collection sets it.
         filter.remove("group_id");
 
         let events_field_pipeline = if query.only_stats {

@@ -8,6 +8,10 @@ license.workspace = true
 use-std = ["critical-section", "tokio", "glob", "rustls-pemfile", "x509-parser", "embassy-time"]
 # Enables PEM (de)serialization in `utils::crypto` (pulls in alloc-backed parsing).
 alloc = ["p256/pkcs8", "elliptic-curve/pem"]
+# Publish the device's own log records to the MQTT log topic, via
+# `mqtt::log_publish`. Off by default: as a library crate we leave it to the
+# application to decide whether its logs go over the air.
+mqtt-log = []
 # Use the tokio-based, manipulable test timer (set_time_offset/advance_time,
 # MonotonicInstant::test) instead of the rtic hardware timer. Enabled by
 # downstream test suites that drive monotonic time directly.

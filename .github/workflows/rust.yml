@@ -52,7 +52,7 @@ jobs:
       - name: Clippy (changed files)
         run: ./scripts/clippy-changed.sh "origin/${{ github.base_ref || github.ref_name }}"
       - name: Run Tests
-        run: cargo test --workspace --features sensor-link-firmware/test-mono
+        run: cargo test --workspace --features sensor-link-firmware/test-mono,sensor-link-firmware/mqtt-log
 
   # The modem factory test firmware is its own embedded workspace (pinned to a
   # sensor-link commit), so the root workspace jobs above never build it.

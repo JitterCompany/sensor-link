@@ -62,7 +62,7 @@ impl MqttClient for &mut MockMQTT {
         Ok(())
     }
 
-    async fn publish(
+    async fn publish_raw(
         &mut self,
         topic: TopicString,
         payload: &[u8],

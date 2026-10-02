@@ -1235,7 +1235,7 @@ where
         result
     }
 
-    pub async fn publish(
+    pub async fn publish_raw(
         &mut self,
         topic: String<{ MAX_TOPIC_LEN }>,
         message: &[u8],
@@ -1270,14 +1270,10 @@ where
             .map_err(Error::Client)?;
 
         // Wait untill mesasge is acked by broker
-        let result = self
-            .await_acked_with_timeout(UrcVariant::MQTTPublish, msg_id, Error::MQTT("Publish"))
-            .await;
-        match &result {
-            Ok(_) => log::debug!(target: "quectel","Mqtt published to {topic:?}"),
-            Err(err) => log::error!(target: "quectel","Failed to publish: {err:?}"),
-        }
-        result
+        // Note: the outcome is reported by `MqttPublish::publish`, which owns
+        // the log target that keeps these records out of the published stream.
+        self.await_acked_with_timeout(UrcVariant::MQTTPublish, msg_id, Error::MQTT("Publish"))
+            .await
     }
 
     async fn connect_mqtt(&mut self, clean_session: bool) -> Result<(), Error<atat::Error>> {
@@ -1750,12 +1746,12 @@ where
         self.unsubscribe(topic_name).await
     }
 
-    async fn publish(
+    async fn publish_raw(
         &mut self,
         topic_name: heapless::String<{ MAX_TOPIC_LEN }>,
         message: &[u8],
     ) -> Result<(), Error<Self::ClientError>> {
-        self.publish(topic_name, message).await
+        self.publish_raw(topic_name, message).await
     }
 
     async fn handle_response(&mut self) -> Result<Event, ()> {

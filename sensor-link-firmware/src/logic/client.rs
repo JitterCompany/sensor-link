@@ -11,7 +11,7 @@ use crate::{
         NetworkStatus, SendChannel,
     },
     meta::DeviceMetaDataProvider,
-    mqtt::{Event, FileError, Message, MqttClient, Will},
+    mqtt::{Event, FileError, Message, MqttClient, MqttPublish, Will},
     serialize::{internal::Internal, Sendable},
 };
 use sensor_link_protocol::{
@@ -254,8 +254,21 @@ impl<M: MqttClient, S> Client<M, S> {
         payload: &[u8],
     ) -> Option<ClientEvent> {
         match topic {
-            TopicToDevice::Command => parse_json_payload::<cmd::CommandPayload>(payload)
-                .map(|c| ClientEvent::CommandReceived(c.cmd)),
+            TopicToDevice::Command => {
+                match parse_json_payload::<cmd::CommandPayload>(payload)?.cmd {
+                    // Handled here rather than by the application, which never
+                    // sees them.
+                    cmd::Cmd::DiagnosticsOn { timeout_s } => {
+                        Self::start_diagnostics(timeout_s);
+                        None
+                    }
+                    cmd::Cmd::DiagnosticsOff => {
+                        Self::stop_diagnostics();
+                        None
+                    }
+                    cmd => Some(ClientEvent::CommandReceived(cmd)),
+                }
+            }
             TopicToDevice::Time => parse_json_payload::<time::Timestamp>(payload)
                 .map(|t| ClientEvent::TimestampReceived(t.time)),
             TopicToDevice::FWUpdateAnnounce => {
@@ -268,6 +281,35 @@ impl<M: MqttClient, S> Client<M, S> {
             }
         }
     }
+
+    /// Enter [diagnostic mode](crate::logic::diagnostics), as requested by
+    /// [cmd::Cmd::DiagnosticsOn].
+    #[cfg(feature = "mqtt-log")]
+    fn start_diagnostics(timeout_s: u32) {
+        let timeout_s = crate::logic::diagnostics::start(timeout_s);
+        log::info!(target: "Diagnostics", "Diagnostic mode on for {timeout_s}s");
+    }
+
+    /// Leave [diagnostic mode](crate::logic::diagnostics), as requested by
+    /// [cmd::Cmd::DiagnosticsOff].
+    #[cfg(feature = "mqtt-log")]
+    fn stop_diagnostics() {
+        crate::logic::diagnostics::stop();
+        log::info!(target: "Diagnostics", "Diagnostic mode off");
+    }
+
+    /// Without the `mqtt-log` feature there are no logs to publish, so staying
+    /// online for them would only drain the battery.
+    #[cfg(not(feature = "mqtt-log"))]
+    fn start_diagnostics(_timeout_s: u32) {
+        log::warn!(
+            target: "Diagnostics",
+            "Ignored diagnostics request: publishing logs over MQTT is not supported"
+        );
+    }
+
+    #[cfg(not(feature = "mqtt-log"))]
+    fn stop_diagnostics() {}
 
     pub async fn send_online(&mut self, since: Milliseconds) -> Result<(), Error<M::ClientError>> {
         let online = Online::yes(since);

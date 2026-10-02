@@ -1,5 +1,6 @@
 pub mod active_config;
 pub mod client;
+pub mod diagnostics;
 pub mod dispatch;
 pub mod network;
 pub mod serializer;

@@ -96,9 +96,11 @@ impl<EP: StatefulOutputPin, PK: OutputPin, RP: OutputPin, SP: InputPin> ModemVar
     for Eg915<EP, PK, RP, SP>
 {
     const MODEL_PREFIX: &'static str = "eg915";
-    /// Maximum supported by the EG915N main UART
-    const TARGET_BAUDRATE: Option<u32> = Some(1_000_000);
-    /// Volatile: the modem falls back to 115200 on every power-cycle
+    /// Stay at the 115200 boot rate. After AT+IPR=1000000 (the EG915N maximum)
+    /// the modem switches, but the MCU could not talk to it at that rate in
+    /// practice and every later command timed out.
+    const TARGET_BAUDRATE: Option<u32> = None;
+    /// Unused: no baudrate is negotiated
     const PERSIST_BAUDRATE: bool = false;
 
     fn is_powered(&mut self) -> bool {
@@ -112,7 +114,7 @@ impl<EP: StatefulOutputPin, PK: OutputPin, RP: OutputPin, SP: InputPin> ModemVar
 
         self.enable.set_high().ok();
         // VBAT must be stable >= 30 ms before asserting PWRKEY.
-        // The rail stabilizes ~2 ms after enable (measured on the 5101 board).
+        // The rail stabilizes ~2 ms after enable (measured).
         delay_ms(32).await;
 
         // PWRKEY low (asserted) >= 500 ms turns the module on
@@ -121,8 +123,8 @@ impl<EP: StatefulOutputPin, PK: OutputPin, RP: OutputPin, SP: InputPin> ModemVar
         self.pwrkey.set_low().ok();
 
         // Diagnostic only: STATUS is not used to gate the power-on, the
-        // driver awaits the RDY URC instead. Note: on the 5101 board STATUS
-        // reads low while the modem is on (inverting level shifter).
+        // driver awaits the RDY URC instead. Note: behind an inverting level
+        // shifter STATUS reads low while the modem is on.
         log::debug!(target: "quectel", "STATUS pin high: {:?}", self.status.is_high());
     }
 

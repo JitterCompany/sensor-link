@@ -2,6 +2,7 @@
 //! per-device loop screen. All work happens in the worker thread.
 
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::mpsc::{Receiver, Sender, channel},
 };
@@ -24,7 +25,12 @@ pub struct App {
     #[cfg(target_os = "macos")]
     _menu: Option<muda::Menu>,
     screen: Screen,
+    /// Last issuance log per project name, persisted across runs.
+    log_paths: BTreeMap<String, String>,
+    demo: bool,
 }
+
+const LOG_PATHS_KEY: &str = "log_paths";
 
 /// Build the macOS application menu with an About item and the standard
 /// Hide/Quit entries, and install it.
@@ -84,6 +90,9 @@ struct Setup {
     artifacts: Option<Result<Artifacts, String>>,
     variant: usize,
     log: String,
+    /// `log` was filled from a zip, not by the operator, so selecting a zip
+    /// of another project may replace it.
+    log_autofilled: bool,
     pin: String,
     ca_cert_file: Option<PathBuf>,
     /// Set from the command line only.
@@ -153,6 +162,7 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, mode: Mode) -> Self {
         let (tx, cmd_rx) = channel();
         let (ev_tx, rx) = channel();
+        let demo = matches!(mode, Mode::Demo);
         let dev_ca = match mode {
             Mode::Hardware { dev_ca } => {
                 worker::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
@@ -177,6 +187,11 @@ impl App {
                 dev_ca,
                 ..Default::default()
             }),
+            log_paths: cc
+                .storage
+                .and_then(|s| eframe::get_value(s, LOG_PATHS_KEY))
+                .unwrap_or_default(),
+            demo,
         }
     }
 
@@ -189,6 +204,12 @@ impl App {
                     }
                 }
                 Event::SessionReady(info) => {
+                    // A demo or development-CA log must not become the
+                    // project's production default.
+                    if !self.demo && !info.dev_ca {
+                        self.log_paths
+                            .insert(info.project.clone(), info.log.display().to_string());
+                    }
                     self.screen = Screen::Session(Session {
                         checks: info.checks,
                         info: *info,
@@ -287,10 +308,14 @@ impl eframe::App for App {
         }
         self.handle_events();
         egui::CentralPanel::default().show(ctx, |ui| match &mut self.screen {
-            Screen::Setup(setup) => setup.ui(ui, &self.tx, self.logo.as_ref()),
+            Screen::Setup(setup) => setup.ui(ui, &self.tx, self.logo.as_ref(), &self.log_paths),
             Screen::Session(session) => session.ui(ui, &self.tx, self.logo.as_ref()),
         });
         self.about_ui(ctx);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, LOG_PATHS_KEY, &self.log_paths);
     }
 }
 
@@ -328,6 +353,7 @@ impl Setup {
         ui: &mut egui::Ui,
         tx: &Sender<Command>,
         logo_tex: Option<&egui::TextureHandle>,
+        log_paths: &BTreeMap<String, String>,
     ) {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -349,10 +375,17 @@ impl Setup {
                             self.zip = Some(p);
                             self.variant = 0;
                             if let Some(Ok(a)) = &self.artifacts
-                                && self.log.is_empty()
-                                && let Some(d) = a.profile.default_log_path()
+                                && (self.log.is_empty() || self.log_autofilled)
                             {
-                                self.log = d.display().to_string();
+                                let profile = &a.profile;
+                                self.log = log_paths
+                                    .get(&profile.project.name)
+                                    .cloned()
+                                    .or_else(|| {
+                                        profile.default_log_path().map(|d| d.display().to_string())
+                                    })
+                                    .unwrap_or_default();
+                                self.log_autofilled = true;
                             }
                         }
                         if let Some(z) = &self.zip {
@@ -417,15 +450,22 @@ impl Setup {
                         .show(ui, |ui| {
                             ui.label("Issuance log (CSV)");
                             ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.log).desired_width(360.0),
-                                );
+                                if ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut self.log)
+                                            .desired_width(360.0),
+                                    )
+                                    .changed()
+                                {
+                                    self.log_autofilled = false;
+                                }
                                 if ui.button("\u{2026}").clicked()
                                     && let Some(p) = rfd::FileDialog::new()
                                         .add_filter("csv", &["csv"])
                                         .save_file()
                                 {
                                     self.log = p.display().to_string();
+                                    self.log_autofilled = false;
                                 }
                             });
                             ui.end_row();

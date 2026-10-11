@@ -16,7 +16,8 @@ release zip, so the same binary serves every sensor-link product.
 2. Start `sensor-link-provision`, select the firmware release zip
    (`firmware-build-<run>.zip` from the project's *Firmware Release Build*
    workflow), pick the device variant, check the log path, enter the
-   YubiKey PIV PIN, *Start session*.
+   YubiKey PIV PIN, *Start session*. The log path is remembered per project
+   once a session starts.
 3. Per device: scan the UID barcode, scan the SIM barcode (ICCID), wait for
    the sound. Green OK = done; orange UNVERIFIED = flashed and logged but the
    boot log did not show the UID, or the device did not connect over MQTT

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 - 2026-10-11
 
 - Optional checks: a *Checks* row in the session screen turns the SIM ICCID
   check and the MQTT connection check on or off. Defaults come from a new

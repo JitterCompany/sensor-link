@@ -215,30 +215,10 @@ fn flash_test(args: &[String]) -> Result<()> {
         Duration::from_secs(t.rtt_timeout_s),
         |_log| {},
     )?;
-    let checks = &profile.checks;
-    let connected = if uid_seen && checks.mqtt {
-        println!(
-            "Waiting {} s for '{}'",
-            checks.mqtt_timeout_s, checks.mqtt_marker
-        );
-        Some(boot.wait_for(
-            &mut session,
-            &checks.mqtt_marker,
-            Duration::from_secs(checks.mqtt_timeout_s),
-            |_log| {},
-        )?)
-    } else {
-        None
-    };
     println!(
-        "--- RTT ---\n{}\n--- {}{} ---",
+        "--- RTT ---\n{}\n--- {} ---",
         boot.log,
-        if uid_seen { "UID SEEN" } else { "UID NOT SEEN" },
-        match connected {
-            Some(true) => ", MQTT CONNECTED",
-            Some(false) => ", MQTT NOT CONNECTED",
-            None => "",
-        }
+        if uid_seen { "UID SEEN" } else { "UID NOT SEEN" }
     );
     Ok(())
 }

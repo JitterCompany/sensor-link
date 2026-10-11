@@ -118,6 +118,10 @@ pub trait NetworkClient {
     ) -> Result<(), Error<Self::ClientError>>;
 }
 
+/// Logged once the MQTT session is up. sensor-link-provision looks for this
+/// line in the boot log to verify a device, so keep the text stable.
+pub const CONNECTED_MARKER: &str = "sensor-link: mqtt connected";
+
 const MIN_RETRY_DELAY_SEC: u32 = 3;
 
 /// This is the absolute worst-case time it could take to connect to server,
@@ -233,6 +237,7 @@ pub async fn network_task<
             }
             Some(Ok(_)) => {
                 log::info!("Network Connected");
+                log::info!("{CONNECTED_MARKER}");
                 offline_since = None;
 
                 signal_queue

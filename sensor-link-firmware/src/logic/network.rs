@@ -236,7 +236,6 @@ pub async fn network_task<
                 DisconnectReason::Fatal
             }
             Some(Ok(_)) => {
-                log::info!("Network Connected");
                 log::info!("{CONNECTED_MARKER}");
                 offline_since = None;
 

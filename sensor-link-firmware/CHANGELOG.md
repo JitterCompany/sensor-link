@@ -3,7 +3,8 @@
 ## Unreleased
 
 - The network task logs `logic::network::CONNECTED_MARKER` once the MQTT
-  session is up, so provisioning can verify a device's connection over RTT.
+  session is up, in place of "Network Connected", so provisioning can verify
+  a device's connection over RTT.
 - Dispatch barrier: `DispatchBarrier` lets another task ask the dispatch task to
   reply with `Signal::DispatchDrained` once everything it received so far has been
   stored, sent and confirmed by the network task. Breaking: `dispatch_task` takes

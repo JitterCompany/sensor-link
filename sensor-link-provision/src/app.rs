@@ -11,7 +11,7 @@ use eframe::egui::{self, Color32, RichText};
 use crate::{
     artifacts::Artifacts,
     flash, log_csv, sound, validate,
-    worker::{self, Command, DevCa, Event, Outcome, SessionConfig, SessionInfo, StepState},
+    worker::{self, Checks, Command, DevCa, Event, Outcome, SessionConfig, SessionInfo, StepState},
 };
 
 pub struct App {
@@ -99,6 +99,7 @@ struct Session {
     icc: String,
     focus_uid: bool,
     focus_icc: bool,
+    checks: Checks,
     counts: Counts,
     phase: Phase,
     last: Option<Finished>,
@@ -140,11 +141,28 @@ struct Finished {
     error: Option<String>,
 }
 
+pub enum Mode {
+    Hardware {
+        dev_ca: Option<DevCa>,
+    },
+    /// Simulated session, see [`crate::demo`].
+    Demo,
+}
+
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, dev_ca: Option<DevCa>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, mode: Mode) -> Self {
         let (tx, cmd_rx) = channel();
         let (ev_tx, rx) = channel();
-        worker::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
+        let dev_ca = match mode {
+            Mode::Hardware { dev_ca } => {
+                worker::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
+                dev_ca
+            }
+            Mode::Demo => {
+                crate::demo::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
+                None
+            }
+        };
         cc.egui_ctx.set_zoom_factor(1.15);
         let _ = tx.send(Command::ListProbes);
         Self {
@@ -172,6 +190,7 @@ impl App {
                 }
                 Event::SessionReady(info) => {
                     self.screen = Screen::Session(Session {
+                        checks: info.checks,
                         info: *info,
                         uid: String::new(),
                         icc: String::new(),
@@ -195,7 +214,7 @@ impl App {
                 Event::Step { index, state } => {
                     if let Screen::Session(s) = &mut self.screen {
                         if let StepState::Failed(m) = &state
-                            && index != worker::STEPS.len() - 1
+                            && index < worker::STEP_RTT
                         {
                             s.phase = Phase::Failed {
                                 step: index,
@@ -617,6 +636,23 @@ impl Session {
         ui.add_space(4.0);
 
         let idle = matches!(self.phase, Phase::Idle);
+        ui.add_enabled_ui(idle, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Checks:");
+                ui.checkbox(&mut self.checks.iccid, "SIM ICCID").on_hover_text(
+                    "Warn when the scanned ICCID is not 19 or 20 digits with a valid Luhn checksum.",
+                );
+                ui.checkbox(
+                    &mut self.checks.mqtt,
+                    format!("MQTT connection ({} s)", self.info.mqtt_timeout_s),
+                )
+                .on_hover_text(
+                    "Only mark a device OK once it connects to the server. \
+                     Turn off when the SIMs are not active yet.",
+                );
+            });
+        });
+        ui.add_space(4.0);
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
         let scan_color = Color32::from_rgb(45, 120, 220);
         let mut uid_focused = false;
@@ -716,6 +752,9 @@ impl Session {
                     StepState::Failed(_) => {
                         ui.colored_label(Color32::from_rgb(200, 40, 40), "✘");
                     }
+                    StepState::Skipped => {
+                        ui.label(RichText::new("–").weak());
+                    }
                 };
                 ui.label(*name);
                 if matches!(self.steps[i], StepState::Running) && self.progress[i] > 0.001 {
@@ -784,7 +823,7 @@ impl Session {
         if let Some(w) = validate::uid_warning(&self.uid, self.info.uid_min, self.info.uid_max) {
             warnings.push(w);
         }
-        if !validate::iccid_valid(&self.icc) {
+        if self.checks.iccid && !validate::iccid_valid(&self.icc) {
             warnings.push(validate::ICCID_WARNING.to_owned());
         }
         let reprovision = log_csv::contains_uid(&self.info.log, &self.uid);
@@ -865,6 +904,7 @@ impl Session {
                         uid: uid.clone(),
                         icc: icc.clone(),
                         reprovision: *reprovision,
+                        checks: self.checks,
                     });
                     next = Some(Phase::Running);
                 } else {
@@ -887,6 +927,7 @@ impl Session {
                                         uid: uid.clone(),
                                         icc: icc.clone(),
                                         reprovision: *reprovision,
+                                        checks: self.checks,
                                     });
                                     next = Some(Phase::Running);
                                 }
@@ -936,7 +977,7 @@ impl Session {
                     ui.add_space(6.0);
                     ui.colored_label(
                         Color32::from_rgb(210, 140, 0),
-                        format!("{} device(s) flashed but not verified over RTT; re-provision them if they do not work.", self.counts.unverified),
+                        format!("{} device(s) flashed but not verified (boot or MQTT check); re-provision them if they do not work.", self.counts.unverified),
                     );
                 }
                 ui.add_space(8.0);

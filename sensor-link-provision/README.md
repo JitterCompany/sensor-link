@@ -19,9 +19,13 @@ release zip, so the same binary serves every sensor-link product.
    YubiKey PIV PIN, *Start session*.
 3. Per device: scan the UID barcode, scan the SIM barcode (ICCID), wait for
    the sound. Green OK = done; orange UNVERIFIED = flashed and logged but the
-   boot log did not show the UID (re-provision if it does not work); red
-   FAIL = not provisioned, retry the same UID.
-4. *End session* shows the counts and the project's reminder (for example,
+   boot log did not show the UID, or the device did not connect over MQTT
+   (re-provision if it does not work); red FAIL = not provisioned, retry the
+   same UID.
+4. The *Checks* row turns optional checks on or off for the session: the
+   SIM ICCID format check, and waiting for an MQTT connection before marking
+   a device OK. Turn the MQTT check off when the SIMs are not active yet.
+5. *End session* shows the counts and the project's reminder (for example,
    registering the SIM ICCIDs).
 
 The session start checks the PIN once (three wrong PINs lock the PIV
@@ -145,6 +149,12 @@ cert_subject = { OU = "Devices", O = "Acme", C = "NL" }
 cert_validity_days = 9650
 ca_piv_slot = "R1"           # retired slot R1..R20, or hex 82..95
 
+[checks]                     # optional; defaults shown, toggled per session
+iccid = true                 # warn on an ICCID that is not 19/20 digits + Luhn
+mqtt = false                 # wait for the MQTT connected marker after boot
+mqtt_marker = "sensor-link: mqtt connected"  # logged by sensor-link-firmware
+mqtt_timeout_s = 60          # counted from the UID showing up
+
 [session]                    # optional
 default_log = "~/acme-provisioning/issuance.csv"
 exit_note = "Register each provisioned device in the tracking sheet."
@@ -188,6 +198,13 @@ sensor-link-provision --dev-ca-key dev_ca.key --dev-ca-cert dev_ca.pem
 ```
 
 Devices provisioned this way only connect to a broker that trusts `dev_ca.pem`.
+
+## Trying the GUI without hardware
+
+`sensor-link-provision --demo` opens a simulated session: no probe, YubiKey
+or firmware zip, and nothing is written to a log. A UID containing `FAIL`
+makes a step fail (Retry succeeds), `NOBOOT` fails the boot check and
+`NOMQTT` fails the MQTT check.
 
 ## Command-line checks
 

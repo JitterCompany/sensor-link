@@ -22,6 +22,8 @@ pub struct Profile {
     pub identity: Identity,
     #[serde(default)]
     pub session: Session,
+    #[serde(default)]
+    pub checks: Checks,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -95,6 +97,31 @@ pub struct Session {
     /// Reminder shown when the operator ends the session.
     #[serde(default)]
     pub exit_note: Option<String>,
+}
+
+/// Defaults for the optional checks; the operator can toggle them per session.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Checks {
+    /// Warn when the scanned ICCID fails the length or Luhn check.
+    pub iccid: bool,
+    /// Only mark a device OK once the firmware logs `mqtt_marker`. Off by
+    /// default: firmware built before the marker existed never prints it.
+    pub mqtt: bool,
+    pub mqtt_marker: String,
+    /// Counted from the moment the UID shows up in the boot log.
+    pub mqtt_timeout_s: u64,
+}
+
+impl Default for Checks {
+    fn default() -> Self {
+        Checks {
+            iccid: true,
+            mqtt: false,
+            mqtt_marker: sensor_link_firmware::logic::network::CONNECTED_MARKER.into(),
+            mqtt_timeout_s: 60,
+        }
+    }
 }
 
 fn default_version() -> u32 {
@@ -247,6 +274,22 @@ mod tests {
         assert_eq!(p.identity.piv_slot().unwrap(), 0x82);
         assert_eq!(p.variants[0].device_type, 1);
         assert_eq!(p.version, 1);
+    }
+
+    #[test]
+    fn checks_default_and_partial() {
+        let p = Profile::parse(EXAMPLE_PROFILE).unwrap();
+        assert!(p.checks.iccid);
+        assert!(!p.checks.mqtt);
+        assert_eq!(p.checks.mqtt_timeout_s, 60);
+        let on = format!("{EXAMPLE_PROFILE}\n[checks]\nmqtt = true\n");
+        let p = Profile::parse(&on).unwrap();
+        assert!(p.checks.mqtt);
+        assert!(p.checks.iccid);
+        assert_eq!(
+            p.checks.mqtt_marker,
+            sensor_link_firmware::logic::network::CONNECTED_MARKER
+        );
     }
 
     #[test]

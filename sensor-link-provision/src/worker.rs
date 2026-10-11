@@ -7,16 +7,18 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, ensure};
 use eframe::egui;
 
 use crate::{
     artifacts::Artifacts,
     cert::{self, Ca, DeviceKey},
-    config_bin, flash, log_csv, rtt, yubikey_ca,
+    config_bin, flash, log_csv,
+    profile::Profile,
+    rtt, yubikey_ca,
 };
 
-pub const STEPS: [&str; 8] = [
+pub const STEPS: [&str; 9] = [
     "Sign device certificate",
     "Build config",
     "Connect to probe",
@@ -25,9 +27,20 @@ pub const STEPS: [&str; 8] = [
     "Write config",
     "Append to log",
     "Verify boot (RTT)",
+    "Verify connection (MQTT)",
 ];
 const STEP_LOG: usize = 6;
-const STEP_RTT: usize = 7;
+/// First of the verify steps. These are advisory: a failure there marks the
+/// device unverified instead of asking the operator to retry.
+pub const STEP_RTT: usize = 7;
+pub const STEP_MQTT: usize = 8;
+
+/// Optional checks, toggled by the operator per session.
+#[derive(Debug, Clone, Copy)]
+pub struct Checks {
+    pub iccid: bool,
+    pub mqtt: bool,
+}
 
 /// Development-only CA from files (`--dev-ca-key/--dev-ca-cert`); replaces
 /// the YubiKey entirely.
@@ -63,6 +76,9 @@ pub struct SessionInfo {
     pub uid_min: usize,
     pub uid_max: usize,
     pub exit_note: Option<String>,
+    /// Profile defaults for the optional checks.
+    pub checks: Checks,
+    pub mqtt_timeout_s: u64,
 }
 
 pub enum Command {
@@ -74,6 +90,7 @@ pub enum Command {
         uid: String,
         icc: String,
         reprovision: bool,
+        checks: Checks,
     },
     /// Re-run the step that failed.
     Retry,
@@ -87,11 +104,14 @@ pub enum StepState {
     Running,
     Done,
     Failed(String),
+    /// Check turned off, or not reachable after an earlier check failed.
+    Skipped,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
-    /// Flashed and the firmware reported the UID over RTT.
+    /// Flashed, the firmware reported the UID over RTT, and the MQTT
+    /// connection check passed when enabled.
     Ok,
     /// Flashed and logged, but the boot log did not confirm the UID.
     Unverified,
@@ -176,7 +196,8 @@ impl Worker {
                     uid,
                     icc,
                     reprovision,
-                } => self.provision(&uid, &icc, reprovision),
+                    checks,
+                } => self.provision(&uid, &icc, reprovision, checks),
                 Command::Retry | Command::Skip => {}
             }
         }
@@ -245,6 +266,11 @@ impl Worker {
             uid_min: profile.identity.uid_min,
             uid_max: profile.identity.uid_max,
             exit_note: profile.session.exit_note.clone(),
+            checks: Checks {
+                iccid: profile.checks.iccid,
+                mqtt: profile.checks.mqtt,
+            },
+            mqtt_timeout_s: profile.checks.mqtt_timeout_s,
         };
         self.session = Some(Session {
             artifacts,
@@ -287,7 +313,7 @@ impl Worker {
         }
     }
 
-    fn provision(&mut self, uid: &str, icc: &str, reprovision: bool) {
+    fn provision(&mut self, uid: &str, icc: &str, reprovision: bool, checks: Checks) {
         for index in 0..STEPS.len() {
             self.send(Event::Step {
                 index,
@@ -358,59 +384,11 @@ impl Worker {
                     },
                 )
             })?;
-            // From here the device is provisioned; the boot check is advisory.
-            self.send(Event::Step {
-                index: STEP_RTT,
-                state: StepState::Running,
-            });
-            let tx = self.events.clone();
-            let ctx = self.ctx.clone();
-            let check = flash::reset(&mut probe).and_then(|()| {
-                rtt::wait_for_uid(
-                    &mut probe,
-                    target.rtt_address,
-                    &target.boot_banner,
-                    uid,
-                    Duration::from_secs(target.rtt_timeout_s),
-                    |log| {
-                        let _ = tx.send(Event::Rtt(log.to_owned()));
-                        ctx.request_repaint();
-                    },
-                )
-            });
-            drop(probe);
-            match check {
-                Ok(cap) if cap.matched => {
-                    rtt_log = cap.log;
-                    self.send(Event::Step {
-                        index: STEP_RTT,
-                        state: StepState::Done,
-                    });
-                    Ok(Outcome::Ok)
-                }
-                Ok(cap) => {
-                    rtt_log = cap.log;
-                    let msg = format!(
-                        "UID not seen in the boot log within {} s",
-                        target.rtt_timeout_s
-                    );
-                    self.send(Event::Step {
-                        index: STEP_RTT,
-                        state: StepState::Failed(msg.clone()),
-                    });
-                    last_error = Some(msg);
-                    Ok(Outcome::Unverified)
-                }
-                Err(e) => {
-                    let msg = format!("{e:#}");
-                    self.send(Event::Step {
-                        index: STEP_RTT,
-                        state: StepState::Failed(msg.clone()),
-                    });
-                    last_error = Some(msg);
-                    Ok(Outcome::Unverified)
-                }
-            }
+            // From here the device is provisioned; the boot checks are advisory.
+            let (outcome, log, error) = self.verify(&mut probe, profile, uid, checks);
+            rtt_log = log;
+            last_error = error;
+            Ok(outcome)
         })()
         .unwrap_or_else(|Skipped| {
             last_error = Some("skipped by operator".into());
@@ -424,5 +402,89 @@ impl Worker {
             rtt_log,
             error: last_error,
         });
+    }
+
+    /// Reset the device and watch its boot log: first for the UID, then for
+    /// the MQTT connected marker when that check is on. Returns the outcome,
+    /// the captured log and the first failure.
+    fn verify(
+        &self,
+        probe: &mut probe_rs::Session,
+        profile: &Profile,
+        uid: &str,
+        checks: Checks,
+    ) -> (Outcome, String, Option<String>) {
+        let target = &profile.target;
+        let tx = self.events.clone();
+        let ctx = self.ctx.clone();
+        let mut on_update = |log: &str| {
+            let _ = tx.send(Event::Rtt(log.to_owned()));
+            ctx.request_repaint();
+        };
+        let mut boot = rtt::BootLog::new(target.rtt_address, &target.boot_banner);
+
+        self.send(Event::Step {
+            index: STEP_RTT,
+            state: StepState::Running,
+        });
+        let booted = flash::reset(probe)
+            .and_then(|()| {
+                boot.wait_for(
+                    probe,
+                    uid,
+                    Duration::from_secs(target.rtt_timeout_s),
+                    &mut on_update,
+                )
+            })
+            .and_then(|seen| {
+                ensure!(
+                    seen,
+                    "UID not seen in the boot log within {} s",
+                    target.rtt_timeout_s
+                );
+                Ok(())
+            });
+        let mut error = self.finish_verify_step(STEP_RTT, booted);
+
+        if checks.mqtt && error.is_none() {
+            self.send(Event::Step {
+                index: STEP_MQTT,
+                state: StepState::Running,
+            });
+            let timeout_s = profile.checks.mqtt_timeout_s;
+            let connected = boot
+                .wait_for(
+                    probe,
+                    &profile.checks.mqtt_marker,
+                    Duration::from_secs(timeout_s),
+                    &mut on_update,
+                )
+                .and_then(|seen| {
+                    ensure!(seen, "no MQTT connection within {timeout_s} s");
+                    Ok(())
+                });
+            error = self.finish_verify_step(STEP_MQTT, connected);
+        } else {
+            self.send(Event::Step {
+                index: STEP_MQTT,
+                state: StepState::Skipped,
+            });
+        }
+
+        let outcome = match error {
+            None => Outcome::Ok,
+            Some(_) => Outcome::Unverified,
+        };
+        (outcome, boot.log, error)
+    }
+
+    fn finish_verify_step(&self, index: usize, result: Result<()>) -> Option<String> {
+        let error = result.err().map(|e| format!("{e:#}"));
+        let state = match &error {
+            None => StepState::Done,
+            Some(msg) => StepState::Failed(msg.clone()),
+        };
+        self.send(Event::Step { index, state });
+        error
     }
 }

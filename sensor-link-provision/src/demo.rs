@@ -156,8 +156,7 @@ impl Demo {
             self.step_state(STEP_MQTT, StepState::Failed(msg.clone()));
             return (Outcome::Unverified, log, Some(msg));
         }
-        line("Network Connected", 1500);
-        line(MARKER, 0);
+        line(MARKER, 1500);
         self.step_state(STEP_MQTT, StepState::Done);
         (Outcome::Ok, log, None)
     }

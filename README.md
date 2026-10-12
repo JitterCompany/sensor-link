@@ -24,6 +24,15 @@ Tools to help build & test hardware during manufacturing.
 | [sensor-link-provision/](sensor-link-provision/) | Desktop provisioning tool: flashes bootloader, firmware and device config over J-Link, signs device certificates with a YubiKey-held CA |
 | [factory-test/](factory-test/) | Factory test firmware for test jigs, each its own embedded workspace excluded from the root workspace |
 
+## Development tools
+
+Host-side tools that each stand in for one end of the device ↔ server connection.
+
+| Crate | Contents |
+|---|---|
+| [mock-device](mock-device/) | Mock sensor device that speaks the sensor-link MQTT protocol, for exercising a broker and server |
+| [sensor-link-console](sensor-link-console/) | Interactive console to a device over MQTT: sends it commands from the server's side and prints what it publishes |
+
 ## Linting
 
 The workspace carries a backlog of clippy findings.

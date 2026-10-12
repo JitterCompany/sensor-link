@@ -2,6 +2,7 @@
 //! per-device loop screen. All work happens in the worker thread.
 
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::mpsc::{Receiver, Sender, channel},
 };
@@ -11,7 +12,7 @@ use eframe::egui::{self, Color32, RichText};
 use crate::{
     artifacts::Artifacts,
     flash, log_csv, sound, validate,
-    worker::{self, Command, DevCa, Event, Outcome, SessionConfig, SessionInfo, StepState},
+    worker::{self, Checks, Command, DevCa, Event, Outcome, SessionConfig, SessionInfo, StepState},
 };
 
 pub struct App {
@@ -24,7 +25,12 @@ pub struct App {
     #[cfg(target_os = "macos")]
     _menu: Option<muda::Menu>,
     screen: Screen,
+    /// Last issuance log per project name, persisted across runs.
+    log_paths: BTreeMap<String, String>,
+    demo: bool,
 }
+
+const LOG_PATHS_KEY: &str = "log_paths";
 
 /// Build the macOS application menu with an About item and the standard
 /// Hide/Quit entries, and install it.
@@ -84,6 +90,9 @@ struct Setup {
     artifacts: Option<Result<Artifacts, String>>,
     variant: usize,
     log: String,
+    /// `log` was filled from a zip, not by the operator, so selecting a zip
+    /// of another project may replace it.
+    log_autofilled: bool,
     pin: String,
     ca_cert_file: Option<PathBuf>,
     /// Set from the command line only.
@@ -99,6 +108,7 @@ struct Session {
     icc: String,
     focus_uid: bool,
     focus_icc: bool,
+    checks: Checks,
     counts: Counts,
     phase: Phase,
     last: Option<Finished>,
@@ -140,11 +150,29 @@ struct Finished {
     error: Option<String>,
 }
 
+pub enum Mode {
+    Hardware {
+        dev_ca: Option<DevCa>,
+    },
+    /// Simulated session, see [`crate::demo`].
+    Demo,
+}
+
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, dev_ca: Option<DevCa>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, mode: Mode) -> Self {
         let (tx, cmd_rx) = channel();
         let (ev_tx, rx) = channel();
-        worker::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
+        let demo = matches!(mode, Mode::Demo);
+        let dev_ca = match mode {
+            Mode::Hardware { dev_ca } => {
+                worker::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
+                dev_ca
+            }
+            Mode::Demo => {
+                crate::demo::spawn(cmd_rx, ev_tx, cc.egui_ctx.clone());
+                None
+            }
+        };
         cc.egui_ctx.set_zoom_factor(1.15);
         let _ = tx.send(Command::ListProbes);
         Self {
@@ -159,6 +187,11 @@ impl App {
                 dev_ca,
                 ..Default::default()
             }),
+            log_paths: cc
+                .storage
+                .and_then(|s| eframe::get_value(s, LOG_PATHS_KEY))
+                .unwrap_or_default(),
+            demo,
         }
     }
 
@@ -171,7 +204,14 @@ impl App {
                     }
                 }
                 Event::SessionReady(info) => {
+                    // A demo or development-CA log must not become the
+                    // project's production default.
+                    if !self.demo && !info.dev_ca {
+                        self.log_paths
+                            .insert(info.project.clone(), info.log.display().to_string());
+                    }
                     self.screen = Screen::Session(Session {
+                        checks: info.checks,
                         info: *info,
                         uid: String::new(),
                         icc: String::new(),
@@ -195,7 +235,7 @@ impl App {
                 Event::Step { index, state } => {
                     if let Screen::Session(s) = &mut self.screen {
                         if let StepState::Failed(m) = &state
-                            && index != worker::STEPS.len() - 1
+                            && index < worker::STEP_RTT
                         {
                             s.phase = Phase::Failed {
                                 step: index,
@@ -268,10 +308,14 @@ impl eframe::App for App {
         }
         self.handle_events();
         egui::CentralPanel::default().show(ctx, |ui| match &mut self.screen {
-            Screen::Setup(setup) => setup.ui(ui, &self.tx, self.logo.as_ref()),
+            Screen::Setup(setup) => setup.ui(ui, &self.tx, self.logo.as_ref(), &self.log_paths),
             Screen::Session(session) => session.ui(ui, &self.tx, self.logo.as_ref()),
         });
         self.about_ui(ctx);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, LOG_PATHS_KEY, &self.log_paths);
     }
 }
 
@@ -309,6 +353,7 @@ impl Setup {
         ui: &mut egui::Ui,
         tx: &Sender<Command>,
         logo_tex: Option<&egui::TextureHandle>,
+        log_paths: &BTreeMap<String, String>,
     ) {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -330,10 +375,17 @@ impl Setup {
                             self.zip = Some(p);
                             self.variant = 0;
                             if let Some(Ok(a)) = &self.artifacts
-                                && self.log.is_empty()
-                                && let Some(d) = a.profile.default_log_path()
+                                && (self.log.is_empty() || self.log_autofilled)
                             {
-                                self.log = d.display().to_string();
+                                let profile = &a.profile;
+                                self.log = log_paths
+                                    .get(&profile.project.name)
+                                    .cloned()
+                                    .or_else(|| {
+                                        profile.default_log_path().map(|d| d.display().to_string())
+                                    })
+                                    .unwrap_or_default();
+                                self.log_autofilled = true;
                             }
                         }
                         if let Some(z) = &self.zip {
@@ -398,15 +450,22 @@ impl Setup {
                         .show(ui, |ui| {
                             ui.label("Issuance log (CSV)");
                             ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut self.log).desired_width(360.0),
-                                );
+                                if ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut self.log)
+                                            .desired_width(360.0),
+                                    )
+                                    .changed()
+                                {
+                                    self.log_autofilled = false;
+                                }
                                 if ui.button("\u{2026}").clicked()
                                     && let Some(p) = rfd::FileDialog::new()
                                         .add_filter("csv", &["csv"])
                                         .save_file()
                                 {
                                     self.log = p.display().to_string();
+                                    self.log_autofilled = false;
                                 }
                             });
                             ui.end_row();
@@ -617,6 +676,23 @@ impl Session {
         ui.add_space(4.0);
 
         let idle = matches!(self.phase, Phase::Idle);
+        ui.add_enabled_ui(idle, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Checks:");
+                ui.checkbox(&mut self.checks.iccid, "SIM ICCID").on_hover_text(
+                    "Warn when the scanned ICCID is not 19 or 20 digits with a valid Luhn checksum.",
+                );
+                ui.checkbox(
+                    &mut self.checks.mqtt,
+                    format!("MQTT connection ({} s)", self.info.mqtt_timeout_s),
+                )
+                .on_hover_text(
+                    "Only mark a device OK once it connects to the server. \
+                     Turn off when the SIMs are not active yet.",
+                );
+            });
+        });
+        ui.add_space(4.0);
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
         let scan_color = Color32::from_rgb(45, 120, 220);
         let mut uid_focused = false;
@@ -716,6 +792,9 @@ impl Session {
                     StepState::Failed(_) => {
                         ui.colored_label(Color32::from_rgb(200, 40, 40), "✘");
                     }
+                    StepState::Skipped => {
+                        ui.label(RichText::new("–").weak());
+                    }
                 };
                 ui.label(*name);
                 if matches!(self.steps[i], StepState::Running) && self.progress[i] > 0.001 {
@@ -784,7 +863,7 @@ impl Session {
         if let Some(w) = validate::uid_warning(&self.uid, self.info.uid_min, self.info.uid_max) {
             warnings.push(w);
         }
-        if !validate::iccid_valid(&self.icc) {
+        if self.checks.iccid && !validate::iccid_valid(&self.icc) {
             warnings.push(validate::ICCID_WARNING.to_owned());
         }
         let reprovision = log_csv::contains_uid(&self.info.log, &self.uid);
@@ -865,6 +944,7 @@ impl Session {
                         uid: uid.clone(),
                         icc: icc.clone(),
                         reprovision: *reprovision,
+                        checks: self.checks,
                     });
                     next = Some(Phase::Running);
                 } else {
@@ -887,6 +967,7 @@ impl Session {
                                         uid: uid.clone(),
                                         icc: icc.clone(),
                                         reprovision: *reprovision,
+                                        checks: self.checks,
                                     });
                                     next = Some(Phase::Running);
                                 }
@@ -936,7 +1017,7 @@ impl Session {
                     ui.add_space(6.0);
                     ui.colored_label(
                         Color32::from_rgb(210, 140, 0),
-                        format!("{} device(s) flashed but not verified over RTT; re-provision them if they do not work.", self.counts.unverified),
+                        format!("{} device(s) flashed but not verified (boot or MQTT check); re-provision them if they do not work.", self.counts.unverified),
                     );
                 }
                 ui.add_space(8.0);

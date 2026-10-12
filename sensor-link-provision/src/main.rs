@@ -4,6 +4,7 @@ mod app;
 mod artifacts;
 mod cert;
 mod config_bin;
+mod demo;
 mod flash;
 mod log_csv;
 mod profile;
@@ -23,6 +24,7 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("--selftest-sign") => selftest_sign(&args[1..]),
         Some("--flash-test") => flash_test(&args[1..]),
+        Some("--demo") => run_gui(app::Mode::Demo),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             Ok(())
@@ -30,24 +32,29 @@ fn main() -> Result<()> {
         Some("--dev-ca-key" | "--dev-ca-cert") => {
             let key = arg(&args, "--dev-ca-key").context("--dev-ca-key PEM is required")?;
             let cert = arg(&args, "--dev-ca-cert").context("--dev-ca-cert PEM is required")?;
-            run_gui(Some(worker::DevCa {
-                key: key.into(),
-                cert: cert.into(),
-            }))
+            run_gui(app::Mode::Hardware {
+                dev_ca: Some(worker::DevCa {
+                    key: key.into(),
+                    cert: cert.into(),
+                }),
+            })
         }
         Some(other) => bail!("unknown option {other}\n{USAGE}"),
-        None => run_gui(None),
+        None => run_gui(app::Mode::Hardware { dev_ca: None }),
     }
 }
 
 const USAGE: &str = "sensor-link-provision [--dev-ca-key KEY.pem --dev-ca-cert CA.pem]
 sensor-link-provision --selftest-sign --zip Z [--ca-cert PEM]
 sensor-link-provision --flash-test --zip Z [--variant N] [--uid UID]
+sensor-link-provision --demo
 Without options the GUI starts with the CA on a YubiKey. --dev-ca-key/--dev-ca-cert start the GUI
 with a development CA from files instead (no YubiKey; shown prominently in the GUI).
 The subcommands exercise the hardware paths from a terminal:
   --selftest-sign   sign a test certificate with the YubiKey CA (asks for the PIN) and verify it
-  --flash-test      flash bootloader + firmware + a test config to a connected board and watch RTT";
+  --flash-test      flash bootloader + firmware + a test config to a connected board and watch RTT
+--demo opens a simulated session without any hardware. A UID containing FAIL, NOBOOT or NOMQTT
+picks a failure path.";
 
 fn app_icon() -> Option<eframe::egui::IconData> {
     let img = image::load_from_memory(include_bytes!("../assets/jitter-icon.png"))
@@ -61,7 +68,7 @@ fn app_icon() -> Option<eframe::egui::IconData> {
     })
 }
 
-fn run_gui(dev_ca: Option<worker::DevCa>) -> Result<()> {
+fn run_gui(mode: app::Mode) -> Result<()> {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_inner_size([960.0, 720.0])
         .with_title("sensor-link provisioning");
@@ -75,7 +82,7 @@ fn run_gui(dev_ca: Option<worker::DevCa>) -> Result<()> {
     eframe::run_native(
         "sensor-link-provision",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, dev_ca)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, mode)))),
     )
     .map_err(|e| anyhow::anyhow!("GUI: {e}"))
 }
@@ -201,22 +208,17 @@ fn flash_test(args: &[String]) -> Result<()> {
         t.rtt_address, t.rtt_timeout_s
     );
     flash::reset(&mut session)?;
-    let cap = rtt::wait_for_uid(
+    let mut boot = rtt::BootLog::new(t.rtt_address, &t.boot_banner);
+    let uid_seen = boot.wait_for(
         &mut session,
-        t.rtt_address,
-        &t.boot_banner,
         &uid,
         Duration::from_secs(t.rtt_timeout_s),
         |_log| {},
     )?;
     println!(
         "--- RTT ---\n{}\n--- {} ---",
-        cap.log,
-        if cap.matched {
-            "UID SEEN"
-        } else {
-            "UID NOT SEEN"
-        }
+        boot.log,
+        if uid_seen { "UID SEEN" } else { "UID NOT SEEN" }
     );
     Ok(())
 }

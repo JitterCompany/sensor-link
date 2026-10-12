@@ -12,10 +12,10 @@ pub fn uid_warning(uid: &str, min: usize, max: usize) -> Option<String> {
     (n < min || n > max).then(|| format!("UID '{uid}' is {n} characters (expected {min}-{max})."))
 }
 
-/// SIM ICCID: 20 digits with a valid Luhn-10 check digit.
+/// SIM ICCID: 19 or 20 digits with a valid Luhn-10 check digit.
 pub fn iccid_valid(icc: &str) -> bool {
     let icc = icc.trim();
-    if icc.len() != 20 || !icc.bytes().all(|b| b.is_ascii_digit()) {
+    if !(19..=20).contains(&icc.len()) || !icc.bytes().all(|b| b.is_ascii_digit()) {
         return false;
     }
     let sum: u32 = icc
@@ -35,8 +35,8 @@ pub fn iccid_valid(icc: &str) -> bool {
     sum.is_multiple_of(10)
 }
 
-pub const ICCID_WARNING: &str = "The SIM ICCID failed validation (expected 20 digits with a valid \
-Luhn-10 checksum). A wrong ICCID means the SIM may not get activated and the device-to-SIM \
+pub const ICCID_WARNING: &str = "The SIM ICCID failed validation (expected 19 or 20 digits with a \
+valid Luhn-10 checksum). A wrong ICCID means the SIM may not get activated and the device-to-SIM \
 record in the log will be incorrect, which later blocks stopping or upgrading this SIM's \
 subscription. Only override if you are certain the scanner mis-read a known-good card.";
 
@@ -50,6 +50,8 @@ mod tests {
         assert!(iccid_valid("89310410106543789305"));
         assert!(!iccid_valid("89310410106543789306"));
         assert!(!iccid_valid("8931041010654378930"));
+        assert!(iccid_valid("8931041010654378932"));
+        assert!(!iccid_valid("893104101065437893"));
         assert!(!iccid_valid("8931041010654378930a"));
         assert!(iccid_valid(" 89310410106543789305 "));
     }

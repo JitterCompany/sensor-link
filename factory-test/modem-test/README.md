@@ -81,7 +81,7 @@ probe-rs run --chip STM32L4R7ZITx target/thumbv7em-none-eabihf/release/factory_t
 ```
 
 For a factory image, run the **Modem factory test release build** workflow (manual, in
-GitHub Actions). It uploads `modem-test-<version>-<run>.elf` and `.bin`. Every push and PR
+GitHub Actions). It uploads `modem-test-<version>-<run>.elf` and `.hex` (Intel HEX). Every push and PR
 also runs `cargo check` on this workspace (the `modem-test` job in `rust.yml`).
 
 ## Documentation

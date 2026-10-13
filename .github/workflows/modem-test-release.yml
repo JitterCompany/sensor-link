@@ -44,7 +44,7 @@ jobs:
 
           mkdir -p dist
           cp "$ELF" "dist/modem-test-$VERSION.elf"
-          "$LLVM/llvm-objcopy" -O binary "$ELF" "dist/modem-test-$VERSION.bin"
+          "$LLVM/llvm-objcopy" -O ihex "$ELF" "dist/modem-test-$VERSION.hex"
           "$LLVM/llvm-size" "$ELF"
           ls -l dist
 

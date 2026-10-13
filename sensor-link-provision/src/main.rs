@@ -24,6 +24,7 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("--selftest-sign") => selftest_sign(&args[1..]),
         Some("--flash-test") => flash_test(&args[1..]),
+        Some("--verify") => verify(&args[1..]),
         Some("--demo") => run_gui(app::Mode::Demo),
         Some("--help" | "-h") => {
             println!("{USAGE}");
@@ -47,12 +48,15 @@ fn main() -> Result<()> {
 const USAGE: &str = "sensor-link-provision [--dev-ca-key KEY.pem --dev-ca-cert CA.pem]
 sensor-link-provision --selftest-sign --zip Z [--ca-cert PEM]
 sensor-link-provision --flash-test --zip Z [--variant N] [--uid UID]
+sensor-link-provision --verify --zip Z --uid UID [--variant N] [--flash]
 sensor-link-provision --demo
 Without options the GUI starts with the CA on a YubiKey. --dev-ca-key/--dev-ca-cert start the GUI
 with a development CA from files instead (no YubiKey; shown prominently in the GUI).
 The subcommands exercise the hardware paths from a terminal:
   --selftest-sign   sign a test certificate with the YubiKey CA (asks for the PIN) and verify it
   --flash-test      flash bootloader + firmware + a test config to a connected board and watch RTT
+  --verify          reset an already provisioned board and run the boot and MQTT checks; --flash
+                    first updates bootloader + firmware and leaves the config region alone
 --demo opens a simulated session without any hardware. A UID containing FAIL, NOBOOT or NOMQTT
 picks a failure path.";
 
@@ -127,6 +131,74 @@ fn selftest_sign(args: &[String]) -> Result<()> {
         issued.pem.len()
     );
     print!("{}", issued.pem);
+    Ok(())
+}
+
+fn verify(args: &[String]) -> Result<()> {
+    let zip = PathBuf::from(arg(args, "--zip").context("--zip is required")?);
+    let uid =
+        arg(args, "--uid").context("--uid is required: the UID the board was provisioned with")?;
+    let variant: usize = arg(args, "--variant")
+        .map(|v| v.parse())
+        .transpose()?
+        .unwrap_or(0);
+    let artifacts = artifacts::Artifacts::load(&zip)?;
+    let profile = &artifacts.profile;
+    let firmware = artifacts
+        .firmwares
+        .get(variant)
+        .context("variant index out of range")?;
+    let t = &profile.target;
+    println!("Attaching to {} at {} kHz", t.chip, t.swd_speed_khz);
+    let mut session = flash::attach(&t.chip, t.swd_speed_khz)?;
+    if args.iter().any(|a| a == "--flash") {
+        for elf in [&artifacts.bootloader, firmware] {
+            println!("Flashing {}", elf.name);
+            flash::flash_elf(&mut session, &elf.path, |f| {
+                print!("\r  {:>3.0}%", f * 100.0);
+                let _ = std::io::Write::flush(&mut std::io::stdout());
+            })?;
+            println!();
+        }
+    }
+
+    println!("Reset + RTT at {:#x}", t.rtt_address);
+    println!("--- RTT ---");
+    flash::reset(&mut session)?;
+    let mut shown = 0;
+    let mut show = |log: &str| {
+        print!("{}", &log[shown..]);
+        shown = log.len();
+    };
+    let mut boot = rtt::BootLog::new(t.rtt_address, &t.boot_banner);
+    let uid_seen = boot.wait_for(
+        &mut session,
+        &uid,
+        Duration::from_secs(t.rtt_timeout_s),
+        &mut show,
+    )?;
+    let checks = &profile.checks;
+    let connected = uid_seen
+        && boot.wait_for(
+            &mut session,
+            &checks.mqtt_marker,
+            Duration::from_secs(checks.mqtt_timeout_s),
+            &mut show,
+        )?;
+    println!();
+    println!("--- RTT ---");
+    match (uid_seen, connected) {
+        (false, _) => bail!(
+            "UID '{uid}' not seen in the boot log within {} s",
+            t.rtt_timeout_s
+        ),
+        (true, false) => bail!(
+            "no MQTT connection within {} s ('{}' not seen)",
+            checks.mqtt_timeout_s,
+            checks.mqtt_marker
+        ),
+        (true, true) => println!("UID SEEN, MQTT CONNECTED"),
+    }
     Ok(())
 }
 

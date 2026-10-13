@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `--verify` resets an already provisioned board and runs the boot and MQTT
+  checks, without a YubiKey. `--flash` first updates bootloader and firmware
+  and keeps the device's config and certificate.
+
 ## 1.2.0 - 2026-10-11
 
 - Optional checks: a *Checks* row in the session screen turns the SIM ICCID

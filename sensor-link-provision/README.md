@@ -216,6 +216,9 @@ For bring-up without the GUI:
 sensor-link-provision --selftest-sign --zip firmware-build-31.zip
 # Flash a board with a throwaway identity and print the RTT boot log
 sensor-link-provision --flash-test --zip firmware-build-31.zip --variant 0 --uid TEST00001
+# Re-check an already provisioned board: boot check, then the MQTT check.
+# --flash first updates bootloader and firmware, the config region stays.
+sensor-link-provision --verify --zip firmware-build-31.zip --uid ABC123DEF --flash
 ```
 
 ## Building

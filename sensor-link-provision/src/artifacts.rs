@@ -1,6 +1,7 @@
 //! The CI artifact zip: `provision.toml` plus bootloader and firmware ELFs.
 
 use std::{
+    borrow::Cow,
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
@@ -35,7 +36,11 @@ impl Artifacts {
         let file =
             File::open(zip_path).with_context(|| format!("opening {}", zip_path.display()))?;
         let mut zip = zip::ZipArchive::new(file).context("reading zip")?;
-        let names: Vec<String> = zip.file_names().map(str::to_owned).collect();
+        let names = zip
+            .file_names()
+            .map(|name| name.map(Cow::into_owned))
+            .collect::<Result<Vec<String>, _>>()
+            .context("reading zip entry names")?;
 
         let profile_entry = names
             .iter()

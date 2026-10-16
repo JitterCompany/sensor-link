@@ -21,6 +21,9 @@
 - Fix: the dispatch task wakes when the network task confirms or aborts an
   upload, so an aborted upload is retried without waiting for new data. Adds
   `DispatchStore::wait_confirmation`, breaking for implementations.
+- Fix: the Quectel MQTT will (ungraceful offline) is no longer retained. The
+  stale retained will made the server log "Offline (ungraceful)" on every
+  reconnect, even after a graceful offline.
 
 ## 0.2.0 - 2026-09-04
 

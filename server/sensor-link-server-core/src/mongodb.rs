@@ -8,7 +8,7 @@ use std::{
 
 use async_trait::async_trait;
 use bson::{doc, oid::ObjectId, to_bson, to_document, Binary, Bson, DateTime, Document};
-use chrono::{NaiveDate, Utc};
+use chrono::{NaiveDate, TimeDelta, Utc};
 use futures::{AsyncWriteExt, StreamExt, TryFutureExt, TryStreamExt};
 use itertools::Itertools;
 use mongodb::{
@@ -49,6 +49,10 @@ const DEFAULT_DATA_COLL_NAME_SUFFIX: &str = "";
 const SEC_DATA_COLL_NAME_SUFFIX: &str = ".sec";
 const MIN_DATA_COLL_NAME_SUFFIX: &str = ".min";
 const HOUR_DATA_COLL_NAME_SUFFIX: &str = ".hour";
+/// Data exports query this much time per chunk, halved on `TooMuchData`
+/// (e.g. 100 Hz raw data is 360k samples per hour) down to the minimum.
+const EXPORT_CHUNK_DURATION: TimeDelta = TimeDelta::hours(1);
+const MIN_EXPORT_CHUNK_DURATION: TimeDelta = TimeDelta::minutes(1);
 
 fn coll_name_suffix(resolution: TimeResolution) -> &'static str {
     match resolution {
@@ -1474,20 +1478,32 @@ where
         let mut include_freq = false;
         let mut include_perc = false;
 
-        for day_range in timerange.iter_hours() {
-            let mut timeseries = MPSensorDataChannels::new();
-            for &data_channel in data_channels.iter() {
-                let data = self
-                    .sensor_data_for_measuring_point(
-                        data_channel,
-                        Some(time_resolution),
-                        meas_point_id,
-                        &day_range,
-                        day_range.until == timerange.until,
-                    )
-                    .await?;
-                timeseries.push(data);
-            }
+        let mut chunk_duration = EXPORT_CHUNK_DURATION;
+        let mut from = timerange.from;
+        while from < timerange.until {
+            let chunk_range = TimeRange {
+                from,
+                until: (from + chunk_duration).min(timerange.until),
+            };
+            let timeseries = match self
+                .export_chunk(
+                    data_channels,
+                    time_resolution,
+                    meas_point_id,
+                    &chunk_range,
+                    chunk_range.until == timerange.until,
+                )
+                .await
+            {
+                Ok(timeseries) => timeseries,
+                Err(DataStoreError::TooMuchData) if chunk_duration > MIN_EXPORT_CHUNK_DURATION => {
+                    chunk_duration = (chunk_duration / 2).max(MIN_EXPORT_CHUNK_DURATION);
+                    tracing::debug!("Too much data, reducing export chunk to {chunk_duration}");
+                    continue;
+                }
+                Err(err) => return Err(err.into()),
+            };
+            from = chunk_range.until;
 
             if !header_written && !timeseries.is_empty() {
                 include_freq = timeseries.has_freq();
@@ -1756,6 +1772,41 @@ where
 
         tracing::info!("Total deleted documents: {}", total_deleted);
         Ok(())
+    }
+}
+
+impl<DC, C, D, DT, T, DevSt> MongoDb<DC, C, D, DT, T, DevSt>
+where
+    DC: DataKind + DeserializeOwned,
+    DT: DataKind,
+    C: Send + Sync + 'static,
+    D: Send + Sync + 'static,
+    T: Send + Sync + 'static,
+    DevSt: Send + Sync + 'static,
+{
+    /// Queries all `data_channels` for one export chunk.
+    async fn export_chunk(
+        &self,
+        data_channels: &[DC],
+        time_resolution: TimeResolution,
+        meas_point_id: &DataStoreId,
+        chunk_range: &TimeRange,
+        inclusive_range: bool,
+    ) -> Result<MPSensorDataChannels> {
+        let mut timeseries = MPSensorDataChannels::new();
+        for &data_channel in data_channels {
+            let data = self
+                .sensor_data_for_measuring_point(
+                    data_channel,
+                    Some(time_resolution),
+                    meas_point_id,
+                    chunk_range,
+                    inclusive_range,
+                )
+                .await?;
+            timeseries.push(data);
+        }
+        Ok(timeseries)
     }
 }
 

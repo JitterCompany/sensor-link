@@ -1175,8 +1175,9 @@ where
             self.setup_tls().await?;
         }
 
-        // Set up the will
-        let cmd = mqtt::ConfigWill::new(MQTT_CONTEXT, 1, 1, 1, will.topic, will.payload);
+        // Set up the will, not retained: Online/Offline are published unretained too,
+        // so a retained will would stay on the broker as stale state.
+        let cmd = mqtt::ConfigWill::new(MQTT_CONTEXT, 1, 1, 0, will.topic, will.payload);
         if let Err(err) = self.client.send(&cmd).await.map_err(Error::Client) {
             log::error!(target: "quectel","Failed to set will: {err:?}");
         }

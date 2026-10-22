@@ -5,6 +5,8 @@ pub mod ads124s08;
 pub mod boot_stats;
 pub mod bq25672;
 pub mod quectel;
+#[cfg(feature = "quectel-ppp")]
+pub mod quectel_ppp;
 pub mod rtd;
 pub mod spi_flash;
 pub mod time;

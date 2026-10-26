@@ -44,6 +44,10 @@ impl CircularRange {
     pub fn len(&self) -> usize {
         self.end.wrapping_sub(self.start) as usize
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 fn find_block_no_for_seq_no<const BS: usize, C: Circular<BS>>(circular: &C, seq_no: SeqNo) -> u32 {

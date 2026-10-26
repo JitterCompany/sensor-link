@@ -137,8 +137,6 @@ pub struct Database<BD, const BLOCK_SIZE: usize, F: File<BLOCK_SIZE>, C: Circula
 
     // Database does not directly depend on C, but this makes it easier to use the CircularStore trait which does
     _circular: PhantomData<C>,
-
-    auto_format_circular: bool,
 }
 
 impl<
@@ -153,8 +151,6 @@ impl<
             blockdev: blockdevice,
             _file: PhantomData,
             _circular: PhantomData,
-
-            auto_format_circular: false,
         }
     }
 

@@ -145,14 +145,9 @@ where
 
     pub async fn initialize(&mut self) -> Result<(), Error> {
         if !self.init_done {
-            // Reformat blocks with a foreign layout (e.g. after a firmware update) instead of failing writes
-            let auto_format = true;
-
             let stream = self.circular;
             log::info!(target: "StreamStore", "initialize({stream:?})");
-            self.store
-                .initialize_writeable_circular_store(auto_format)
-                .await?;
+            self.store.initialize_writeable_circular_store().await?;
 
             // Initialize queue metadata from database
             let range = self.store.find_circular_range(stream).await?;
@@ -433,7 +428,7 @@ mod tests {
         let flash_ref: &'static mut InMemoryFlash<4096> = Box::leak(flash);
 
         let mut db: TestDB = Database::new(BlockDevice::writeable_from(flash_ref).unwrap());
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         let confirm_channel = ConfirmChannel::new();
 
@@ -782,10 +777,7 @@ mod tests {
         {
             let mut old_db: Database<_, 4096, NoFile, OldLayout> =
                 Database::new(BlockDevice::writeable_from(&mut *flash).unwrap());
-            old_db
-                .initialize_writeable_circular_store(false)
-                .await
-                .unwrap();
+            old_db.initialize_writeable_circular_store().await.unwrap();
             for seq_no in 0..200 {
                 old_db
                     .write_circular_fragment(OldLayout, seq_no, b"old")

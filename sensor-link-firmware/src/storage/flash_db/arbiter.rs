@@ -116,11 +116,10 @@ where
 {
     async fn initialize_writeable_circular_store(
         &mut self,
-        auto_format: bool,
     ) -> Result<super::InitStatus, super::Error> {
         self.access()
             .await
-            .initialize_writeable_circular_store(auto_format)
+            .initialize_writeable_circular_store()
             .await
     }
 

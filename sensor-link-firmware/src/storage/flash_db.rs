@@ -87,7 +87,6 @@ pub trait Object<const BLOCK_SIZE: usize>: Copy {
 ///
 /// This implementation is sealed on purpose to keep the potential
 /// for errors in [Object] implementation as small as possible
-
 pub trait ObjectExt<const BLOCK_SIZE: usize>:
     Object<BLOCK_SIZE> + private::Sealed<BLOCK_SIZE>
 {
@@ -268,11 +267,8 @@ impl<
         object_version: u8,
     ) -> Result<(), Error> {
         // Skip unlock if already unlocked
-        match self.lock_status(object, mode).await {
-            Ok(LockStatus::Unlocked(_)) => {
-                return Ok(());
-            }
-            _ => {}
+        if let Ok(LockStatus::Unlocked(_)) = self.lock_status(object, mode).await {
+            return Ok(());
         }
 
         match mode {
@@ -311,10 +307,10 @@ impl<
         let mut versions = [0xFF; 2];
         let mut erase_counts = [0; 2];
         for header in [first_header, spare_header] {
-            header.ok().flatten().as_ref().map(|header| {
+            if let Ok(Some(header)) = header {
                 erase_counts[0] = header.first_fragment() / total_frag_count;
                 versions[0] = header.object_version();
-            });
+            }
         }
 
         // because of wrapping, delta > 128 means the lower number is actually likely newer
@@ -448,7 +444,7 @@ impl<
         }
 
         // Readback after erase failed: should not happen (bug or flash glitch)
-        return Err(Error::WriteFailedVerify);
+        Err(Error::WriteFailedVerify)
     }
 }
 

@@ -221,6 +221,8 @@ where
         // Last fallback: if no empty blocks have beem found: continue with a new block after this one
         let mut highest_block: Option<BlockHeader> = None;
 
+        let mut foreign_blocks = 0usize;
+
         // 1. Linear scan across all blocks.
         //
         // Simple & robust and probably fast enough
@@ -229,6 +231,14 @@ where
         // which should be O(log N) vs curent O(N)
         for block_id in circular.flash_blocks_except_spare() {
             if let Some(block) = self.blockdev.block_header(block_id).await? {
+                // Foreign layout (e.g. left by older firmware): its fragments can't be read as ours.
+                // Treat it as erased; the write path reformats it when the write pointer gets there.
+                if block.object_id() != circular.id()
+                    || block.fragment_size() != circular.fragment_size()
+                {
+                    foreign_blocks += 1;
+                    continue;
+                }
                 let frag_no: SeqNo = block.first_fragment();
 
                 // check if this block may contain data (assuming circular write/delete).
@@ -306,6 +316,13 @@ where
                     *highest = block.clone();
                 }
             }
+        }
+
+        if foreign_blocks > 0 {
+            log::warn!(
+                "Circular {:?}: ignoring {foreign_blocks} blocks with a foreign layout",
+                circular.id()
+            );
         }
 
         // 2. Within the read/write block, find the first/last fragment of data. This defines the exact boundary of the data range:
@@ -541,7 +558,10 @@ mod tests {
 
     use super::{circular_perf as perf, *};
     use crate::{
-        storage::{flash_db, flash_db::block_layer::BlockDevice},
+        storage::{
+            flash_db,
+            flash_db::block_layer::{BlockDevice, Reader, Writer},
+        },
         tests::mock::mock_flash::{self, MockFlash},
     };
 
@@ -981,5 +1001,45 @@ mod tests {
         assert!(
             flash.read_count.saturating_sub(init_read_count) <= flash.write_count + n_frags as u64
         );
+    }
+
+    /// Blocks left by an older layout (other object id or fragment size) must not show up as data,
+    /// and are reformatted when the write pointer reaches them.
+    #[tokio::test]
+    async fn test_foreign_blocks_are_ignored_and_reformatted() {
+        simple_logger::init_with_level(log::Level::Debug).ok();
+
+        let mut flash = mock_flash::new::<4096>();
+        let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
+        db.initialize_writeable_circular_store(true).await.unwrap();
+
+        let three = TestCircular::Three;
+        let old_layouts = [(6, three.id(), 64), (7, TestCircular::One.id(), 32)];
+        for (block_id, object_id, frag_size) in old_layouts {
+            db.blockdev
+                .format_block(block_id, object_id, 0xFF, frag_size, 0)
+                .await
+                .unwrap();
+            let block = db.blockdev.block_header(block_id).await.unwrap().unwrap();
+            db.blockdev
+                .write_fragment(&block, 0, b"old data")
+                .await
+                .unwrap();
+        }
+
+        let range = db.find_circular_range(three).await.unwrap();
+        assert_eq!(0, range.len());
+
+        db.write_circular_fragment(three, range.write_at(), b"new data")
+            .await
+            .unwrap();
+        let range = db.find_circular_range(three).await.unwrap();
+        assert_eq!(1, range.len());
+
+        let mut buffer = [0; 8];
+        db.read_circular_fragment(three, range.read_at(), &mut buffer)
+            .await
+            .unwrap();
+        assert_eq!(b"new data", &buffer);
     }
 }

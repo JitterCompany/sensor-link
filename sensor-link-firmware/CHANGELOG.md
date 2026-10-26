@@ -21,6 +21,11 @@
 - Fix: the dispatch task wakes when the network task confirms or aborts an
   upload, so an aborted upload is retried without waiting for new data. Adds
   `DispatchStore::wait_confirmation`, breaking for implementations.
+- `Confirmable::map` transforms the inner data and keeps the confirm handle.
+- Circular stores ignore blocks with a foreign layout (other object id or
+  fragment size, e.g. left by older firmware) instead of reading them as data.
+  `StreamStore` now initializes with `auto_format`, so such a block is
+  reformatted when the write pointer reaches it.
 
 ## 0.2.0 - 2026-09-04
 

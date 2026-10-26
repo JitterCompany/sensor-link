@@ -1,3 +1,5 @@
+use core::mem::ManuallyDrop;
+
 use crate::logic::dispatch::ConfirmHandle;
 
 /// RAII wrapper that automatically triggers retry on drop unless explicitly confirmed.
@@ -45,6 +47,15 @@ impl<T> Confirmable<T> {
         }
     }
 
+    /// Transform the inner data, keeping the confirmation handle.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Confirmable<U> {
+        let mut this = ManuallyDrop::new(self);
+        let confirm_handle = this.confirm_handle.take();
+        // SAFETY: `this` is never dropped or used again, so `inner` is moved out exactly once.
+        let inner = unsafe { core::ptr::read(&this.inner) };
+        Confirmable::new(f(inner), confirm_handle)
+    }
+
     /// Check if this confirmable can be retried on drop.
     ///
     /// If not, the data is permanently lost on drop.
@@ -72,5 +83,39 @@ impl<T> core::ops::Deref for Confirmable<T> {
 
     fn deref(&self) -> &T {
         &self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::common::{
+        queue::{ConfirmChannel, Queue},
+        stream_store::MAX_PEEKS,
+    };
+
+    #[test]
+    fn map_keeps_confirm_handle() {
+        static CHANNEL: ConfirmChannel<MAX_PEEKS> = ConfirmChannel::new();
+        let mut q = Queue::new(&CHANNEL);
+        q.enqueue().unwrap();
+
+        let mapped = Confirmable::new(21u32, Some(q.peek_next().unwrap())).map(|v| v * 2);
+        assert_eq!(42, *mapped);
+        assert!(mapped.can_be_retried());
+        mapped.confirm();
+
+        assert!(q.peek_next().is_err());
+    }
+
+    #[test]
+    fn map_then_drop_retries() {
+        static CHANNEL: ConfirmChannel<MAX_PEEKS> = ConfirmChannel::new();
+        let mut q = Queue::new(&CHANNEL);
+        q.enqueue().unwrap();
+
+        drop(Confirmable::new(21u32, Some(q.peek_next().unwrap())).map(|v| v * 2));
+
+        assert_eq!(0, q.peek_next().unwrap().seq_no());
     }
 }

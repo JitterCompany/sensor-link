@@ -7,7 +7,7 @@
   timeout of a range request is 15 s (was 5 s). A failed read of the modem file
   no longer counts as the end of the slice, which silently dropped up to 16 KB of
   the image. The client sends `FWStatus::Failed` when a download fails or a chunk
-  cannot be decoded. (frog-watch/4108-firmware-rs#771)
+  cannot be decoded.
 - The network task logs `logic::network::CONNECTED_MARKER` once the MQTT
   session is up, in place of "Network Connected", so provisioning can verify
   a device's connection over RTT.

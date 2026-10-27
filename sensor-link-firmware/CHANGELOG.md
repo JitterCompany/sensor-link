@@ -21,6 +21,9 @@
 - Fix: the dispatch task wakes when the network task confirms or aborts an
   upload, so an aborted upload is retried without waiting for new data. Adds
   `DispatchStore::wait_confirmation`, breaking for implementations.
+- Fix: the Quectel MQTT will (ungraceful offline) is no longer retained. The
+  stale retained will made the server log "Offline (ungraceful)" on every
+  reconnect, even after a graceful offline.
 - `Confirmable::map` transforms the inner data and keeps the confirm handle.
 - Circular stores ignore blocks with a foreign layout (other object id or
   fragment size, e.g. left by older firmware) instead of reading them as data.

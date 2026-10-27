@@ -57,12 +57,23 @@ const DOWNLOAD_SLICE_LEN: u32 = 16000;
 /// Attempts to fetch or read out one slice before the download fails.
 const SLICE_ATTEMPTS: u32 = 3;
 
-/// Wait before retrying a slice. Longer than the GET header input time, so a modem that answered
-/// `CONNECT` too late has given up waiting for the header before the next command.
-const SLICE_RETRY_DELAY_MS: u32 = 6000;
+/// Wait before retrying a slice, after the request has been cancelled.
+const SLICE_RETRY_DELAY_MS: u32 = 2000;
 
 /// Seconds the modem waits for the request header after `CONNECT`.
 const GET_HEADER_INPUT_TIME_S: u16 = 5;
+
+/// Seconds the modem waits for the server: for the `+QHTTPGET` response (`<rsptime>`), which also
+/// bounds `CONNECT`, and between two packets of the response body (`<wait_time>`).
+const HTTP_RSP_TIME_S: u16 = 30;
+
+/// Seconds the modem may spend on the TLS handshake. Shorter than [HTTP_RSP_TIME_S], so a stuck
+/// handshake ends within the GET instead of outlasting our waits.
+const HTTP_NEGOTIATE_TIME_S: u16 = 20;
+
+const _: () = assert!(HTTP_NEGOTIATE_TIME_S < HTTP_RSP_TIME_S);
+const _: () =
+    assert!(<http::GETWithHeader as atat::AtatCmd>::MAX_TIMEOUT_MS > HTTP_RSP_TIME_S as u32 * 1000);
 
 /// Maximum length of a download URL, matching the length of the announced firmware update URL.
 const MAX_URL_LEN: usize = 128;
@@ -605,6 +616,9 @@ where
         let cmd = ssl::SSLCFG::seclevel(HTTP_CONTEXT, 0);
         self.client.send(&cmd).await.map_err(Error::Client)?;
 
+        let cmd = ssl::SSLCFG::negotiatetime(HTTP_CONTEXT, HTTP_NEGOTIATE_TIME_S);
+        self.client.send(&cmd).await.map_err(Error::Client)?;
+
         // Allow all ciphersuites
         let cmd = ssl::SSLCFGCiphersuiteFixed1;
         self.client.send(&cmd).await.map_err(Error::Client)?;
@@ -651,6 +665,10 @@ where
                 Ok(()) => return Ok(()),
                 Err(err) if attempt < SLICE_ATTEMPTS => {
                     log::warn!(target: "quectel","Fetching slice at {offset} failed (attempt {attempt}/{SLICE_ATTEMPTS}): {err:?}");
+                    // Also ends a GET that answered CONNECT too late and still waits for its header.
+                    if let Err(err) = self.client.send(&http::Stop).await {
+                        log::debug!(target: "quectel","HTTP stop failed: {err:?}");
+                    }
                     self.discard_slice_file().await;
                     delay_ms(SLICE_RETRY_DELAY_MS).await;
                     attempt += 1;
@@ -684,7 +702,7 @@ where
         .map_err(|_| Error::Serialize)?;
 
         let cmd = http::GETWithHeader {
-            timeout: 10,
+            timeout: HTTP_RSP_TIME_S,
             header_length: header.len() as u16,
             input_time: GET_HEADER_INPUT_TIME_S,
         };
@@ -729,7 +747,7 @@ where
         } else {
             let cmd = http::ReadFile {
                 file_name: String::try_from(TMP_FILE).unwrap(),
-                wait_time: 10,
+                wait_time: HTTP_RSP_TIME_S,
             };
 
             let resp = self.client.send(&cmd).await.map_err(Error::Client)?;

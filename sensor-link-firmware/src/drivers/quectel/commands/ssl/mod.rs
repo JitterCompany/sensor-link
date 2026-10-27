@@ -43,7 +43,7 @@ impl SSLCFGFile {
 #[at_cmd("+QSSLCFG", NoResponse, timeout_ms = 300, termination = "\r")]
 pub struct SSLCFG {
     #[at_arg(position = 0)]
-    /// should be "sslversion" or "seclevel" or "ignorelocaltime"
+    /// should be "sslversion", "seclevel", "ignorelocaltime" or "negotiatetime"
     param: String<16>,
 
     #[at_arg(position = 1)]
@@ -89,6 +89,15 @@ impl SSLCFG {
             param: String::try_from("ignorelocaltime").unwrap(),
             ssl_ctx,
             arg: ignorelocaltime as u16,
+        }
+    }
+
+    /// Maximum time for the SSL negotiation, in seconds. Range 10-300, default 300.
+    pub fn negotiatetime(ssl_ctx: ContextId, seconds: u16) -> Self {
+        Self {
+            param: String::try_from("negotiatetime").unwrap(),
+            ssl_ctx,
+            arg: seconds,
         }
     }
 }

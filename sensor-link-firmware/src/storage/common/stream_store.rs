@@ -145,13 +145,9 @@ where
 
     pub async fn initialize(&mut self) -> Result<(), Error> {
         if !self.init_done {
-            let auto_format = false;
-
             let stream = self.circular;
             log::info!(target: "StreamStore", "initialize({stream:?})");
-            self.store
-                .initialize_writeable_circular_store(auto_format)
-                .await?;
+            self.store.initialize_writeable_circular_store().await?;
 
             // Initialize queue metadata from database
             let range = self.store.find_circular_range(stream).await?;
@@ -432,7 +428,7 @@ mod tests {
         let flash_ref: &'static mut InMemoryFlash<4096> = Box::leak(flash);
 
         let mut db: TestDB = Database::new(BlockDevice::writeable_from(flash_ref).unwrap());
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         let confirm_channel = ConfirmChannel::new();
 
@@ -744,6 +740,62 @@ mod tests {
         let (len, handle) = stream_store.peek_next(&mut buffer).await.unwrap().unwrap();
 
         assert_eq!(0, len);
+        handle.confirm();
+    }
+
+    /// Same object id, older fragment size: what a firmware update leaves behind
+    #[derive(Debug, Clone, Copy)]
+    struct OldLayout;
+
+    impl Object<4096> for OldLayout {
+        fn id(&self) -> crate::storage::flash_db::ObjectId {
+            TestCircular::StreamOne.id()
+        }
+
+        fn fragment_size(&self) -> usize {
+            32
+        }
+
+        fn flash_blocks(&self) -> core::ops::Range<crate::storage::flash_db::block_layer::BlockId> {
+            TestCircular::StreamOne.flash_blocks()
+        }
+    }
+
+    impl Circular<4096> for OldLayout {
+        fn overwrite_on_full(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stream_store_after_layout_change() {
+        simple_logger::init_with_level(log::Level::Debug).ok();
+
+        let flash: &'static mut InMemoryFlash<4096> =
+            Box::leak(Box::new(InMemoryFlash::<4096>::new(4 * 1024 * 1024)));
+
+        {
+            let mut old_db: Database<_, 4096, NoFile, OldLayout> =
+                Database::new(BlockDevice::writeable_from(&mut *flash).unwrap());
+            old_db.initialize_writeable_circular_store().await.unwrap();
+            for seq_no in 0..200 {
+                old_db
+                    .write_circular_fragment(OldLayout, seq_no, b"old")
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let db: TestDB = Database::new(BlockDevice::writeable_from(flash).unwrap());
+        let confirm_channel = ConfirmChannel::new();
+        let mut stream_store = StreamStore::new(db, TestCircular::StreamOne, &confirm_channel);
+
+        let mut buffer = [0u8; 64];
+        assert!(stream_store.peek_next(&mut buffer).await.unwrap().is_none());
+
+        stream_store.enqueue(b"new").await.unwrap();
+        let (len, handle) = stream_store.peek_next(&mut buffer).await.unwrap().unwrap();
+        assert_eq!(b"new", &buffer[..len]);
         handle.confirm();
     }
 }

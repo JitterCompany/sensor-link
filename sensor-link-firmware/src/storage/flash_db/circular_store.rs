@@ -12,6 +12,12 @@ use super::{
 /// - flash block range must be globally unique (cannot overlap any other objects)
 pub trait Circular<const BLOCK_SIZE: usize>: Object<BLOCK_SIZE> {
     fn overwrite_on_full(&self) -> bool;
+
+    /// Reformat a block with a foreign layout (other object id or fragment size) when writing to it.
+    /// Its data can't be read as this circular anyway. Without this, writes stop at that block.
+    fn auto_format(&self) -> bool {
+        true
+    }
 }
 
 /// Sequence number of each fragment (ever increasing with wraparound)
@@ -43,6 +49,10 @@ impl CircularRange {
     /// Amount of fragments in the range
     pub fn len(&self) -> usize {
         self.end.wrapping_sub(self.start) as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -162,10 +172,7 @@ pub trait WriteableCircularStore<const BLOCK_SIZE: usize, C: Circular<BLOCK_SIZE
     /// Initialize the store
     ///
     /// Required for correct operation. Other methods may fail if not initialized first.
-    async fn initialize_writeable_circular_store(
-        &mut self,
-        auto_format: bool,
-    ) -> Result<InitStatus, Error>;
+    async fn initialize_writeable_circular_store(&mut self) -> Result<InitStatus, Error>;
 
     /// # Write data to a circular fragment
     ///
@@ -221,6 +228,8 @@ where
         // Last fallback: if no empty blocks have beem found: continue with a new block after this one
         let mut highest_block: Option<BlockHeader> = None;
 
+        let mut foreign_blocks = 0usize;
+
         // 1. Linear scan across all blocks.
         //
         // Simple & robust and probably fast enough
@@ -229,6 +238,14 @@ where
         // which should be O(log N) vs curent O(N)
         for block_id in circular.flash_blocks_except_spare() {
             if let Some(block) = self.blockdev.block_header(block_id).await? {
+                // Foreign layout (e.g. left by older firmware): its fragments can't be read as ours.
+                // Treat it as erased; the write path reformats it when the write pointer gets there.
+                if block.object_id() != circular.id()
+                    || block.fragment_size() != circular.fragment_size()
+                {
+                    foreign_blocks += 1;
+                    continue;
+                }
                 let frag_no: SeqNo = block.first_fragment();
 
                 // check if this block may contain data (assuming circular write/delete).
@@ -306,6 +323,13 @@ where
                     *highest = block.clone();
                 }
             }
+        }
+
+        if foreign_blocks > 0 {
+            log::warn!(
+                "Circular {:?}: ignoring {foreign_blocks} blocks with a foreign layout",
+                circular.id()
+            );
         }
 
         // 2. Within the read/write block, find the first/last fragment of data. This defines the exact boundary of the data range:
@@ -405,11 +429,7 @@ where
     F: File<BS>,
     C: Circular<BS>,
 {
-    async fn initialize_writeable_circular_store(
-        &mut self,
-        auto_format: bool,
-    ) -> Result<InitStatus, Error> {
-        self.auto_format_circular = auto_format;
+    async fn initialize_writeable_circular_store(&mut self) -> Result<InitStatus, Error> {
         self.initialize_circular_store().await?;
 
         // TODO if we implement a FAT, we could load it here / write it if invalid && auto_format
@@ -448,7 +468,7 @@ where
                     }
 
                     // Block is corrupt: if auto_format enabled, consider the block invalid (it will be formatted).
-                    Err(FindFail::Corrupt(_block)) if self.auto_format_circular => Ok(None),
+                    Err(FindFail::Corrupt(_block)) if circular.auto_format() => Ok(None),
 
                     // Succes or other errors: propagate
                     result => result.map_err(|err| err.into()),
@@ -541,7 +561,10 @@ mod tests {
 
     use super::{circular_perf as perf, *};
     use crate::{
-        storage::{flash_db, flash_db::block_layer::BlockDevice},
+        storage::{
+            flash_db,
+            flash_db::block_layer::{BlockDevice, Reader, Writer},
+        },
         tests::mock::mock_flash::{self, MockFlash},
     };
 
@@ -578,6 +601,13 @@ mod tests {
                 TestCircular::Three => true,
             }
         }
+
+        fn auto_format(&self) -> bool {
+            match self {
+                TestCircular::One => false,
+                TestCircular::Two | TestCircular::Three => true,
+            }
+        }
     }
 
     #[derive(Debug, Clone, Copy)]
@@ -606,7 +636,7 @@ mod tests {
 
         let mut flash = mock_flash::new::<4096>();
         let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         // No circular data available yet
         let range = db.find_circular_range(TestCircular::One).await.unwrap();
@@ -697,7 +727,7 @@ mod tests {
 
         let mut flash = mock_flash::new::<4096>();
         let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         // No circular data available yet
         let range = db.find_circular_range(TestCircular::One).await.unwrap();
@@ -737,7 +767,7 @@ mod tests {
 
         let mut flash = mock_flash::new::<4096>();
         let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         // No circular data available yet
         assert_eq!(
@@ -773,7 +803,7 @@ mod tests {
 
         let mut flash = mock_flash::new::<4096>();
         let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         // No circular data available yet
         assert_eq!(0, db.find_circular_range(stream).await.unwrap().len());
@@ -793,7 +823,7 @@ mod tests {
         }
         let range = db.find_circular_range(stream).await.unwrap();
         log::debug!("Range (full): {range:?}");
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         // Write one more fragment: should succeed by overwriting (TestCircular::Three is overwrite-on-full)
         db.write_circular_fragment(stream, seq, b"Hello world")
@@ -818,7 +848,7 @@ mod tests {
 
         let mut flash = mock_flash::new::<4096>();
         let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-        db.initialize_writeable_circular_store(false).await.unwrap();
+        db.initialize_writeable_circular_store().await.unwrap();
 
         // No circular data available yet
         assert_eq!(
@@ -864,7 +894,7 @@ mod tests {
         // 0. do nothing but initialize. So far we don't expect any writes with auto_format=false
         {
             let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-            db.initialize_writeable_circular_store(false).await.unwrap();
+            db.initialize_writeable_circular_store().await.unwrap();
         }
         assert_eq!(flash.write_count, 0);
         assert_eq!(flash.erase_count, 0);
@@ -878,7 +908,7 @@ mod tests {
         {
             assert_eq!(348, n_frags);
             let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-            db.initialize_writeable_circular_store(false).await.unwrap();
+            db.initialize_writeable_circular_store().await.unwrap();
             let write_no = db.find_circular_range(stream).await.unwrap().write_at();
             assert_eq!(0, write_no);
             db.write_circular_fragment(stream, 0, b"First element")
@@ -904,7 +934,7 @@ mod tests {
         flash.reset_stats();
         {
             let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-            db.initialize_writeable_circular_store(false).await.unwrap();
+            db.initialize_writeable_circular_store().await.unwrap();
             let _ = db.find_circular_range(stream).await.unwrap().write_at();
         }
         let init_read_count = flash.read_count;
@@ -914,7 +944,7 @@ mod tests {
         let n_frags = 3 * stream.fragment_count();
         {
             let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-            db.initialize_writeable_circular_store(false).await.unwrap();
+            db.initialize_writeable_circular_store().await.unwrap();
             let write_no = db.find_circular_range(stream).await.unwrap().write_at();
 
             for i in 0..n_frags {
@@ -945,7 +975,7 @@ mod tests {
         // 0. do nothing but initialize. So far we don't expect any writes with auto_format=false
         {
             let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-            db.initialize_writeable_circular_store(false).await.unwrap();
+            db.initialize_writeable_circular_store().await.unwrap();
             let _ = db.find_circular_range(stream).await.unwrap().write_at();
         }
         assert_eq!(flash.write_count, 0);
@@ -959,7 +989,7 @@ mod tests {
         let n_frags = stream.fragment_count() * 3;
         {
             let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
-            db.initialize_writeable_circular_store(false).await.unwrap();
+            db.initialize_writeable_circular_store().await.unwrap();
             //let write_no = db.find_circular_range(stream).await.unwrap().write_at();
             //assert_eq!(0, write_no);
             for i in 0..n_frags {
@@ -980,6 +1010,71 @@ mod tests {
         );
         assert!(
             flash.read_count.saturating_sub(init_read_count) <= flash.write_count + n_frags as u64
+        );
+    }
+
+    /// Blocks left by an older layout (other object id or fragment size) must not show up as data,
+    /// and are reformatted when the write pointer reaches them.
+    #[tokio::test]
+    async fn test_foreign_blocks_are_ignored_and_reformatted() {
+        simple_logger::init_with_level(log::Level::Debug).ok();
+
+        let mut flash = mock_flash::new::<4096>();
+        let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
+        db.initialize_writeable_circular_store().await.unwrap();
+
+        let three = TestCircular::Three;
+        let old_layouts = [(6, three.id(), 64), (7, TestCircular::One.id(), 32)];
+        for (block_id, object_id, frag_size) in old_layouts {
+            db.blockdev
+                .format_block(block_id, object_id, 0xFF, frag_size, 0)
+                .await
+                .unwrap();
+            let block = db.blockdev.block_header(block_id).await.unwrap().unwrap();
+            db.blockdev
+                .write_fragment(&block, 0, b"old data")
+                .await
+                .unwrap();
+        }
+
+        let range = db.find_circular_range(three).await.unwrap();
+        assert_eq!(0, range.len());
+
+        db.write_circular_fragment(three, range.write_at(), b"new data")
+            .await
+            .unwrap();
+        let range = db.find_circular_range(three).await.unwrap();
+        assert_eq!(1, range.len());
+
+        let mut buffer = [0; 8];
+        db.read_circular_fragment(three, range.read_at(), &mut buffer)
+            .await
+            .unwrap();
+        assert_eq!(b"new data", &buffer);
+    }
+
+    #[tokio::test]
+    async fn test_foreign_block_without_auto_format() {
+        simple_logger::init_with_level(log::Level::Debug).ok();
+
+        let mut flash = mock_flash::new::<4096>();
+        let mut db: TestDB = Database::new(BlockDevice::writeable_from(&mut flash).unwrap());
+        db.initialize_writeable_circular_store().await.unwrap();
+
+        let one = TestCircular::One;
+        let block_id = one.flash_blocks().start;
+        db.blockdev
+            .format_block(block_id, one.id(), 0xFF, 64, 0)
+            .await
+            .unwrap();
+
+        let range = db.find_circular_range(one).await.unwrap();
+        assert!(range.is_empty());
+        assert_eq!(
+            Error::Corrupt,
+            db.write_circular_fragment(one, range.write_at(), b"new data")
+                .await
+                .unwrap_err()
         );
     }
 }

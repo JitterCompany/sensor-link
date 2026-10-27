@@ -87,10 +87,10 @@ pub struct GET {
 /// GET with a caller-supplied request header, which allows sending e.g. a `Range` header.
 /// Requires "requestheader" to be enabled, see [ConfigRequestHeader].
 /// The modem responds with "CONNECT", after which the header must be sent as raw bytes.
-/// Note: the modem can take well over a second to answer with "CONNECT", so this command needs
-/// a longer timeout than the other HTTP commands.
+/// Note: the modem can take well over a second to answer with "CONNECT", over https sometimes
+/// more than 5 s, so this command needs a longer timeout than the other HTTP commands.
 #[derive(Debug, Clone, AtatCmd)]
-#[at_cmd("+QHTTPGET", NoResponse, timeout_ms = 5000, termination = "\r")]
+#[at_cmd("+QHTTPGET", NoResponse, timeout_ms = 15000, termination = "\r")]
 pub struct GETWithHeader {
     /// The range is 1-65535, and the default value is 60. Unit: second.
     /// It is used to configure the timeout for the HTTP(S) GET response

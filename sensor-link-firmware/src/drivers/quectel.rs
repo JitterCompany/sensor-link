@@ -54,6 +54,16 @@ const TMP_FILE_STORAGE: &str = "UFS";
 /// A download is fetched in slices that are read out (and deleted) one by one.
 const DOWNLOAD_SLICE_LEN: u32 = 16000;
 
+/// Attempts to fetch or read out one slice before the download fails.
+const SLICE_ATTEMPTS: u32 = 3;
+
+/// Wait before retrying a slice. Longer than the GET header input time, so a modem that answered
+/// `CONNECT` too late has given up waiting for the header before the next command.
+const SLICE_RETRY_DELAY_MS: u32 = 6000;
+
+/// Seconds the modem waits for the request header after `CONNECT`.
+const GET_HEADER_INPUT_TIME_S: u16 = 5;
+
 /// Maximum length of a download URL, matching the length of the announced firmware update URL.
 const MAX_URL_LEN: usize = 128;
 
@@ -127,14 +137,23 @@ pub struct Quectel<W: Write, R: Read + ErrorReport + Suspendable, V: ModemVarian
 struct Download {
     url: String<MAX_URL_LEN>,
 
-    /// Offset of the first byte that has not been requested from the server yet.
-    next_offset: u32,
+    /// Offset in the downloaded file of the slice stored in [TMP_FILE].
+    slice_offset: u32,
 
-    /// A slice is stored in [TMP_FILE], waiting to be read out.
-    slice_pending: bool,
+    /// Length of the slice stored in [TMP_FILE], 0 when none is stored.
+    slice_len: u32,
+
+    /// Bytes of the stored slice that have been read out.
+    slice_read: u32,
 
     /// The whole file has been requested: the last slice was shorter than requested.
     complete: bool,
+}
+
+impl Download {
+    fn slice_remaining(&self) -> u32 {
+        self.slice_len - self.slice_read
+    }
 }
 
 /// Split an `http(s)://host[:port]/path` URL into its host (including port) and path parts.
@@ -615,20 +634,41 @@ where
 
         self.download = Some(Download {
             url: String::try_from(url).map_err(|_| Error::Serialize)?,
-            next_offset: 0,
-            slice_pending: false,
+            slice_offset: 0,
+            slice_len: 0,
+            slice_read: 0,
             complete: false,
         });
 
-        self.fetch_next_slice().await
+        self.fetch_slice_with_retry(0).await
     }
 
-    /// Fetch the next slice of the download in progress and store it in [TMP_FILE].
-    async fn fetch_next_slice(&mut self) -> Result<(), Error<atat::Error>> {
+    /// Fetch the slice at `offset`, retrying a few times before giving up.
+    async fn fetch_slice_with_retry(&mut self, offset: u32) -> Result<(), Error<atat::Error>> {
+        let mut attempt = 1;
+        loop {
+            match self.fetch_slice(offset).await {
+                Ok(()) => return Ok(()),
+                Err(err) if attempt < SLICE_ATTEMPTS => {
+                    log::warn!(target: "quectel","Fetching slice at {offset} failed (attempt {attempt}/{SLICE_ATTEMPTS}): {err:?}");
+                    self.discard_slice_file().await;
+                    delay_ms(SLICE_RETRY_DELAY_MS).await;
+                    attempt += 1;
+                }
+                Err(err) => {
+                    log::error!(target: "quectel","Fetching slice at {offset} failed after {SLICE_ATTEMPTS} attempts: {err:?}");
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    /// Fetch the slice of the download in progress that starts at `offset` and store it in
+    /// [TMP_FILE].
+    async fn fetch_slice(&mut self, offset: u32) -> Result<(), Error<atat::Error>> {
         let Some(download) = self.download.as_ref() else {
             return Err(Error::MQTT("No download in progress"));
         };
-        let offset = download.next_offset;
         let last_byte = offset + DOWNLOAD_SLICE_LEN - 1;
 
         let (host, path) = split_url(&download.url).ok_or(Error::Serialize)?;
@@ -646,7 +686,7 @@ where
         let cmd = http::GETWithHeader {
             timeout: 10,
             header_length: header.len() as u16,
-            input_time: 20,
+            input_time: GET_HEADER_INPUT_TIME_S,
         };
         self.client.send(&cmd).await.map_err(Error::Client)?;
         self.client
@@ -686,45 +726,128 @@ where
 
         if slice_len == 0 {
             log::debug!(target: "quectel","Download complete at {offset} bytes");
-            // Unwrap: checked at the start of this function.
-            let download = self.download.as_mut().unwrap();
-            download.complete = true;
-            return Ok(());
-        }
+        } else {
+            let cmd = http::ReadFile {
+                file_name: String::try_from(TMP_FILE).unwrap(),
+                wait_time: 10,
+            };
 
-        let cmd = http::ReadFile {
-            file_name: String::try_from(TMP_FILE).unwrap(),
-            wait_time: 10,
-        };
+            let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
+            log::debug!(target: "quectel","Read to file: {:?}", resp);
 
-        let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
-        log::debug!(target: "quectel","Read to file: {:?}", resp);
-
-        match self.await_urc(UrcVariant::HTTPReadFile).await {
-            Some(Urc::HTTPReadFile(resp)) if resp.err == 0 => {
-                log::debug!(target: "quectel","Slice {offset}..{} stored", offset + slice_len);
-            }
-            Some(Urc::HTTPReadFile(resp)) => {
-                log::error!(target: "quectel","Read to File Error: {:?}", resp);
-                return Err(Error::MQTT("Read to File failed"));
-            }
-            // The modem acknowledges the command with `OK` and only then reports failure as an
-            // unsolicited `+CME ERROR`, which is not tied to any command and therefore only
-            // visible in the AT log.
-            _ => {
-                log::error!(target: "quectel","Read to File URC not received (check AT log for +CME ERROR)");
-                return Err(Error::TimeOut);
+            match self.await_urc(UrcVariant::HTTPReadFile).await {
+                Some(Urc::HTTPReadFile(resp)) if resp.err == 0 => {
+                    log::debug!(target: "quectel","Slice {offset}..{} stored", offset + slice_len);
+                }
+                Some(Urc::HTTPReadFile(resp)) => {
+                    log::error!(target: "quectel","Read to File Error: {:?}", resp);
+                    return Err(Error::MQTT("Read to File failed"));
+                }
+                // The modem acknowledges the command with `OK` and only then reports failure as an
+                // unsolicited `+CME ERROR`, which is not tied to any command and therefore only
+                // visible in the AT log.
+                _ => {
+                    log::error!(target: "quectel","Read to File URC not received (check AT log for +CME ERROR)");
+                    return Err(Error::TimeOut);
+                }
             }
         }
 
         // Unwrap: checked at the start of this function.
         let download = self.download.as_mut().unwrap();
-        download.next_offset += slice_len;
-        download.slice_pending = true;
+        download.slice_offset = offset;
+        download.slice_len = slice_len;
+        download.slice_read = 0;
         // A short slice means the server had nothing more to give.
         download.complete = slice_len < DOWNLOAD_SLICE_LEN;
 
         Ok(())
+    }
+
+    /// Read up to `len` bytes of the stored slice, retrying a few times before giving up.
+    /// From the second retry on, the slice is fetched again.
+    async fn read_slice_with_retry(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<u8, MAX_FILE_CHUNK_LEN>, Error<atat::Error>> {
+        let mut attempt = 1;
+        loop {
+            let err = match self.read_slice(len).await {
+                Ok(part) => return Ok(part),
+                Err(err) => err,
+            };
+            // Unwrap: read_slice fails before this point if no download is in progress.
+            let download = self.download.as_ref().unwrap();
+            let (offset, read) = (download.slice_offset, download.slice_read);
+            if attempt == SLICE_ATTEMPTS {
+                log::error!(target: "quectel","Reading slice at {offset}+{read} failed after {SLICE_ATTEMPTS} attempts: {err:?}");
+                return Err(err);
+            }
+            log::warn!(target: "quectel","Reading slice at {offset}+{read} failed (attempt {attempt}/{SLICE_ATTEMPTS}): {err:?}");
+
+            // Let a broken read run out before talking to the modem again.
+            delay_ms(500).await;
+            let _ = self.close_file().await;
+            if attempt > 1 {
+                self.discard_slice_file().await;
+                self.fetch_slice_with_retry(offset).await?;
+                // Unwrap: fetch_slice_with_retry keeps the download.
+                self.download.as_mut().unwrap().slice_read = read;
+            }
+            attempt += 1;
+        }
+    }
+
+    /// Read up to `len` bytes of the stored slice, from where the previous read ended.
+    async fn read_slice(
+        &mut self,
+        len: usize,
+    ) -> Result<Vec<u8, MAX_FILE_CHUNK_LEN>, Error<atat::Error>> {
+        let Some(download) = self.download.as_ref() else {
+            return Err(Error::MQTT("No download in progress"));
+        };
+        let position = download.slice_read;
+
+        let handle = match self.file_handle {
+            Some(handle) => handle,
+            None => {
+                let filename = String::try_from(TMP_FILE).unwrap();
+                let resp = self
+                    .client
+                    .send(&file::Open { filename, mode: 0 })
+                    .await
+                    .map_err(Error::Client)?;
+                self.file_handle = Some(resp.handle);
+                self.client
+                    .send(&file::Seek {
+                        handle: resp.handle,
+                        offset: position,
+                        position: 0,
+                    })
+                    .await
+                    .map_err(Error::Client)?;
+                resp.handle
+            }
+        };
+
+        let resp = self
+            .client
+            .send(&file::Read {
+                handle,
+                len: len as u32,
+            })
+            .await
+            .map_err(Error::Client)?;
+        let n = resp.bytes.len().min(len);
+        if n == 0 {
+            return Err(Error::MQTT("Slice ended early"));
+        }
+        let mut part = Vec::new();
+        // Unwrap: `len` is at most MAX_FILE_CHUNK_LEN, checked by the caller.
+        part.extend_from_slice(&resp.bytes[..n]).unwrap();
+        // Unwrap: checked at the start of this function.
+        self.download.as_mut().unwrap().slice_read += n as u32;
+        Ok(part)
     }
 
     /// Read the next chunk of the download in progress, fetching a new slice when the
@@ -738,43 +861,44 @@ where
         // Chunks must be filled up across slice boundaries: the caller relies on every chunk
         // but the last one having the requested size.
         while chunk.len() < chunk_size {
-            if !self.download.as_ref().is_some_and(|d| d.slice_pending) {
-                match self.download.as_ref() {
-                    Some(download) if !download.complete => self.fetch_next_slice().await?,
-                    // Nothing left to read.
-                    _ => break,
-                }
-                if !self.download.as_ref().is_some_and(|d| d.slice_pending) {
+            let Some(download) = self.download.as_ref() else {
+                break;
+            };
+            let remaining = download.slice_remaining();
+            if remaining == 0 {
+                if download.complete {
                     break;
                 }
+                // Slice fully read: discard it to make room for the next one.
+                let next = download.slice_offset + download.slice_len;
+                self.discard_slice_file().await;
+                self.fetch_slice_with_retry(next).await?;
+                continue;
             }
 
-            let remaining = chunk_size - chunk.len();
-            match self.read_file_chunk(TMP_FILE, remaining).await? {
-                Some(part) if !part.is_empty() => {
-                    // Unwrap: never more than the requested `remaining` bytes.
-                    chunk.extend_from_slice(&part).unwrap();
-                }
-                // Slice fully read: discard it to make room for the next one.
-                _ => {
-                    self.close_file().await?;
-                    self.delete_file(TMP_FILE).await?;
-                    // Unwrap: only reached while a download is in progress.
-                    self.download.as_mut().unwrap().slice_pending = false;
-                }
-            }
+            let len = (chunk_size - chunk.len()).min(remaining as usize);
+            let part = self.read_slice_with_retry(len).await?;
+            // Unwrap: never more than the requested `len` bytes.
+            chunk.extend_from_slice(&part).unwrap();
         }
 
         Ok(chunk)
     }
 
+    /// Close and delete [TMP_FILE]. Failures are only logged: if the file is left behind, storing
+    /// the next slice fails and is retried.
+    async fn discard_slice_file(&mut self) {
+        let _ = self.close_file().await;
+        if let Err(err) = self.delete_file(TMP_FILE).await {
+            log::debug!(target: "quectel","Delete {TMP_FILE} failed: {err:?}");
+        }
+    }
+
     /// Clean up after a download, successful or not.
     async fn finish_download(&mut self) {
-        let _ = self.close_file().await;
-        if self.download.as_ref().is_some_and(|d| d.slice_pending) {
-            let _ = self.delete_file(TMP_FILE).await;
+        if self.download.take().is_some() {
+            self.discard_slice_file().await;
         }
-        self.download = None;
         let _ = self.deactivate_http_context().await;
     }
 

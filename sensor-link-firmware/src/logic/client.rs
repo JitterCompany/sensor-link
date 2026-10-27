@@ -196,13 +196,14 @@ impl<M: MqttClient, S> Client<M, S> {
                     self.update_seq_num += 1;
                     Some(ClientEvent::FWChunkReceived(FWChunk { sequence_no, bytes }))
                 } else {
-                    log::error!("Failed to decode base64 chunk");
-                    None
+                    // Skipping the chunk would shift every later chunk to the wrong offset.
+                    log::error!("Failed to decode base64 chunk {}", self.update_seq_num);
+                    Some(self.fail_firmware_download().await)
                 }
             }
             Err(FileError::ReadError) => {
-                self.state = State::Normal;
-                Some(ClientEvent::FWDownloadFailed)
+                log::error!("Firmware download failed at chunk {}", self.update_seq_num);
+                Some(self.fail_firmware_download().await)
             }
             Err(FileError::EndOfFile) => {
                 log::debug!("End of file");
@@ -213,10 +214,19 @@ impl<M: MqttClient, S> Client<M, S> {
                 Some(ClientEvent::FWDownloadComplete)
             }
             Err(FileError::FileNotFound) => {
-                self.state = State::Normal;
-                Some(ClientEvent::FWDownloadFailed)
+                log::error!("Firmware download failed: file not found");
+                Some(self.fail_firmware_download().await)
             }
         }
+    }
+
+    /// End a firmware download that cannot be completed and report it to the server.
+    async fn fail_firmware_download(&mut self) -> ClientEvent {
+        self.state = State::Normal;
+        if let Err(err) = self.send_firmware_update_status(FWStatus::Failed).await {
+            log::warn!("Failed to send firmware update status: {err:?}");
+        }
+        ClientEvent::FWDownloadFailed
     }
 
     async fn handle_normal_state(&mut self) -> Option<ClientEvent> {

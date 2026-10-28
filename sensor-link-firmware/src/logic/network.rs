@@ -119,7 +119,7 @@ pub trait NetworkClient {
 
     /// Cell the modem is registered on, if known.
     ///
-    /// No default: a wrapping client that forgets to forward this silently sends no cell info.
+    /// Implementors may simply return `None` if no cell info can be obtained.
     async fn cell_info(&mut self) -> Option<CellInfo>;
 }
 

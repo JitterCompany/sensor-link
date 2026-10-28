@@ -11,8 +11,8 @@
 - The network task sends `Signal::CellInfo` once per session, right after
   connecting, when the client knows the serving cell. Turn it into
   `Event::CellInfo` to report it. Breaking for exhaustive matches on `Signal`.
-  Breaking for `NetworkClient` implementations: `cell_info()` has no default,
-  so a wrapping client forwards it, e.g. to `MqttClient::cell_info()`.
+  Breaking for `NetworkClient` implementations: `cell_info()` has no default.
+  Forward it to `MqttClient::cell_info()`, or return `None`.
 - Fix: firmware download over the Quectel modem retries a slice up to 3 times
   instead of failing on the first slow `CONNECT` or broken read. The `CONNECT`
   timeout of a range request is 15 s (was 5 s). A failed read of the modem file

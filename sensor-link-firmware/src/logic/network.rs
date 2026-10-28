@@ -118,9 +118,9 @@ pub trait NetworkClient {
     ) -> Result<(), Error<Self::ClientError>>;
 
     /// Cell the modem is registered on, if known.
-    async fn cell_info(&mut self) -> Option<CellInfo> {
-        None
-    }
+    ///
+    /// No default: a wrapping client that forgets to forward this silently sends no cell info.
+    async fn cell_info(&mut self) -> Option<CellInfo>;
 }
 
 /// Logged once the MQTT session is up. sensor-link-provision looks for this

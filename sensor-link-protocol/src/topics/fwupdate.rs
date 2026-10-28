@@ -34,7 +34,8 @@ pub enum FWStatus {
     /// Something whent wrong
     Failed,
 
-    /// All announced chunks have been received
+    /// No longer sent: the download is streamed, so it is only known to be complete at
+    /// [FWStatus::Complete]. Older firmware sends it once the first part of the file is in.
     Received,
 
     /// Update has been received and decoded

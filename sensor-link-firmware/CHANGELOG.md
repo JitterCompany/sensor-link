@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Fix: firmware download over the Quectel modem retries a slice up to 3 times
+  instead of failing on the first slow `CONNECT` or broken read. The `CONNECT`
+  timeout of a range request is 15 s (was 5 s). A failed read of the modem file
+  no longer counts as the end of the slice, which silently dropped up to 16 KB of
+  the image. The client sends `FWStatus::Failed` when a download fails or a chunk
+  cannot be decoded. `FWStatus::Received` is no longer sent: since the download is
+  streamed it went out after the first slice and suggested the download was done.
 - The network task logs `logic::network::CONNECTED_MARKER` once the MQTT
   session is up, in place of "Network Connected", so provisioning can verify
   a device's connection over RTT.

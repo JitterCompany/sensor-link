@@ -87,10 +87,11 @@ pub struct GET {
 /// GET with a caller-supplied request header, which allows sending e.g. a `Range` header.
 /// Requires "requestheader" to be enabled, see [ConfigRequestHeader].
 /// The modem responds with "CONNECT", after which the header must be sent as raw bytes.
-/// Note: the modem can take well over a second to answer with "CONNECT", so this command needs
-/// a longer timeout than the other HTTP commands.
+/// Note: "CONNECT" only comes once the connection to the server is up, which is bounded by
+/// `timeout` (`<rsptime>`). Over https it sometimes takes more than 5 s. The AT timeout must be
+/// longer than the `timeout` the driver passes, see `HTTP_RSP_TIME_S`.
 #[derive(Debug, Clone, AtatCmd)]
-#[at_cmd("+QHTTPGET", NoResponse, timeout_ms = 5000, termination = "\r")]
+#[at_cmd("+QHTTPGET", NoResponse, timeout_ms = 35000, termination = "\r")]
 pub struct GETWithHeader {
     /// The range is 1-65535, and the default value is 60. Unit: second.
     /// It is used to configure the timeout for the HTTP(S) GET response
@@ -102,6 +103,12 @@ pub struct GETWithHeader {
     /// The range is 1-65535, and the default value is 60. Unit: second.
     pub input_time: u16,
 }
+
+/// Cancel the HTTP(S) request in progress, for example a GET that is still waiting for the
+/// server or for its request header.
+#[derive(Debug, Clone, AtatCmd)]
+#[at_cmd("+QHTTPSTOP", NoResponse, timeout_ms = 10000, termination = "\r")]
+pub struct Stop;
 
 /// Write GET response to a file on the modem.
 #[derive(Debug, Clone, AtatCmd)]

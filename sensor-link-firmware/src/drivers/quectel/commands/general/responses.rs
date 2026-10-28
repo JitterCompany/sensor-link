@@ -2,6 +2,7 @@
 
 use atat::{atat_derive::AtatResp, heapless_bytes::Bytes};
 use heapless::String;
+use sensor_link_protocol::event::{CellInfo, Rat};
 
 #[derive(Debug, Clone, AtatResp)]
 #[allow(dead_code)]
@@ -97,6 +98,88 @@ impl SignalQualityReport {
     }
 }
 
+/// AT+QENG="servingcell" response.
+///
+/// `cell` is `None` while the modem is still searching for a cell.
+#[derive(Clone, Debug, AtatResp)]
+pub struct ServingCell {
+    pub cell: Option<CellInfo>,
+}
+
+/// Parse `+QENG: "servingcell",<state>,<rat>,...`.
+///
+/// The field layout depends on the RAT. CellID, LAC and TAC are unquoted hex.
+pub fn parse_serving_cell(bytes: &[u8]) -> Result<ServingCell, ()> {
+    let text = core::str::from_utf8(bytes).map_err(|_| ())?;
+    let line = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("+QENG:"))
+        .unwrap_or(text);
+    let mut fields = line.split(',').map(|field| field.trim().trim_matches('"'));
+
+    if fields.next() != Some("servingcell") {
+        return Err(());
+    }
+    let _state = fields.next().ok_or(())?;
+    let Some(rat) = fields.next() else {
+        return Ok(ServingCell { cell: None });
+    };
+
+    let mut next = || fields.next().ok_or(());
+    let cell = match rat {
+        "GSM" | "WCDMA" => {
+            let rat = if rat == "GSM" { Rat::Gsm } else { Rat::Umts };
+            let mcc = parse_dec(next()?)?;
+            let mnc = parse_dec(next()?)?;
+            let tac = parse_hex(next()?)?;
+            let ci = parse_hex(next()?)?;
+            CellInfo {
+                rat,
+                mcc,
+                mnc,
+                tac,
+                ci,
+                rsrp: None,
+            }
+        }
+        "LTE" | "CAT-M" | "eMTC" | "CAT-NB" | "NBIoT" => {
+            let rat = match rat {
+                "LTE" => Rat::Lte,
+                "CAT-M" | "eMTC" => Rat::LteM,
+                _ => Rat::NbIot,
+            };
+            let _is_tdd = next()?;
+            let mcc = parse_dec(next()?)?;
+            let mnc = parse_dec(next()?)?;
+            let ci = parse_hex(next()?)?;
+            // PCID, EARFCN, band, UL bandwidth, DL bandwidth
+            for _ in 0..5 {
+                next()?;
+            }
+            let tac = parse_hex(next()?)?;
+            let rsrp = next().ok().and_then(|rsrp| rsrp.parse().ok());
+            CellInfo {
+                rat,
+                mcc,
+                mnc,
+                tac,
+                ci,
+                rsrp,
+            }
+        }
+        _ => return Err(()),
+    };
+    Ok(ServingCell { cell: Some(cell) })
+}
+
+fn parse_dec(field: &str) -> Result<u16, ()> {
+    field.parse().map_err(|_| ())
+}
+
+fn parse_hex(field: &str) -> Result<u32, ()> {
+    u32::from_str_radix(field, 16).map_err(|_| ())
+}
+
 fn rssi_to_dbm(rssi: i16) -> Option<i16> {
     match rssi {
         0 => Some(-113),                                  // 0: -113 dBm or less
@@ -131,6 +214,60 @@ fn dbm_to_percentage(dbm: i16) -> i16 {
 mod test {
 
     use super::*;
+
+    // Example lines from the EC2x AT manual, not captured from a modem.
+    #[test]
+    fn serving_cell_lte() {
+        let line = br#"+QENG: "servingcell","NOCONN","LTE","FDD",204,08,1A2D001,123,6300,20,3,3,2B11,-95,-10,-65,15,40"#;
+        let cell = parse_serving_cell(line).unwrap().cell.unwrap();
+        assert_eq!(
+            cell,
+            CellInfo {
+                rat: Rat::Lte,
+                mcc: 204,
+                mnc: 8,
+                tac: 0x2B11,
+                ci: 0x1A2D001,
+                rsrp: Some(-95),
+            }
+        );
+    }
+
+    #[test]
+    fn serving_cell_gsm() {
+        let line = br#"+QENG: "servingcell","NOCONN","GSM",204,16,4B1,7D3F,23,62,0,-61,255,255,255,67,67,1,-,-,-,-,-,-,-,-,-,-"#;
+        let cell = parse_serving_cell(line).unwrap().cell.unwrap();
+        assert_eq!(
+            cell,
+            CellInfo {
+                rat: Rat::Gsm,
+                mcc: 204,
+                mnc: 16,
+                tac: 0x4B1,
+                ci: 0x7D3F,
+                rsrp: None,
+            }
+        );
+    }
+
+    #[test]
+    fn serving_cell_searching() {
+        let line = br#"+QENG: "servingcell","SEARCH""#;
+        assert!(parse_serving_cell(line).unwrap().cell.is_none());
+    }
+
+    #[test]
+    fn serving_cell_without_prefix() {
+        let line = br#""servingcell","CONNECT","LTE","FDD",204,08,1A2D001,123,6300,20,3,3,2B11,-95,-10,-65,15,40"#;
+        assert!(parse_serving_cell(line).unwrap().cell.is_some());
+    }
+
+    #[test]
+    fn serving_cell_malformed() {
+        assert!(parse_serving_cell(br#"+QENG: "servingcell","NOCONN","LTE","FDD",204"#).is_err());
+        assert!(parse_serving_cell(br#"+QENG: "neighbourcell intra","LTE""#).is_err());
+        assert!(parse_serving_cell(br#"+QENG: "servingcell","NOCONN","NR5G-SA""#).is_err());
+    }
 
     #[test]
     fn test_dbm_to_percentage() {

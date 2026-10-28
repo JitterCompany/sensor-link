@@ -29,6 +29,7 @@ impl core::fmt::Write for Desc {
 #[serde(rename_all = "snake_case")]
 pub enum Rat {
     Gsm,
+    Umts,
     Lte,
     LteM,
     NbIot,

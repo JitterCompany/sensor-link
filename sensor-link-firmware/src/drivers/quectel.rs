@@ -18,6 +18,7 @@ use atat::{
 use embedded_io_async::{Read, Write};
 use heapless::{spsc, String, Vec};
 use sensor_link_protocol::{
+    event::CellInfo,
     info::{VersionString, VERSION_STRING_MAX_LEN},
     Error, MAX_FILE_CHUNK_LEN, MAX_MESSAGE_LEN, MAX_TOPIC_LEN,
 };
@@ -514,6 +515,15 @@ where
         let cmd = general::GetSignalQuality;
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
         Ok(resp.signal_strength())
+    }
+
+    pub async fn get_serving_cell(&mut self) -> Result<Option<CellInfo>, Error<atat::Error>> {
+        let resp = self
+            .client
+            .send(&general::GetServingCell)
+            .await
+            .map_err(Error::Client)?;
+        Ok(resp.cell)
     }
 
     pub async fn upload_file(
@@ -1997,6 +2007,16 @@ where
 
     async fn signal_quality(&mut self) -> Option<i16> {
         self.get_signal_quality().await.ok()
+    }
+
+    async fn cell_info(&mut self) -> Option<CellInfo> {
+        match self.get_serving_cell().await {
+            Ok(cell) => cell,
+            Err(e) => {
+                log::warn!(target: "quectel","Error getting serving cell: {e:?}");
+                None
+            }
+        }
     }
 
     async fn modem_model(&mut self) -> VersionString {

@@ -215,6 +215,24 @@ mod test {
 
     use super::*;
 
+    // Captured from an EC21 (EC21EFAR06A03M4G). The last field (srxlev) is "-".
+    #[test]
+    fn serving_cell_lte_ec21_capture() {
+        let line = br#"+QENG: "servingcell","NOCONN","LTE","FDD",204,08,A0B20,183,1300,3,5,5,7B0D,-92,-13,-58,6,-"#;
+        let cell = parse_serving_cell(line).unwrap().cell.unwrap();
+        assert_eq!(
+            cell,
+            CellInfo {
+                rat: Rat::Lte,
+                mcc: 204,
+                mnc: 8,
+                tac: 0x7B0D,
+                ci: 0xA0B20,
+                rsrp: Some(-92),
+            }
+        );
+    }
+
     // Example lines from the EC2x AT manual, not captured from a modem.
     #[test]
     fn serving_cell_lte() {

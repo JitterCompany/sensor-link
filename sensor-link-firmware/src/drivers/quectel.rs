@@ -57,6 +57,10 @@ const DOWNLOAD_SLICE_LEN: u32 = 16000;
 /// Attempts to fetch or read out one slice before the download fails.
 const SLICE_ATTEMPTS: u32 = 3;
 
+/// Wait for the `+QHTTPGET` of a cancelled request. It normally follows `AT+QHTTPSTOP` at once;
+/// if no request was in progress, nothing comes.
+const HTTP_STOP_URC_WAIT_MS: u32 = 3000;
+
 /// Wait before retrying a slice, after the request has been cancelled.
 const SLICE_RETRY_DELAY_MS: u32 = 2000;
 
@@ -665,10 +669,7 @@ where
                 Ok(()) => return Ok(()),
                 Err(err) if attempt < SLICE_ATTEMPTS => {
                     log::warn!(target: "quectel","Fetching slice at {offset} failed (attempt {attempt}/{SLICE_ATTEMPTS}): {err:?}");
-                    // Also ends a GET that answered CONNECT too late and still waits for its header.
-                    if let Err(err) = self.client.send(&http::Stop).await {
-                        log::debug!(target: "quectel","HTTP stop failed: {err:?}");
-                    }
+                    self.cancel_http_request().await;
                     self.discard_slice_file().await;
                     delay_ms(SLICE_RETRY_DELAY_MS).await;
                     attempt += 1;
@@ -678,6 +679,22 @@ where
                     return Err(err);
                 }
             }
+        }
+    }
+
+    /// Cancel the HTTP request in progress, also a GET that answered `CONNECT` too late and still
+    /// waits for its header. The cancelled GET still reports `+QHTTPGET`, which is consumed here;
+    /// otherwise the next GET would take it as its own result.
+    async fn cancel_http_request(&mut self) {
+        if let Err(err) = self.client.send(&http::Stop).await {
+            log::debug!(target: "quectel","HTTP stop failed: {err:?}");
+        }
+        if let Some(urc) = self
+            .inner_await_urc(UrcVariant::HTTPGet)
+            .with_timeout_ms(HTTP_STOP_URC_WAIT_MS)
+            .await
+        {
+            log::debug!(target: "quectel","Cancelled request reported {urc:?}");
         }
     }
 

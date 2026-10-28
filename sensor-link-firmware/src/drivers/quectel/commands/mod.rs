@@ -372,13 +372,15 @@ mod test {
         );
 
         let mut digester = DefaultDigester::<Urc>::new();
-        let input = "\r\n+QENG: \"servingcell\",\"NOCONN\",\"LTE\",\"FDD\",204,08,1A2D001,123,6300,20,3,3,2B11,-95,-10,-65,15,40\r\n\r\nOK\r\n";
+        // Captured from an EC21
+        let input = "\r\n+QENG: \"servingcell\",\"NOCONN\",\"LTE\",\"FDD\",204,08,A0B20,183,1300,3,5,5,7B0D,-92,-13,-58,6,-\r\n\r\nOK\r\n";
         let (DigestResult::Response(res), _) = digester.digest(input.as_bytes()) else {
             panic!("not a response");
         };
         let cell = cmd.parse(res).unwrap().cell.unwrap();
-        assert_eq!(cell.ci, 0x1A2D001);
-        assert_eq!(cell.tac, 0x2B11);
+        assert_eq!(cell.ci, 0xA0B20);
+        assert_eq!(cell.tac, 0x7B0D);
+        assert_eq!(cell.rsrp, Some(-92));
     }
 }
 

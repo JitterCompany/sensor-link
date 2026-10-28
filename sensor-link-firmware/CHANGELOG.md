@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Protocol: new `Event::CellInfo(CellInfo)` carrying the serving cell (RAT, MCC,
+  MNC, TAC, cell ID, optional RSRP), so the server can estimate the location.
+  Breaking for exhaustive matches on `Event`. Servers built against an older
+  protocol crate fail to parse this event and drop it.
 - Fix: firmware download over the Quectel modem retries a slice up to 3 times
   instead of failing on the first slow `CONNECT` or broken read. The `CONNECT`
   timeout of a range request is 15 s (was 5 s). A failed read of the modem file

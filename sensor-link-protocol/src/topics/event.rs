@@ -24,6 +24,33 @@ impl core::fmt::Write for Desc {
     }
 }
 
+/// Radio access technology of a cell.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Rat {
+    Gsm,
+    Lte,
+    LteM,
+    NbIot,
+}
+
+/// Identity of the cell the modem is registered on.
+///
+/// Cell databases resolve (mcc, mnc, tac, ci) to the location of the cell, not of the device.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct CellInfo {
+    pub rat: Rat,
+    pub mcc: u16,
+    pub mnc: u16,
+    /// Tracking area code (LAC for GSM)
+    pub tac: u32,
+    /// Cell identity
+    pub ci: u32,
+    /// Reference signal received power in dBm, if the modem reports it
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rsrp: Option<i16>,
+}
+
 /// All manufacturer-agnostic events that can be sent from device to the server.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -35,6 +62,9 @@ pub enum Event {
 
     NetworkConnected,
     NetworkDisconnected,
+
+    /// Serving cell at the start of a network session
+    CellInfo(CellInfo),
 
     /// Failed to connect to the server (typically after multiple failed attempts)
     ContactTimeout(Desc),
@@ -76,6 +106,7 @@ impl Event {
 
             Event::NetworkConnected => false,
             Event::NetworkDisconnected => false,
+            Event::CellInfo(_) => false,
             Event::ContactTimeout(_) => false,
 
             Event::FirmwareUpdateStarted => true,
@@ -157,3 +188,59 @@ impl<E> EventPayload<E> {
 }
 
 impl<E: Serialize> TopicPayloadSerialize<MAX_EVENT_LEN> for EventPayload<E> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cell_info() -> CellInfo {
+        CellInfo {
+            rat: Rat::LteM,
+            mcc: 204,
+            mnc: 8,
+            tac: 0xFFFF,
+            ci: 0x0FFF_FFFF,
+            rsrp: Some(-140),
+        }
+    }
+
+    #[test]
+    fn cell_info_event_fits_and_roundtrips() {
+        let payload = EventPayload {
+            event: Event::CellInfo(cell_info()),
+            ts: i64::MAX,
+        };
+        let bytes = payload.serialize_topic_payload().unwrap();
+        assert_eq!(
+            core::str::from_utf8(&bytes).unwrap(),
+            r#"{"e":{"cellinfo":{"rat":"lte_m","mcc":204,"mnc":8,"tac":65535,"ci":268435455,"rsrp":-140}},"t":9223372036854775807}"#
+        );
+
+        let (parsed, _) = serde_json_core::from_slice::<EventPayload<Event>>(&bytes).unwrap();
+        let Event::CellInfo(parsed) = parsed.event else {
+            panic!("expected CellInfo, got {:?}", parsed.event);
+        };
+        assert_eq!(parsed, cell_info());
+    }
+
+    #[test]
+    fn cell_info_without_rsrp() {
+        let info = CellInfo {
+            rsrp: None,
+            ..cell_info()
+        };
+        let bytes = EventPayload {
+            event: Event::CellInfo(info.clone()),
+            ts: 0,
+        }
+        .serialize_topic_payload()
+        .unwrap();
+        assert!(!core::str::from_utf8(&bytes).unwrap().contains("rsrp"));
+
+        let (parsed, _) = serde_json_core::from_slice::<EventPayload<Event>>(&bytes).unwrap();
+        let Event::CellInfo(parsed) = parsed.event else {
+            panic!("expected CellInfo, got {:?}", parsed.event);
+        };
+        assert_eq!(parsed, info);
+    }
+}

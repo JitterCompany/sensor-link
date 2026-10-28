@@ -1,7 +1,7 @@
 //! Orchestrator signals produced by the generic protocol client
 //! (commands, network time, firmware update protocol).
 
-use sensor_link_protocol::{cmd::Cmd, fwupdate::FWChunk};
+use sensor_link_protocol::{cmd::Cmd, event::CellInfo, fwupdate::FWChunk};
 
 use crate::logic::time_adjust::{NetworkTime, Timestamp};
 
@@ -110,6 +110,9 @@ pub enum Signal {
     /// New wallclock time has been received and applied.
     /// This means existing timestamps may not be useful anymore.
     NetworkTime(Timestamp, NetworkTime),
+
+    /// Serving cell, read once per session right after connecting.
+    CellInfo(CellInfo),
 
     /// Receiving chunk of firmware.
     FirmwareChunk(FWChunk),

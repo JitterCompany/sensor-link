@@ -142,6 +142,17 @@ impl PowerDown {
 #[at_cmd("+CSQ", SignalQualityReport, timeout_ms = 300, termination = "\r")]
 pub struct GetSignalQuality;
 
+/// AT+QENG="servingcell" Serving cell information
+#[derive(Debug, Clone, AtatCmd)]
+#[at_cmd(
+    "+QENG=\"servingcell\"",
+    ServingCell,
+    timeout_ms = 300,
+    parse = parse_serving_cell,
+    termination = "\r"
+)]
+pub struct GetServingCell;
+
 #[derive(Debug, Clone, AtatCmd)]
 #[at_cmd("+IPR", NoResponse, timeout_ms = 300, termination = "\r")]
 pub struct SetBaudRate {

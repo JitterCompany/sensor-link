@@ -360,6 +360,28 @@ mod test {
         assert_eq!(mqtt::PublishPrepare::LEN, 66);
         assert!(mqtt::PublishPrepare::MAX_LEN > serialized.len());
     }
+
+    #[test]
+    fn test_cmd_qeng_servingcell() {
+        let cmd = general::GetServingCell;
+        let mut buff = [0; 32];
+        let len = cmd.write(&mut buff);
+        assert_eq!(
+            core::str::from_utf8(&buff[..len]).unwrap(),
+            "AT+QENG=\"servingcell\"\r"
+        );
+
+        let mut digester = DefaultDigester::<Urc>::new();
+        // Captured from an EC21
+        let input = "\r\n+QENG: \"servingcell\",\"NOCONN\",\"LTE\",\"FDD\",204,08,A0B20,183,1300,3,5,5,7B0D,-92,-13,-58,6,-\r\n\r\nOK\r\n";
+        let (DigestResult::Response(res), _) = digester.digest(input.as_bytes()) else {
+            panic!("not a response");
+        };
+        let cell = cmd.parse(res).unwrap().cell.unwrap();
+        assert_eq!(cell.ci, 0xA0B20);
+        assert_eq!(cell.tac, 0x7B0D);
+        assert_eq!(cell.rsrp, Some(-92));
+    }
 }
 
 #[cfg(test)]

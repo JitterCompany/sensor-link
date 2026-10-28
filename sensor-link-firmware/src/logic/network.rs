@@ -1,7 +1,7 @@
 //! Network logic
 //!
 
-use sensor_link_protocol::{Error, Milliseconds, Topic};
+use sensor_link_protocol::{event::CellInfo, Error, Milliseconds, Topic};
 use serde::Serialize;
 
 use crate::{
@@ -116,6 +116,11 @@ pub trait NetworkClient {
         &mut self,
         status: &mut Self::Status,
     ) -> Result<(), Error<Self::ClientError>>;
+
+    /// Cell the modem is registered on, if known.
+    async fn cell_info(&mut self) -> Option<CellInfo> {
+        None
+    }
 }
 
 /// Logged once the MQTT session is up. sensor-link-provision looks for this
@@ -243,6 +248,10 @@ pub async fn network_task<
                     .send(Signal::Network(NetworkSignal::Connected).into())
                     .await
                     .ok();
+
+                if let Some(cell) = client.cell_info().await {
+                    signal_queue.send(Signal::CellInfo(cell).into()).await.ok();
+                }
 
                 // Handle network traffic as long as the connection is open
                 let disconnect_reason = handle_connection::<SignalTx, ActionList, MsgRx, C, U, P>(

@@ -16,6 +16,7 @@ use crate::{
 };
 use sensor_link_protocol::{
     cmd,
+    event::CellInfo,
     fwupdate::{self, FWChunk, FWStatus, FWUpdateURL, B64_ENCODED_CHUNK_SIZE, FW_CHUNK_SIZE},
     info::DeviceInfoV3,
     online::Online,
@@ -439,5 +440,9 @@ impl<M: MqttClient, S: NetworkStatus> NetworkClient for crate::logic::client::Cl
             .serialize_topic_payload()
             .map_err(|_| Error::Serialize)?;
         self.driver.publish(topic, &s).await
+    }
+
+    async fn cell_info(&mut self) -> Option<CellInfo> {
+        self.driver.cell_info().await
     }
 }

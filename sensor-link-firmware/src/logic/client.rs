@@ -159,9 +159,6 @@ impl<M: MqttClient, S> Client<M, S> {
                     return Ok(FirmwareDownloadStart::Failed);
                 }
             }
-            if let Err(err) = self.send_firmware_update_status(FWStatus::Received).await {
-                log::warn!("Failed to send firmware update status: {err:?}");
-            }
             Ok(FirmwareDownloadStart::Started)
         } else {
             Ok(FirmwareDownloadStart::Failed)

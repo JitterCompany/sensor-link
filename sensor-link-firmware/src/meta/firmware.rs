@@ -269,7 +269,7 @@ impl<H: ApplicationHeader> Validator<H> {
             self.n_bytes += bytes_processed;
             application_bytes = &application_bytes[bytes_processed..];
 
-            if bytes_processed == 0 || application_bytes.len() == 0 {
+            if bytes_processed == 0 || application_bytes.is_empty() {
                 break false;
             }
         };

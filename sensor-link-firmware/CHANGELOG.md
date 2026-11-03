@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Bootloader: `validate_update` takes `installed_min_security`, the lowest security
+  level at which the image in internal flash may boot. Breaking: new argument.
+  Production bootloaders pass `SecurityLevel::Signed`. An installed image below it
+  is then replaced by a valid update from external flash, or refused as
+  `AppStatus::Bricked`. Pass `SecurityLevel::None` to keep booting unsigned images
+  flashed with a probe. Signed installed images were already verified on every
+  boot. The gap was images whose header claims `None` or `IntegrityOnly`.
+  `apply_update` requires a signed image when it checks what it wrote.
 - Protocol: new `Event::CellInfo(CellInfo)` carrying the serving cell (RAT, MCC,
   MNC, TAC, cell ID, optional RSRP), so the server can estimate the location.
   Breaking for exhaustive matches on `Event`. Servers built against an older

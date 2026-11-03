@@ -4,6 +4,7 @@ use crate::storage::flash_db::{self, File, FileStore, ObjectId, WriteableFileHan
 ///
 /// Generic over the flash block size, so any consumer can drive it with its own
 /// `BLOCK_SIZE`.
+#[derive(Default)]
 pub struct MockSingleFileStore {
     pub obj_id: Option<ObjectId>,
     pub buffer: Vec<u8>,
@@ -52,11 +53,20 @@ impl<const BLOCK_SIZE: usize, F: File<BLOCK_SIZE>> flash_db::FileStore<BLOCK_SIZ
 
     async fn read_file_fragment(
         &mut self,
-        _filehandle: &flash_db::FileHandle<BLOCK_SIZE, F>,
-        _fragment_no: flash_db::FragIndex,
-        _bytes: &mut [u8],
+        filehandle: &flash_db::FileHandle<BLOCK_SIZE, F>,
+        fragment_no: flash_db::FragIndex,
+        bytes: &mut [u8],
     ) -> Result<usize, flash_db::Error> {
-        todo!()
+        let file = *filehandle.file();
+        if !self.match_file::<BLOCK_SIZE, F>(file) {
+            return Err(flash_db::Error::NotFound);
+        }
+
+        let start = (fragment_no as usize * file.fragment_size()).min(self.buffer.len());
+        let end = (start + file.fragment_size()).min(self.buffer.len());
+        let len = (end - start).min(bytes.len());
+        bytes[..len].copy_from_slice(&self.buffer[start..start + len]);
+        Ok(len)
     }
 }
 

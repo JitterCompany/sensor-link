@@ -13,11 +13,12 @@ Turning the date check on has two failure modes:
 - An expired server certificate takes the whole fleet offline. Firmware updates are announced over the same MQTT connection, so the fix cannot be delivered over the air.
 - The modem clock is not set by the firmware. A wrong clock makes a valid certificate look "not yet valid" or expired. The modem reports a generic open error, so the firmware cannot tell this apart from a real rejection.
 
-The gain is small. The device pins a private CA that only signs our own brokers. Date checks only help against an attacker holding an old broker key whose certificate has expired. Without revocation (no CRL or OCSP on the modem), the answer to a leaked key is rotating the CA anyway.
+The gain is small when the device pins a private CA that only signs the product's own brokers. Date checks then only help against an attacker holding an old broker key whose certificate has expired. Without revocation (no CRL or OCSP on the modem), the answer to a leaked key is rotating the CA anyway.
 
 ## Decision
 Keep `ignorelocaltime` at 1. Certificate lifetime is handled on the server side:
 
+- Recommended: pin a private CA that signs nothing but the product's own brokers. With a public CA, every expired certificate that CA has issued stays usable against the device.
 - The device trusts the CA, never the broker certificate. Renewing the broker certificate needs no firmware change.
 - The CA certificate is long-lived, longer than the expected life of the hardware.
 - The CA certificate is compiled into the product firmware and written to the modem by `ensure_provisioned` when it differs. A CA rotation is a firmware update.

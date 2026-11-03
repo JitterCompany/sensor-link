@@ -36,6 +36,10 @@ Run the script below to check what clippy warnings you must solve to get your PR
 ./scripts/clippy-changed.sh HEAD~1     # or any other base ref
 ```
 
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or

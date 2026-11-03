@@ -542,7 +542,6 @@ fn find_max_exponent(input: f32) -> i8 {
 }
 
 #[cfg(all(test, feature = "use-std"))]
-
 mod tests {
     use super::*;
     use crate::MAX_MESSAGE_LEN;
@@ -575,7 +574,7 @@ mod tests {
     fn from_uniform() {
         let mut samples = UniformSamples::<2>::empty(1000.0);
         samples.t = 1_000_000_000;
-        samples.ch[0].push(3.14).unwrap();
+        samples.ch[0].push(3.25).unwrap();
         samples.ch[0].push(0.314).unwrap();
         samples.ch[1].push(0.628).unwrap();
         samples.ch[1].push(62.8).unwrap();
@@ -583,10 +582,10 @@ mod tests {
         let q15: Uniform<Q15<2, 100>> = samples.into();
 
         // error bounds are dependent on largest absolute value in the channel
-        const CH0_MAX_ERR: f32 = 3.14 * REL_ERR_MAX;
+        const CH0_MAX_ERR: f32 = 3.25 * REL_ERR_MAX;
         const CH1_MAX_ERR: f32 = 62.8 * REL_ERR_MAX;
 
-        assert_float_absolute_eq!(3.14, q15.data.ch[0].value_at(0), CH0_MAX_ERR);
+        assert_float_absolute_eq!(3.25, q15.data.ch[0].value_at(0), CH0_MAX_ERR);
         assert_float_absolute_eq!(0.314, q15.data.ch[0].value_at(1), CH0_MAX_ERR);
 
         assert_float_absolute_eq!(0.628, q15.data.ch[1].value_at(0), CH1_MAX_ERR);
@@ -620,7 +619,7 @@ mod tests {
     fn extreme_values() {
         let mut samples = UniformSamples::<1>::empty(1000.0);
         samples.t = 1_000_000_000;
-        samples.ch[0].push(3.14).unwrap();
+        samples.ch[0].push(3.25).unwrap();
 
         // these will all be represented as NaN (i16::MIN internally)
         samples.ch[0].push(f32::NAN).unwrap();
@@ -630,7 +629,7 @@ mod tests {
         let q15: Uniform<Q15<1, 100>> = samples.into();
 
         // the only finite value in the channel: should be represented accurately
-        assert_float_relative_eq!(3.14, q15.data.ch[0].value_at(0), REL_ERR_MAX);
+        assert_float_relative_eq!(3.25, q15.data.ch[0].value_at(0), REL_ERR_MAX);
 
         // non-finite values: expect NaN
         assert!(q15.data.ch[0].value_at(1).is_nan());
@@ -689,7 +688,7 @@ mod tests {
 
         // frogwatchlink-specific ser/de
         const SER_LEN: usize = Uniform::<Q15<3, N_SPL>>::MAX_SERIALIZED_SIZE;
-        assert!(SER_LEN < MAX_MESSAGE_LEN);
+        const { assert!(SER_LEN < MAX_MESSAGE_LEN) };
 
         let mut buffer = [0u8; MAX_MESSAGE_LEN];
         let serialized = samples_q15.as_topic_data(&mut buffer).unwrap();
@@ -751,7 +750,7 @@ mod tests {
 
         // frogwatchlink-specific ser/de
         const SER_LEN: usize = Uniform::<Q15<3, N_SPL>>::MAX_SERIALIZED_SIZE;
-        assert!(SER_LEN < MAX_MESSAGE_LEN);
+        const { assert!(SER_LEN < MAX_MESSAGE_LEN) };
 
         let mut buffer = [0u8; MAX_MESSAGE_LEN];
         let serialized = samples_q15.as_topic_data(&mut buffer).unwrap();
@@ -854,6 +853,6 @@ mod tests {
         // Because we specified 100 samples per channel, this should fail
         let res = Uniform::<Q15<3, 100>>::from_topic_data(&payload_bytes);
         assert!(res.is_err());
-        matches!(res.unwrap_err(), ParseError::Deserialize(_));
+        assert!(matches!(res.unwrap_err(), ParseError::Deserialize(_)));
     }
 }

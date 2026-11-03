@@ -14,6 +14,8 @@ on:
     paths:
       - "sensor-link-provision/**"
       - "**/provision.yml"
+      - "scripts/sbom.sh"
+      - "scripts/release-notes.sh"
 
 # The release step attaches assets to a GitHub Release.
 permissions:
@@ -21,6 +23,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CYCLONEDX_VERSION: 0.5.9
 
 concurrency:
   group: provision-${{ github.ref }}
@@ -114,6 +117,39 @@ jobs:
           archive: false
           retention-days: 90
 
+      - name: Cache cargo-cyclonedx
+        if: runner.os == 'Linux'
+        id: cache-cyclonedx
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-cyclonedx
+          key: cargo-cyclonedx-${{ env.CYCLONEDX_VERSION }}-${{ runner.os }}
+
+      - name: Install cargo-cyclonedx
+        if: runner.os == 'Linux' && steps.cache-cyclonedx.outputs.cache-hit != 'true'
+        run: cargo install cargo-cyclonedx --version ${{ env.CYCLONEDX_VERSION }} --locked
+
+      # One SBOM per platform asset, all generated here: cargo-cyclonedx
+      # resolves dependencies per target without building for it. The x86_64
+      # macOS slice has the same dependencies as the arm64 one.
+      - name: Generate SBOMs
+        if: runner.os == 'Linux'
+        run: |
+          ./scripts/sbom.sh sensor-link-provision \
+            dist/sensor-link-provision-linux-x86_64.cdx.json --target x86_64-unknown-linux-gnu
+          ./scripts/sbom.sh sensor-link-provision \
+            dist/sensor-link-provision-windows-x86_64.cdx.json --target x86_64-pc-windows-msvc
+          ./scripts/sbom.sh sensor-link-provision \
+            dist/sensor-link-provision-macos-universal.cdx.json --target aarch64-apple-darwin
+
+      - name: Archive (SBOMs)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sensor-link-provision-sbom
+          path: dist/*.cdx.json
+          retention-days: 90
+
       - name: Stage Windows exe
         if: runner.os == 'Windows'
         shell: bash
@@ -135,14 +171,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/sensor-link-provision-v')
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#sensor-link-provision-v}"
-          mkdir -p dist
-          awk -v v="$VERSION" '/^## / { if (found) exit; found = ($2 == v); next } found' \
-            sensor-link-provision/CHANGELOG.md > dist/release-notes.md
-          if ! grep -q '[^[:space:]]' dist/release-notes.md; then
-            echo "::error::no '## $VERSION' section in sensor-link-provision/CHANGELOG.md"
-            exit 1
-          fi
+          ./scripts/release-notes.sh sensor-link-provision/CHANGELOG.md \
+            "${GITHUB_REF_NAME#sensor-link-provision-v}" dist/release-notes.md
 
       # On a sensor-link-provision-v* tag, publish the platform asset to a
       # GitHub Release. Each matrix job attaches its own file; the action
@@ -158,3 +188,4 @@ jobs:
             dist/${{ matrix.artifact }}.zip
             dist/${{ matrix.artifact }}.exe
             dist/${{ matrix.artifact }}
+            dist/*.cdx.json

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Bootloader: `validate_update` takes `installed_min_security`, the lowest security
+  level at which the image in internal flash may boot. Breaking: new argument.
+  Production bootloaders pass `SecurityLevel::Signed`. An installed image below it
+  is then replaced by a valid update from external flash, or refused as
+  `AppStatus::Bricked`. Pass `SecurityLevel::None` to keep booting unsigned images
+  flashed with a probe. Signed installed images were already verified on every
+  boot. The gap was images whose header claims `None` or `IntegrityOnly`.
+  `apply_update` requires a signed image when it checks what it wrote.
 - Protocol: new urgent `Event::FirmwareRejected(FirmwareRejectReason)` for a
   firmware image that failed validation: signature, integrity, device type,
   anti-downgrade (with the rejected version), security level, malformed header

@@ -7,6 +7,7 @@
 //! [`ApplicationHeader`] for its own type and drives the same [`Validator`].
 
 use num_enum::TryFromPrimitive;
+use sensor_link_protocol::event::FirmwareRejectReason;
 
 use crate::utils::crypto;
 
@@ -139,6 +140,22 @@ pub enum ValidationError {
 
     // Could not verify signature (signature invalid)
     Signature,
+}
+
+impl From<&ValidationError> for FirmwareRejectReason {
+    fn from(error: &ValidationError) -> Self {
+        match error {
+            ValidationError::Incomplete => FirmwareRejectReason::Incomplete,
+            ValidationError::Invalid(ApplicationHeaderError::InvalidDeviceType) => {
+                FirmwareRejectReason::DeviceType
+            }
+            ValidationError::Invalid(_) => FirmwareRejectReason::Malformed,
+            ValidationError::Security(_) => FirmwareRejectReason::SecurityLevel,
+            ValidationError::Downgrade(version) => FirmwareRejectReason::Downgrade(*version),
+            ValidationError::Integrity => FirmwareRejectReason::Integrity,
+            ValidationError::Signature => FirmwareRejectReason::Signature,
+        }
+    }
 }
 
 enum ValidatorState<H: ApplicationHeader> {

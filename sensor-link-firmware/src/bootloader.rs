@@ -62,12 +62,13 @@ fn validate_existing_firmware<H, IF>(
     internal_flash: &IF,
     device_type: H::DeviceType,
     pubkey: &PubKey,
+    min_security: SecurityLevel,
 ) -> Validator<H>
 where
     H: ApplicationHeader,
     IF: AppFlashRead,
 {
-    let mut validator = Validator::new(pubkey.clone(), SecurityLevel::None, device_type);
+    let mut validator = Validator::new(pubkey.clone(), min_security, device_type);
     validator.update(internal_flash.application_total());
     validator
 }
@@ -118,12 +119,17 @@ where
     validator
 }
 
+/// `installed_min_security` is the lowest security level at which the image in internal flash
+/// may boot. Production bootloaders pass `SecurityLevel::Signed`. An installed image below it
+/// counts as invalid: a valid update from external flash replaces it, otherwise the result is
+/// [`AppStatus::Bricked`].
 pub async fn validate_update<H, S, F, IF, const BLOCK_SIZE: usize, const CHUNK_SIZE: usize>(
     internal_flash: &IF,
     store: &mut S,
     fw_file: F,
     device_type: H::DeviceType,
     pubkey: &PubKey,
+    installed_min_security: SecurityLevel,
 ) -> AppStatus<H>
 where
     H: ApplicationHeader + PartialEq,
@@ -149,7 +155,12 @@ where
     }
 
     // validate existing firmware
-    let old_validator = validate_existing_firmware::<H, IF>(internal_flash, device_type, pubkey);
+    let old_validator = validate_existing_firmware::<H, IF>(
+        internal_flash,
+        device_type,
+        pubkey,
+        installed_min_security,
+    );
     match old_validator.verify() {
         // Existing firmware valid
         Ok(existing_header) => {
@@ -254,10 +265,126 @@ where
         flash_writer.finalize().map_err(UpdateError::Write)?;
     }
 
-    // Verify internal firmware after applying
+    // Verify internal firmware after applying. Only signed images are written, see validate_new_firmware
     log::info!("Update complete. Verifying...");
-    let header = validate_existing_firmware::<H, IF>(internal_flash, device_type, pubkey)
-        .verify()
-        .map_err(UpdateError::Validate)?;
+    let header = validate_existing_firmware::<H, IF>(
+        internal_flash,
+        device_type,
+        pubkey,
+        SecurityLevel::Signed,
+    )
+    .verify()
+    .map_err(UpdateError::Validate)?;
     Ok(header)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        meta::firmware::{ApplicationHeaderV2, DeviceType},
+        storage::flash_db::{block_layer::BlockId, File, Object, ObjectId},
+        tests::mock::mock_filestore::MockSingleFileStore,
+    };
+
+    const BLOCK_SIZE: usize = 4096;
+    const CHUNK_SIZE: usize = 256;
+
+    type Header = ApplicationHeaderV2<TestDevice>;
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    struct TestDevice;
+
+    impl DeviceType for TestDevice {
+        fn to_byte(self) -> u8 {
+            0
+        }
+        fn try_from_byte(byte: u8) -> Option<Self> {
+            (byte == 0).then_some(TestDevice)
+        }
+    }
+
+    #[derive(Copy, Clone)]
+    struct FwFile;
+
+    impl Object<BLOCK_SIZE> for FwFile {
+        fn id(&self) -> ObjectId {
+            1
+        }
+        fn fragment_size(&self) -> usize {
+            CHUNK_SIZE
+        }
+        fn flash_blocks(&self) -> core::ops::Range<BlockId> {
+            0..4
+        }
+    }
+
+    impl File<BLOCK_SIZE> for FwFile {}
+
+    struct InstalledApp(Vec<u8>);
+
+    impl AppFlashRead for InstalledApp {
+        fn application_total(&self) -> &[u8] {
+            &self.0
+        }
+    }
+
+    fn unsigned_app() -> InstalledApp {
+        let mut image = vec![0u8; Header::BINARY_SIZE + 64];
+        Header::placeholder(TestDevice)
+            .as_bytes(&mut image[..Header::BINARY_SIZE])
+            .unwrap();
+        InstalledApp(image)
+    }
+
+    // The P256 generator point; never reached, as no image here is signed.
+    fn pubkey() -> PubKey {
+        let mut point = [0u8; 65];
+        point[0] = 0x04;
+        point[1..33].copy_from_slice(&[
+            0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4,
+            0x40, 0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45,
+            0xd8, 0x98, 0xc2, 0x96,
+        ]);
+        point[33..].copy_from_slice(&[
+            0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f,
+            0x9e, 0x16, 0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68,
+            0x37, 0xbf, 0x51, 0xf5,
+        ]);
+        PubKey::try_from_bytes(&point).unwrap()
+    }
+
+    async fn status(installed: &InstalledApp, min_security: SecurityLevel) -> AppStatus<Header> {
+        let mut store = MockSingleFileStore::new();
+        validate_update::<Header, _, _, _, BLOCK_SIZE, CHUNK_SIZE>(
+            installed,
+            &mut &mut store,
+            FwFile,
+            TestDevice,
+            &pubkey(),
+            min_security,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn unsigned_installed_app_boots_when_allowed() {
+        let status = status(&unsigned_app(), SecurityLevel::None).await;
+        assert!(matches!(
+            status,
+            AppStatus::UpdateRejected(_, ValidationError::Incomplete)
+        ));
+    }
+
+    #[tokio::test]
+    async fn unsigned_installed_app_refused_when_signature_required() {
+        let status = status(&unsigned_app(), SecurityLevel::Signed).await;
+        let AppStatus::Bricked(installed, _) = status else {
+            panic!("unsigned app must not boot");
+        };
+        assert!(matches!(
+            installed,
+            ValidationError::Security(SecurityLevel::None)
+        ));
+    }
 }

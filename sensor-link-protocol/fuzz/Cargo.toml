@@ -1,0 +1,30 @@
+[package]
+name = "sensor-link-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sensor-link-protocol = { path = "..", features = ["use-std"] }
+
+# Built on nightly with its own target dir, so kept out of the root workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "downlink_json"
+path = "fuzz_targets/downlink_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "samples_postcard"
+path = "fuzz_targets/samples_postcard.rs"
+test = false
+doc = false
+bench = false

@@ -75,3 +75,25 @@ jobs:
           workspaces: factory-test/modem-test
       - name: Check
         run: cargo check --release
+
+  # Short smoke run of the protocol decoder fuzz targets. Longer runs are local,
+  # see sensor-link-protocol/fuzz/.
+  fuzz:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sensor-link-protocol/fuzz
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sensor-link-protocol/fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz downlink JSON decoders
+        run: cargo fuzz run downlink_json -- -max_total_time=60
+      - name: Fuzz postcard samples decoder
+        run: cargo fuzz run samples_postcard -- -max_total_time=60

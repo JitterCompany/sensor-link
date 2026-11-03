@@ -55,6 +55,31 @@ cd sensor-link-protocol/fuzz
 cargo +nightly fuzz run downlink_json -- -max_total_time=600
 ```
 
+## Releases
+
+Each library crate is released on its own, with a `<crate>-v<version>` tag such
+as `sensor-link-firmware-v0.3.0`. To release:
+
+1. Set `version` in the crate's `Cargo.toml`.
+2. Rename the `## Unreleased` section of the crate's `CHANGELOG.md` to
+   `## <version> - <date>`.
+3. Merge to master, then tag that commit and push the tag.
+
+The *Library release* workflow checks the tag against `Cargo.toml` and publishes
+a GitHub Release. Its notes are the changelog section and it carries a
+CycloneDX SBOM (`<tag>.cdx.json`). Downstream pins the release with
+`tag = "<crate>-v<version>"` on the git dependency.
+
+`sensor-link-provision` follows the same steps with its own
+`sensor-link-provision-v*` tags, see its [README](sensor-link-provision/README.md).
+
+## Dependency audit
+
+The *Dependency audit* workflow runs `cargo audit` on every pull request and
+weekly. Advisories that do not apply, or have no usable fix yet, are ignored in
+[.cargo/audit.toml](.cargo/audit.toml), each with its reason.
+
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or

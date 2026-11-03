@@ -1,0 +1,78 @@
+name: Library release
+
+# A <crate>-v<version> tag publishes a GitHub Release for that library crate,
+# so a version in a downstream SBOM maps to a fixed commit. Downstream pins it
+# with `tag = "<crate>-v<version>"` on the git dependency.
+on:
+  push:
+    tags:
+      - "sensor-link-firmware-v*"
+      - "sensor-link-protocol-v*"
+      - "sensor-link-server-core-v*"
+      - "sensor-link-mqtt-v*"
+      - "sensor-link-notify-v*"
+      - "task-supervisor-v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CYCLONEDX_VERSION: 0.5.9
+
+jobs:
+  release:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Fail before publishing anything when the tag and Cargo.toml disagree.
+      - name: Check tag against Cargo.toml
+        id: crate
+        run: |
+          CRATE="${GITHUB_REF_NAME%-v*}"
+          VERSION="${GITHUB_REF_NAME##*-v}"
+          MANIFEST_VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r --arg c "$CRATE" '.packages[] | select(.name == $c) | .version')
+          DIR=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r --arg c "$CRATE" '.packages[] | select(.name == $c) | .manifest_path | rtrimstr("/Cargo.toml")')
+          if [[ "$MANIFEST_VERSION" != "$VERSION" ]]; then
+            echo "::error::tag says $CRATE $VERSION, Cargo.toml says '$MANIFEST_VERSION'"
+            exit 1
+          fi
+          echo "crate=$CRATE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes from changelog
+        run: |
+          ./scripts/release-notes.sh "${{ steps.crate.outputs.dir }}/CHANGELOG.md" \
+            "${{ steps.crate.outputs.version }}" dist/release-notes.md
+
+      - name: Cache cargo-cyclonedx
+        id: cache-cyclonedx
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-cyclonedx
+          key: cargo-cyclonedx-${{ env.CYCLONEDX_VERSION }}-${{ runner.os }}
+
+      - name: Install cargo-cyclonedx
+        if: steps.cache-cyclonedx.outputs.cache-hit != 'true'
+        run: cargo install cargo-cyclonedx --version ${{ env.CYCLONEDX_VERSION }} --locked
+
+      # A library is built for whatever target and features the product picks,
+      # so the SBOM covers all of them. The product's own SBOM lists what it
+      # actually ships.
+      - name: Generate SBOM
+        run: |
+          ./scripts/sbom.sh "${{ steps.crate.outputs.crate }}" \
+            "dist/${{ github.ref_name }}.cdx.json" --all-features --target all
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.crate.outputs.crate }} ${{ steps.crate.outputs.version }}
+          body_path: dist/release-notes.md
+          files: dist/${{ github.ref_name }}.cdx.json

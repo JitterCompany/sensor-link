@@ -1,0 +1,50 @@
+name: Dependency audit
+
+# Weekly as well: new advisories appear without any change in this repo.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize]
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_AUDIT_VERSION: 0.22.1
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-audit
+        id: cache-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ env.CARGO_AUDIT_VERSION }}-${{ runner.os }}
+
+      - name: Install cargo-audit
+        if: steps.cache-audit.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked
+
+      # The root Cargo.lock is not committed, so audit what a fresh resolve
+      # picks: the same versions a downstream build gets. Ignored advisories
+      # and their reasons are in .cargo/audit.toml.
+      - name: Audit workspace
+        run: |
+          cargo generate-lockfile
+          cargo audit
+
+      - name: Audit modem factory test
+        run: cargo audit --file factory-test/modem-test/Cargo.lock

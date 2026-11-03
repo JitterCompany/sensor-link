@@ -83,14 +83,19 @@ impl<const N_CH: usize, const MAX_N_SAMPLES: usize> UniformSamples<N_CH, MAX_N_S
 
     /// Verify that the data is valid
     ///
-    /// Data is invalid if it contains NaN, if the timestamp is not positive or if fs is not a
-    /// positive finite number
+    /// Data is invalid if it contains NaN, if the timestamp is not positive, if fs is not a
+    /// positive finite number or if the last sample's timestamp overflows
     pub fn verify(&self) -> bool {
         if self.t <= 0 {
             return false;
         }
         if !self.fs.is_finite() || self.fs <= 0.0 {
             return false;
+        }
+        if let Some(last) = self.len().checked_sub(1) {
+            if sample_timestamp(self.t, self.fs, last).is_none() {
+                return false;
+            }
         }
 
         #[inline]
@@ -139,6 +144,12 @@ pub enum ParseError {
     Invalid,
 }
 
+/// Timestamp of sample `idx` in a set that starts at `t`, or `None` if it overflows `i64`.
+pub(crate) fn sample_timestamp(t: i64, fs: f32, idx: usize) -> Option<i64> {
+    let sample_interval_us = (1_000_000.0 / fs) as i64;
+    sample_interval_us.checked_mul(idx as i64)?.checked_add(t)
+}
+
 #[cfg(feature = "use-std")]
 mod std {
     use super::*;
@@ -160,9 +171,9 @@ mod std {
         fn from(value: UniformSamples<N_CH, LEN>) -> Self {
             // Calculate timestamps based on first timestamp and sampling frequency
             let sample_count = value.len();
-            let sample_interval_us = (1_000_000.0 / value.fs) as i64;
+            // Only unverified samples can overflow, so clamp rather than panic
             let t = (0..sample_count)
-                .map(|i| value.t + i as i64 * sample_interval_us)
+                .map(|i| sample_timestamp(value.t, value.fs, i).unwrap_or(i64::MAX))
                 .collect();
 
             // Convert channel data
@@ -220,6 +231,18 @@ mod tests {
                 Err(ParseError::Invalid)
             ));
         }
+    }
+
+    #[test]
+    fn reject_timestamp_overflow() {
+        let mut samples = UniformSamples::<1>::empty_at(i64::MAX - 1, 1000.0);
+        samples.ch[0].extend_from_slice(&[0.0, 0.0]).unwrap();
+        let mut buffer = [0; 2000];
+        let serialized = samples.as_topic_data(&mut buffer).unwrap();
+        assert!(matches!(
+            UniformSamples::<1>::from_topic_data(serialized),
+            Err(ParseError::Invalid)
+        ));
     }
 
     #[cfg(feature = "use-std")]

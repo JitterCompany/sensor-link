@@ -97,3 +97,7 @@ jobs:
         run: cargo fuzz run downlink_json -- -max_total_time=60
       - name: Fuzz postcard samples decoder
         run: cargo fuzz run samples_postcard -- -max_total_time=60
+      - name: Fuzz Q15 samples decoders
+        run: cargo fuzz run samples_q15 -- -max_total_time=60
+      - name: Fuzz Q15XL samples decoders
+        run: cargo fuzz run samples_q15xl -- -max_total_time=60

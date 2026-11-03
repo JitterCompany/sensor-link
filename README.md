@@ -45,7 +45,9 @@ CI runs each target for a minute.
 | Target | Decoders |
 |---|---|
 | `downlink_json` | Topic parsing and the serde-json-core payloads the firmware receives |
-| `samples_postcard` | `UniformSamples::from_topic_data`, plus a re-encode round trip |
+| `samples_postcard` | `UniformSamples::from_topic_data`, plus a re-encode round trip and the `NChannelSamples` conversion |
+| `samples_q15` | `q15::Uniform::from_topic_data` with a round trip, and `parse_q15_to_nchannel` |
+| `samples_q15xl` | `q15xl::Uniform::from_topic_data` with a round trip, and both `parse_q15xl_to_nchannel` variants |
 
 ```bash
 cargo install cargo-fuzz

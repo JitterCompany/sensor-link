@@ -28,3 +28,17 @@ path = "fuzz_targets/samples_postcard.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "samples_q15"
+path = "fuzz_targets/samples_q15.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "samples_q15xl"
+path = "fuzz_targets/samples_q15xl.rs"
+test = false
+doc = false
+bench = false

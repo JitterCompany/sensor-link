@@ -1,4 +1,4 @@
-use super::{q15, q15xl, ParseError};
+use super::{q15, q15xl, sample_timestamp, ParseError};
 
 /// Parse Q15 encoded data directly into NChannelSamples (std only)
 ///
@@ -108,10 +108,7 @@ pub fn parse_q15_to_nchannel<const N_CH: usize>(
     }
 
     // Generate timestamps
-    let sample_interval_us = (1_000_000.0 / fs) as i64;
-    let timestamps: Vec<i64> = (0..num_samples)
-        .map(|i| t + (i as i64) * sample_interval_us)
-        .collect();
+    let timestamps = uniform_timestamps(t, fs, num_samples).ok_or(ParseError::Invalid)?;
 
     Ok(NChannelSamples {
         t: timestamps,
@@ -245,16 +242,20 @@ fn parse_q15xl_to_nchannel_impl<const N_CH: usize>(
     }
 
     // Generate timestamps
-    let sample_interval_us = (1_000_000.0 / fs) as i64;
-    let timestamps: Vec<i64> = (0..num_samples)
-        .map(|i| t + (i as i64) * sample_interval_us)
-        .collect();
+    let timestamps = uniform_timestamps(t, fs, num_samples).ok_or(ParseError::Invalid)?;
 
     Ok(NChannelSamples {
         t: timestamps,
         fs,
         ch: channels,
     })
+}
+
+/// Timestamps of `num_samples` samples starting at `t`, or `None` if they overflow `i64`.
+fn uniform_timestamps(t: i64, fs: f32, num_samples: usize) -> Option<Vec<i64>> {
+    (0..num_samples)
+        .map(|i| sample_timestamp(t, fs, i))
+        .collect()
 }
 
 #[cfg(test)]
@@ -474,5 +475,26 @@ mod tests {
             assert_eq!(result.t[0], 2_000_000);
             assert!((result.ch[0][0] - 0.123).abs() < 0.001);
         }
+    }
+
+    #[test]
+    fn reject_timestamp_overflow() {
+        let mut header = Vec::new();
+        header.extend_from_slice(&(i64::MAX - 1).to_le_bytes());
+        header.extend_from_slice(&1000.0f32.to_le_bytes());
+        // One channel: exponent, then two zero samples
+        let channel = [0u8; 5];
+
+        let q15 = [&header[..], &[2], &channel].concat();
+        assert!(matches!(
+            parse_q15_to_nchannel::<1>(&q15),
+            Err(ParseError::Invalid)
+        ));
+
+        let q15xl = [&header[..], &2u16.to_le_bytes(), &channel].concat();
+        assert!(matches!(
+            parse_q15xl_to_nchannel::<1>(&q15xl),
+            Err(ParseError::Invalid)
+        ));
     }
 }

@@ -36,6 +36,25 @@ Run the script below to check what clippy warnings you must solve to get your PR
 ./scripts/clippy-changed.sh HEAD~1     # or any other base ref
 ```
 
+## Fuzzing
+
+`sensor-link-protocol/fuzz/` holds [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz) targets for the message decoders.
+It is its own workspace and needs nightly.
+CI runs each target for a minute.
+
+| Target | Decoders |
+|---|---|
+| `downlink_json` | Topic parsing and the serde-json-core payloads the firmware receives |
+| `samples_postcard` | `UniformSamples::from_topic_data`, plus a re-encode round trip and the `NChannelSamples` conversion |
+| `samples_q15` | `q15::Uniform::from_topic_data` with a round trip, and `parse_q15_to_nchannel` |
+| `samples_q15xl` | `q15xl::Uniform::from_topic_data` with a round trip, and both `parse_q15xl_to_nchannel` variants |
+
+```bash
+cargo install cargo-fuzz
+cd sensor-link-protocol/fuzz
+cargo +nightly fuzz run downlink_json -- -max_total_time=600
+```
+
 ## Releases
 
 Each library crate is released on its own, with a `<crate>-v<version>` tag such
@@ -59,6 +78,7 @@ CycloneDX SBOM (`<tag>.cdx.json`). Downstream pins the release with
 The *Dependency audit* workflow runs `cargo audit` on every pull request and
 weekly. Advisories that do not apply, or have no usable fix yet, are ignored in
 [.cargo/audit.toml](.cargo/audit.toml), each with its reason.
+
 
 ## License
 

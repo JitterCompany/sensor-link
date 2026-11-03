@@ -45,6 +45,9 @@ Download the build for your platform from the repository's
   executable.
 - **Linux (x86_64):** `sensor-link-provision-linux-x86_64` — a bare binary.
 
+Each platform has a CycloneDX SBOM next to it, for example
+`sensor-link-provision-linux-x86_64.cdx.json`.
+
 Releases are cut by pushing a `sensor-link-provision-v*` tag. Untagged builds
 of every master commit are also available as *Provisioning tool* workflow
 run artifacts.

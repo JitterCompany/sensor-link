@@ -611,8 +611,12 @@ fn slope_correct(dt: i64, correction_ppb: i32) -> i64 {
     }
 }
 
+// Per thread: every test runs on its own thread, so other tests that convert
+// time concurrently do not add to the count.
 #[cfg(test)]
-static REV_SLOPE_PERFCOUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+std::thread_local! {
+    static REV_SLOPE_PERFCOUNT: core::cell::Cell<u32> = const { core::cell::Cell::new(0) };
+}
 
 /// Reverse slope correct: correct dt by dividing it by (1-correction_ppb)
 ///
@@ -630,7 +634,7 @@ fn reverse_slope_convert(mut dt: i64, correction_ppb: i32) -> i64 {
         let mut delta_adj = dt;
         for _i in 0..MAX_ITERATIONS {
             #[cfg(test)]
-            REV_SLOPE_PERFCOUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            REV_SLOPE_PERFCOUNT.set(REV_SLOPE_PERFCOUNT.get() + 1);
 
             delta_adj = slope_correct(delta_adj, correction_ppb);
             dt += delta_adj;
@@ -645,21 +649,11 @@ fn reverse_slope_convert(mut dt: i64, correction_ppb: i32) -> i64 {
 #[cfg(test)]
 mod test {
 
-    use core::sync::atomic::Ordering;
-
     use super::*;
-
-    // REV_SLOPE_PERFCOUNT is a global; tests that reset and assert on it
-    // must not run concurrently.
-    static PERFCOUNT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    fn perfcount_guard() -> std::sync::MutexGuard<'static, ()> {
-        PERFCOUNT_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     #[test]
     fn test_slope_convert_small_adjustment() {
-        let _guard = perfcount_guard();
-        REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
+        REV_SLOPE_PERFCOUNT.set(0);
 
         // note: 1800_000_000 chosen because it is slightly below i32::MAX
         let reverse = reverse_slope_convert(1800_000_000, 100_000);
@@ -668,13 +662,12 @@ mod test {
         assert_eq!(forward, 1800_180_000); // 1800e6 * (1+100ppm)
         assert_eq!(reverse, 1800_180_018); // 1800e6 / (1-100ppm)
 
-        assert!(REV_SLOPE_PERFCOUNT.load(Ordering::Relaxed) <= 3);
+        assert!(REV_SLOPE_PERFCOUNT.get() <= 3);
     }
 
     #[test]
     fn test_slope_convert_small_adjustment_negative() {
-        let _guard = perfcount_guard();
-        REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
+        REV_SLOPE_PERFCOUNT.set(0);
 
         // note: 1800_000_000 chosen because it is slightly below i32::MAX
         let reverse = reverse_slope_convert(1800_000_000, -100_000);
@@ -683,13 +676,12 @@ mod test {
         assert_eq!(forward, 1799_820_000); // 1800e6 * (1-100ppm)
         assert_eq!(reverse, 1799_820_018); // 1800e6 / (1+100ppm)
 
-        assert!(REV_SLOPE_PERFCOUNT.load(Ordering::Relaxed) <= 3);
+        assert!(REV_SLOPE_PERFCOUNT.get() <= 3);
     }
 
     #[test]
     fn test_slope_convert_extreme_adjustment() {
-        let _guard = perfcount_guard();
-        REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
+        REV_SLOPE_PERFCOUNT.set(0);
 
         // adjust this test + assertion if CORRECTION_ERROR_MAX_PPB changes
         assert_eq!(CORRECTION_ERROR_MAX_PPB, 500_000_000);
@@ -700,13 +692,12 @@ mod test {
         assert_eq!(forward, 2700_000_000); // 1800e6 * (1+0.5m)
         assert!((reverse - 3600_000_000).abs() < 28_800); // 36e9 / (1-0.5) with < 8ppm error due to MAX_ITERATIONS
 
-        assert_eq!(REV_SLOPE_PERFCOUNT.load(Ordering::Relaxed), 16);
+        assert_eq!(REV_SLOPE_PERFCOUNT.get(), 16);
     }
 
     #[test]
     fn test_slope_convert_small_adjustment_long_time() {
-        let _guard = perfcount_guard();
-        REV_SLOPE_PERFCOUNT.store(0, Ordering::Relaxed);
+        REV_SLOPE_PERFCOUNT.set(0);
 
         // note: 86_400_000_000 chosen because it is >> i32::MAX
         let reverse = reverse_slope_convert(86_400_000_000, 100_000);
@@ -715,7 +706,7 @@ mod test {
         assert_eq!(forward, 86_408_640_000); // 86.4e9 * (1+100ppm)
         assert_eq!(reverse, 86_408_640_864); // 86.4e9 / (1-100ppm)
 
-        assert!(REV_SLOPE_PERFCOUNT.load(Ordering::Relaxed) <= 3);
+        assert!(REV_SLOPE_PERFCOUNT.get() <= 3);
     }
 
     /// smoke test: temp compensation error=0 should have no impact

@@ -27,9 +27,6 @@ optional = true
 [dev-dependencies]
 tokio = {version = "1", features = ["full"]}
 simple_logger = "4.2.0"
-# rumqttc = "0.23"
-rumqttc = { git = "https://github.com/JitterCompany/rumqtt", branch = "key-encoding-fix", features = ["use-rustls"] }
-# rumqttc = { path = "../rumqtt/rumqttc", features = ["use-rustls"] }
 rand = "0.8.5"
 assert_float_eq="1.1"
 

@@ -83,12 +83,13 @@ impl<const N_CH: usize, const MAX_N_SAMPLES: usize> UniformSamples<N_CH, MAX_N_S
 
     /// Verify that the data is valid
     ///
-    /// Data is invalid if it contains NaN or if timestamp/fs is zero
+    /// Data is invalid if it contains NaN, if the timestamp is not positive or if fs is not a
+    /// positive finite number
     pub fn verify(&self) -> bool {
         if self.t <= 0 {
             return false;
         }
-        if self.fs <= 0.0 {
+        if !self.fs.is_finite() || self.fs <= 0.0 {
             return false;
         }
 
@@ -202,9 +203,22 @@ mod tests {
         {
             let mut buffer = [0; 2000];
             let serialized = postcard::to_slice(&samples, &mut buffer).unwrap();
-            let restored: UniformSamples<3> = postcard::from_bytes(&serialized).unwrap();
+            let restored: UniformSamples<3> = postcard::from_bytes(serialized).unwrap();
             assert_eq!(restored.fs, 1000.0);
             assert_eq!(serialized.len(), 10);
+        }
+    }
+
+    #[test]
+    fn reject_non_finite_fs() {
+        for fs in [f32::NAN, f32::INFINITY] {
+            let samples = UniformSamples::<3>::empty_at(1_000_000, fs);
+            let mut buffer = [0; 2000];
+            let serialized = samples.as_topic_data(&mut buffer).unwrap();
+            assert!(matches!(
+                UniformSamples::<3>::from_topic_data(serialized),
+                Err(ParseError::Invalid)
+            ));
         }
     }
 

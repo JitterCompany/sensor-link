@@ -7,6 +7,7 @@
 //! [`ApplicationHeader`] for its own type and drives the same [`Validator`].
 
 use num_enum::TryFromPrimitive;
+use sensor_link_protocol::event::FirmwareRejectReason;
 
 use crate::utils::crypto;
 
@@ -141,6 +142,22 @@ pub enum ValidationError {
     Signature,
 }
 
+impl From<&ValidationError> for FirmwareRejectReason {
+    fn from(error: &ValidationError) -> Self {
+        match error {
+            ValidationError::Incomplete => FirmwareRejectReason::Incomplete,
+            ValidationError::Invalid(ApplicationHeaderError::InvalidDeviceType) => {
+                FirmwareRejectReason::DeviceType
+            }
+            ValidationError::Invalid(_) => FirmwareRejectReason::Malformed,
+            ValidationError::Security(_) => FirmwareRejectReason::SecurityLevel,
+            ValidationError::Downgrade(version) => FirmwareRejectReason::Downgrade(*version),
+            ValidationError::Integrity => FirmwareRejectReason::Integrity,
+            ValidationError::Signature => FirmwareRejectReason::Signature,
+        }
+    }
+}
+
 enum ValidatorState<H: ApplicationHeader> {
     Init(H::RawBuffer),
     NeedMoreData(H, crypto::Hasher),
@@ -269,7 +286,7 @@ impl<H: ApplicationHeader> Validator<H> {
             self.n_bytes += bytes_processed;
             application_bytes = &application_bytes[bytes_processed..];
 
-            if bytes_processed == 0 || application_bytes.len() == 0 {
+            if bytes_processed == 0 || application_bytes.is_empty() {
                 break false;
             }
         };

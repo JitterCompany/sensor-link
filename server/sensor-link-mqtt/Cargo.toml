@@ -17,4 +17,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "rt"] }
 rumqttc.workspace = true
+# rumqttc does not pick a TLS provider, and rustls cannot choose when a build enables two.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tracing.workspace = true

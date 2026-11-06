@@ -11,6 +11,10 @@ pub const VERSION_STRING_MAX_LEN: usize = 16;
 /// But can also contain other postfixes such as 'rc-2' or 'beta-1'.
 pub type VersionString = heapless::String<VERSION_STRING_MAX_LEN>;
 
+pub const ICCID_MAX_LEN: usize = 20;
+/// SIM card ID: 19 or 20 digits.
+pub type Iccid = heapless::String<ICCID_MAX_LEN>;
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub struct DeviceInfoV2<D> {
@@ -47,6 +51,9 @@ pub struct DeviceInfoV3<D> {
     pub modem_model: VersionString,
     /// Modem firmware version
     pub modem_fw_version: VersionString,
+    /// ICCID of the SIM, if the modem could read it
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sim_iccid: Option<Iccid>,
 }
 
 impl<D: Serialize> TopicPayloadSerialize<MAX_MESSAGE_LEN> for DeviceInfoV3<D> {}
@@ -61,6 +68,7 @@ impl<D> From<DeviceInfoV2<D>> for DeviceInfoV3<D> {
             hw_rev: VersionString::new(),
             modem_model: value.modem_model,
             modem_fw_version: value.modem_fw_version,
+            sim_iccid: None,
         }
     }
 }

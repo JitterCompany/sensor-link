@@ -65,7 +65,7 @@ pub fn parse_uniform_samples_allow_nan<const N_CH: usize>(
 mod tests {
     use crate::{
         event::Event,
-        info::VersionString,
+        info::{Iccid, VersionString},
         samples::{
             q15xl::{Uniform, Q15XL},
             UniformSamples,
@@ -130,11 +130,20 @@ mod tests {
             hw_rev: VersionString::try_from("1.0").unwrap(),
             modem_model: VersionString::try_from("EC21").unwrap(),
             modem_fw_version: VersionString::try_from("EC21EFAR06").unwrap(),
+            sim_iccid: Some(Iccid::try_from("89310410106543789305").unwrap()),
         };
         let serialized = info.serialize_topic_payload().unwrap();
 
         let parsed = parse_device_info_v3::<String>(&serialized).unwrap();
         assert_eq!(parsed, info);
+    }
+
+    // Firmware released before the field existed must keep parsing.
+    #[test]
+    fn test_parse_device_info_v3_without_iccid() {
+        let payload = br#"{"device_type":"jitter","fw_version":"1.2.3-4","fw_rev":"abcdef0","bootloader_version":"0.9.0","hw_rev":"1.0","modem_model":"EC21","modem_fw_version":"EC21EFAR06"}"#;
+        let parsed = parse_device_info_v3::<String>(payload).unwrap();
+        assert_eq!(parsed.sim_iccid, None);
     }
 
     #[test]

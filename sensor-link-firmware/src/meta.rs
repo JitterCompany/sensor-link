@@ -7,7 +7,7 @@ pub mod section_header;
 
 pub use firmware::DeviceType;
 
-use sensor_link_protocol::info::{DeviceInfoV3, VersionString};
+use sensor_link_protocol::info::{DeviceInfoV3, Iccid, VersionString};
 
 pub trait DeviceMetaDataProvider {
     /// Wire representation of the device type. Generic so this trait stays sensor-agnostic;
@@ -23,6 +23,7 @@ pub trait DeviceMetaDataProvider {
         &self,
         modem_model: VersionString,
         modem_fw_version: VersionString,
+        sim_iccid: Option<Iccid>,
     ) -> DeviceInfoV3<Self::DeviceType> {
         DeviceInfoV3 {
             device_type: self.device_type(),
@@ -32,6 +33,7 @@ pub trait DeviceMetaDataProvider {
             hw_rev: heapless::String::try_from(self.hw_rev()).unwrap(),
             modem_model,
             modem_fw_version,
+            sim_iccid,
         }
     }
 }

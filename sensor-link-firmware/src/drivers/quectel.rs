@@ -19,7 +19,7 @@ use embedded_io_async::{Read, Write};
 use heapless::{spsc, String, Vec};
 use sensor_link_protocol::{
     event::CellInfo,
-    info::{VersionString, VERSION_STRING_MAX_LEN},
+    info::{Iccid, VersionString, VERSION_STRING_MAX_LEN},
     Error, MAX_FILE_CHUNK_LEN, MAX_MESSAGE_LEN, MAX_TOPIC_LEN,
 };
 use static_cell::StaticCell;
@@ -2014,6 +2014,16 @@ where
             Ok(cell) => cell,
             Err(e) => {
                 log::warn!(target: "quectel","Error getting serving cell: {e:?}");
+                None
+            }
+        }
+    }
+
+    async fn sim_iccid(&mut self) -> Option<Iccid> {
+        match self.client.send(&general::GetSimIccid).await {
+            Ok(resp) => Some(resp.iccid),
+            Err(e) => {
+                log::warn!(target: "quectel","Error getting SIM ICCID: {e:?}");
                 None
             }
         }

@@ -3,8 +3,9 @@ use core::fmt::Debug;
 use heapless::{String, Vec};
 
 use sensor_link_protocol::{
-    event::CellInfo, info::VersionString, Error, MAX_FILE_CHUNK_LEN, MAX_MESSAGE_LEN,
-    MAX_ONLINE_PAYLOAD_LEN, MAX_TOPIC_LEN,
+    event::CellInfo,
+    info::{Iccid, VersionString},
+    Error, MAX_FILE_CHUNK_LEN, MAX_MESSAGE_LEN, MAX_ONLINE_PAYLOAD_LEN, MAX_TOPIC_LEN,
 };
 
 /// Events the network client implementation can return
@@ -106,6 +107,13 @@ pub trait MqttClient {
     ///
     /// Defaults to `None` for drivers without a modem (e.g. test mocks).
     async fn cell_info(&mut self) -> Option<CellInfo> {
+        None
+    }
+
+    /// ICCID of the SIM, if it can be read.
+    ///
+    /// Defaults to `None` for drivers without a modem (e.g. test mocks).
+    async fn sim_iccid(&mut self) -> Option<Iccid> {
         None
     }
 

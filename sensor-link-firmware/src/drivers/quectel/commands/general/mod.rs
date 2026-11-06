@@ -142,6 +142,17 @@ impl PowerDown {
 #[at_cmd("+CSQ", SignalQualityReport, timeout_ms = 300, termination = "\r")]
 pub struct GetSignalQuality;
 
+/// AT+QCCID Read the ICCID of the SIM
+#[derive(Debug, Clone, AtatCmd)]
+#[at_cmd(
+    "+QCCID",
+    SimIccid,
+    timeout_ms = 300,
+    parse = parse_sim_iccid,
+    termination = "\r"
+)]
+pub struct GetSimIccid;
+
 /// AT+QENG="servingcell" Serving cell information
 #[derive(Debug, Clone, AtatCmd)]
 #[at_cmd(

@@ -2,7 +2,7 @@
 //! per-device loop screen. All work happens in the worker thread.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::mpsc::{Receiver, Sender, channel},
 };
@@ -123,8 +123,44 @@ struct Session {
 #[derive(Default)]
 struct Counts {
     ok: u32,
-    unverified: u32,
-    fail: u32,
+    /// UIDs whose last attempt failed the boot or MQTT check. They leave once
+    /// a re-provision comes back OK.
+    unverified: BTreeSet<String>,
+    /// UIDs whose last attempt failed, so a device counts once however many
+    /// times it fails and stops counting once it is provisioned.
+    failed: BTreeSet<String>,
+}
+
+impl Counts {
+    fn record(&mut self, uid: &str, outcome: Outcome, reprovision: bool) {
+        match outcome {
+            Outcome::Ok => {
+                let was_unverified = self.unverified.remove(uid);
+                let was_failed = self.failed.remove(uid);
+                if !reprovision || was_unverified || was_failed {
+                    self.ok += 1;
+                }
+            }
+            Outcome::Unverified => {
+                if self.failed.remove(uid) || !reprovision {
+                    self.unverified.insert(uid.to_owned());
+                }
+            }
+            Outcome::Fail => {
+                if !reprovision {
+                    self.failed.insert(uid.to_owned());
+                }
+            }
+        }
+    }
+
+    fn unverified(&self) -> u32 {
+        self.unverified.len() as u32
+    }
+
+    fn fail(&self) -> u32 {
+        self.failed.len() as u32
+    }
 }
 
 enum Phase {
@@ -270,13 +306,7 @@ impl App {
                     error,
                 } => {
                     if let Screen::Session(s) = &mut self.screen {
-                        if !reprovision {
-                            match outcome {
-                                Outcome::Ok => s.counts.ok += 1,
-                                Outcome::Unverified => s.counts.unverified += 1,
-                                Outcome::Fail => s.counts.fail += 1,
-                            }
-                        }
+                        s.counts.record(&uid, outcome, reprovision);
                         match outcome {
                             Outcome::Ok => self.sounds.ok(),
                             _ => self.sounds.fail(),
@@ -663,13 +693,13 @@ impl Session {
             counter(
                 ui,
                 "UNVERIFIED",
-                self.counts.unverified,
+                self.counts.unverified(),
                 Color32::from_rgb(210, 140, 0),
             );
             counter(
                 ui,
                 "FAILED",
-                self.counts.fail,
+                self.counts.fail(),
                 Color32::from_rgb(200, 40, 40),
             );
         });
@@ -1007,17 +1037,17 @@ impl Session {
 
         if self.show_summary {
             egui::Window::new("Session summary").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-                ui.label(format!("OK: {}   UNVERIFIED: {}   FAILED: {}", self.counts.ok, self.counts.unverified, self.counts.fail));
+                ui.label(format!("OK: {}   UNVERIFIED: {}   FAILED: {}", self.counts.ok, self.counts.unverified(), self.counts.fail()));
                 ui.label(format!("Log: {}", self.info.log.display()));
                 if let Some(note) = &self.info.exit_note {
                     ui.add_space(6.0);
                     ui.strong(note);
                 }
-                if self.counts.unverified > 0 {
+                if self.counts.unverified() > 0 {
                     ui.add_space(6.0);
                     ui.colored_label(
                         Color32::from_rgb(210, 140, 0),
-                        format!("{} device(s) flashed but not verified (boot or MQTT check); re-provision them if they do not work.", self.counts.unverified),
+                        format!("{} device(s) flashed but not verified (boot or MQTT check); re-provision them if they do not work.", self.counts.unverified()),
                     );
                 }
                 ui.add_space(8.0);
@@ -1082,4 +1112,65 @@ fn counter(ui: &mut egui::Ui, label: &str, n: u32, color: Color32) {
             ui.label(label);
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn success_after_failure_clears_the_failure() {
+        let mut counts = Counts::default();
+        counts.record("1", Outcome::Fail, false);
+        assert_eq!(counts.fail(), 1);
+        counts.record("1", Outcome::Ok, false);
+        assert_eq!((counts.ok, counts.fail()), (1, 0));
+    }
+
+    #[test]
+    fn unverified_after_failure_moves_the_device() {
+        let mut counts = Counts::default();
+        counts.record("1", Outcome::Fail, false);
+        counts.record("1", Outcome::Unverified, false);
+        assert_eq!((counts.unverified(), counts.fail()), (1, 0));
+    }
+
+    #[test]
+    fn ok_reprovision_clears_unverified() {
+        let mut counts = Counts::default();
+        counts.record("1", Outcome::Unverified, false);
+        assert_eq!(counts.unverified(), 1);
+        counts.record("1", Outcome::Ok, true);
+        assert_eq!((counts.ok, counts.unverified()), (1, 0));
+    }
+
+    #[test]
+    fn unverified_stays_until_a_reprovision_is_ok() {
+        let mut counts = Counts::default();
+        counts.record("1", Outcome::Unverified, false);
+        counts.record("1", Outcome::Unverified, true);
+        counts.record("1", Outcome::Fail, true);
+        assert_eq!((counts.ok, counts.unverified(), counts.fail()), (0, 1, 0));
+        counts.record("1", Outcome::Ok, true);
+        assert_eq!((counts.ok, counts.unverified(), counts.fail()), (1, 0, 0));
+    }
+
+    #[test]
+    fn repeated_failures_of_one_device_count_once() {
+        let mut counts = Counts::default();
+        counts.record("1", Outcome::Fail, false);
+        counts.record("1", Outcome::Fail, false);
+        counts.record("2", Outcome::Fail, false);
+        assert_eq!(counts.fail(), 2);
+        counts.record("1", Outcome::Ok, false);
+        assert_eq!((counts.ok, counts.fail()), (1, 1));
+    }
+
+    #[test]
+    fn reprovisioned_devices_are_not_counted() {
+        let mut counts = Counts::default();
+        counts.record("1", Outcome::Fail, true);
+        counts.record("1", Outcome::Ok, true);
+        assert_eq!((counts.ok, counts.unverified(), counts.fail()), (0, 0, 0));
+    }
 }

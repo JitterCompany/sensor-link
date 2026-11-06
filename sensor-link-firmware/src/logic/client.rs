@@ -415,11 +415,12 @@ impl<M: MqttClient, S: NetworkStatus> NetworkClient for crate::logic::client::Cl
         P: DeviceMetaDataProvider,
         P::DeviceType: Serialize,
     {
-        // Inject the modem model and firmware version, which only the driver can
-        // sample, then publish the collected metadata.
+        // Inject the modem model, firmware version and SIM ICCID, which only the
+        // driver can sample, then publish the collected metadata.
         let modem_model = self.driver.modem_model().await;
         let modem_fw_version = self.driver.modem_fw_version().await;
-        let info = provider.device_info(modem_model, modem_fw_version);
+        let sim_iccid = self.driver.sim_iccid().await;
+        let info = provider.device_info(modem_model, modem_fw_version, sim_iccid);
         let result = self.send_info(&info).await;
         if result.is_err() {
             log::error!("Network: Failed to send Device Info");

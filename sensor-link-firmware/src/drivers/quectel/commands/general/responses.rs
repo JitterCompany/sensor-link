@@ -2,7 +2,10 @@
 
 use atat::{atat_derive::AtatResp, heapless_bytes::Bytes};
 use heapless::String;
-use sensor_link_protocol::event::{CellInfo, Rat};
+use sensor_link_protocol::{
+    event::{CellInfo, Rat},
+    info::Iccid,
+};
 
 #[derive(Debug, Clone, AtatResp)]
 #[allow(dead_code)]
@@ -96,6 +99,31 @@ impl SignalQualityReport {
         let dbm = rssi_to_dbm(self.rssi);
         dbm.map(dbm_to_percentage).unwrap_or(-2)
     }
+}
+
+/// AT+QCCID response.
+#[derive(Clone, Debug, AtatResp)]
+pub struct SimIccid {
+    pub iccid: Iccid,
+}
+
+/// Parse `+QCCID: <iccid>`.
+///
+/// A 19-digit ICCID arrives padded to 20 characters with a trailing `F`.
+pub fn parse_sim_iccid(bytes: &[u8]) -> Result<SimIccid, ()> {
+    let text = core::str::from_utf8(bytes).map_err(|_| ())?;
+    let line = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("+QCCID:"))
+        .unwrap_or(text)
+        .trim();
+    let digits = line.strip_suffix(['F', 'f']).unwrap_or(line);
+
+    if !(19..=20).contains(&digits.len()) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(());
+    }
+    let iccid = Iccid::try_from(digits).map_err(|_| ())?;
+    Ok(SimIccid { iccid })
 }
 
 /// AT+QENG="servingcell" response.
@@ -214,6 +242,33 @@ fn dbm_to_percentage(dbm: i16) -> i16 {
 mod test {
 
     use super::*;
+
+    // Example from the EC2x AT manual, not captured from a modem.
+    #[test]
+    fn sim_iccid_20_digits() {
+        let parsed = parse_sim_iccid(b"+QCCID: 89860025128306012474").unwrap();
+        assert_eq!(parsed.iccid.as_str(), "89860025128306012474");
+    }
+
+    #[test]
+    fn sim_iccid_without_prefix() {
+        let parsed = parse_sim_iccid(b"89860025128306012474").unwrap();
+        assert_eq!(parsed.iccid.as_str(), "89860025128306012474");
+    }
+
+    #[test]
+    fn sim_iccid_19_digits_drops_padding() {
+        let parsed = parse_sim_iccid(b"+QCCID: 8999804190810544942F").unwrap();
+        assert_eq!(parsed.iccid.as_str(), "8999804190810544942");
+    }
+
+    #[test]
+    fn sim_iccid_rejects_garbage() {
+        assert!(parse_sim_iccid(b"+QCCID: ").is_err());
+        assert!(parse_sim_iccid(b"+QCCID: 123456").is_err());
+        assert!(parse_sim_iccid(b"+QCCID: FFFFFFFFFFFFFFFFFFFF").is_err());
+        assert!(parse_sim_iccid(b"+QCCID: 898600251283060124745").is_err());
+    }
 
     // Captured from an EC21 (EC21EFAR06A03M4G). The last field (srxlev) is "-".
     #[test]

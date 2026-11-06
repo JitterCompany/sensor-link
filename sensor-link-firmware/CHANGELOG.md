@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Protocol: `DeviceInfoV3` has an optional `sim_iccid`. The Quectel driver reads it
+  with `AT+QCCID`, so the server no longer depends on a manually entered SIM ID.
+  Old servers ignore the field and old firmware omits it. Breaking: struct literals
+  of `DeviceInfoV3` need the field, and `DeviceMetaDataProvider::device_info` takes
+  it as an argument. `MqttClient::sim_iccid()` defaults to `None`.
 - Bootloader: `validate_update` takes `installed_min_security`, the lowest security
   level at which the image in internal flash may boot. Breaking: new argument.
   Production bootloaders pass `SecurityLevel::Signed`. An installed image below it

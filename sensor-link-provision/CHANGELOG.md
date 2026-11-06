@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The *FAILED* counter now counts devices. A device that fails and then
+  provisions on a rescan leaves the count, and repeated failures of one UID
+  count once.
+- An *UNVERIFIED* device that is re-provisioned in the same session and comes
+  back OK moves to the *OK* counter.
+
 ## 1.2.0 - 2026-10-11
 
 - Optional checks: a *Checks* row in the session screen turns the SIM ICCID

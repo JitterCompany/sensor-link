@@ -15,6 +15,12 @@
   flashed with a probe. Signed installed images were already verified on every
   boot. The gap was images whose header claims `None` or `IntegrityOnly`.
   `apply_update` requires a signed image when it checks what it wrote.
+- Protocol: new urgent `Event::FirmwareRejected(FirmwareRejectReason)` for a
+  firmware image that failed validation: signature, integrity, device type,
+  anti-downgrade (with the rejected version), security level, malformed header
+  or truncated image. `FirmwareRejectReason` converts from `&ValidationError`.
+  Like every event it goes through the persistent dispatch store, so it reaches
+  the server after an outage. Breaking for exhaustive matches on `Event`.
 - Protocol: new `Event::CellInfo(CellInfo)` carrying the serving cell (RAT, MCC,
   MNC, TAC, cell ID, optional RSRP), so the server can estimate the location.
   Breaking for exhaustive matches on `Event`. Servers built against an older

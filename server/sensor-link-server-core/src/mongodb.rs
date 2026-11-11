@@ -608,13 +608,15 @@ where
                         "as": "measuring_point_shadow"
                     }},
                     doc! { "$unwind": { "path": "$measuring_point_shadow", "preserveNullAndEmptyArrays": true } },
+                    // A null or missing hub_id equals every other null or missing one in a
+                    // $lookup, so only string hub_ids may match.
                     doc! { "$lookup": {
                         "from": DEVICE_COLL_NAME,
                         "localField": "hub_id",
                         "foreignField": "hub_id",
                         "as": "hub_meas_point",
                         "pipeline": [
-                            doc! { "$match": { "hub_id": { "$exists": true } } },
+                            doc! { "$match": { "hub_id": { "$type": "string" } } },
                             doc! { "$lookup": {
                                 "from": MEAS_POINT_COLL_NAME,
                                 "localField": "_id",
@@ -637,7 +639,7 @@ where
                         "foreignField": "hub_id",
                         "as": "hub_meas_point",
                         "pipeline": [
-                            doc! { "$match": { "hub_id": { "$exists": true } } },
+                            doc! { "$match": { "hub_id": { "$type": "string" } } },
                             doc! { "$lookup": {
                                 "from": MEAS_POINT_COLL_NAME,
                                 "localField": "_id",

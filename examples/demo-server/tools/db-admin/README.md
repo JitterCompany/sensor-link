@@ -50,8 +50,8 @@ Tick devices in the devices table first. Every applier acts on that selection.
 **Sync interval and data rate.** Enter a whole number of seconds and press
 **Apply sync interval**, or pick a data rate and press **Apply data rate**.
 
-- The sync interval must be 1 ... 14400 s (4 h), the same bound as the `CHECK`
-  on the column. The device clamps to it too.
+- The sync interval must be 0 (always online) or 180 ... 14400 s (4 h), the
+  same bounds as the `CHECK` on the column.
 - A device without a `device_settings` row gets one. The column you did not
   set takes its column default, which matches the protocol default:
   `_1spm` and 900 s.
@@ -91,6 +91,6 @@ the devices table.
 | `GET /api/measurements?device_id=…&start=…&end=…` | samples from `start` up to `end` (ISO 8601 with zone, at most 8 days apart): `{ device_id, start, end, bucket_s, channels, truncated, rows: [{ ts, fs, …channels }] }`, oldest first, `ts` in epoch ms |
 | `GET /api/events?device_id=…` | `{ device_id, truncated, events: [{ ts, received_at, event, message }] }`, newest first |
 | `POST /api/assign` | `{ device_ids: [...], firmware_id: "…" \| null }` → `{ updated: N }` |
-| `POST /api/sync-interval` | `{ device_ids: [...], sync_interval_s: N }` → `{ updated: N }`, `N` in `1 … 14400` |
+| `POST /api/sync-interval` | `{ device_ids: [...], sync_interval_s: N }` → `{ updated: N }`, `N` is 0 or in `180 … 14400` |
 | `POST /api/data-rate` | `{ device_ids: [...], data_rate: "_1spm" }` → `{ updated: N }` |
 | `POST /api/command` | `{ device_ids: [...], command: "Start" \| "Stop" \| "Reboot" \| "Blink" }` → `{ updated: N }` |

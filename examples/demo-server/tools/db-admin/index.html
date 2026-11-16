@@ -102,7 +102,7 @@
     <label><input type="checkbox" id="all"> select all</label>
     <input type="search" id="filter" placeholder="filter devices…">
     <label>sync interval
-      <input type="number" id="sync-interval" min="1" max="14400" step="1" placeholder="seconds">
+      <input type="number" id="sync-interval" min="0" max="14400" step="1" placeholder="0 = always online">
     </label>
     <button class="primary" id="apply-sync" disabled>Apply sync interval</button>
     <label>data rate
@@ -246,6 +246,7 @@ function render() {
       <td>${esc(fmtEpochMs(d.last_contact))}</td>
       <td class="mono">${d.sync_interval_s == null
         ? '<span class="muted">(no settings)</span>'
+        : d.sync_interval_s === 0 ? 'always online'
         : esc(d.sync_interval_s + ' s')}</td>
       <td class="mono">${d.data_rate == null
         ? '<span class="muted">(no settings)</span>'
@@ -343,22 +344,24 @@ async function assign(firmwareId) {
   }
 }
 
-// Same bound as the CHECK on device_settings.sync_interval_s (4 h).
+// Same bounds as the CHECK on device_settings.sync_interval_s.
+const MIN_SYNC_INTERVAL_S = 180;
 const MAX_SYNC_INTERVAL_S = 14400;
 
-/** The entered interval as a whole number of seconds within 1 ... 4 h, or null
- *  when the field is empty or holds something else. */
+/** The entered interval as a whole number of seconds, 0 or within 3 min ... 4 h,
+ *  or null when the field is empty or holds something else. */
 function syncIntervalInput() {
   const raw = $('sync-interval').value.trim();
   if (!raw) return null;
   const value = Number(raw);
-  return Number.isInteger(value) && value >= 1 && value <= MAX_SYNC_INTERVAL_S ? value : null;
+  if (!Number.isInteger(value)) return null;
+  return value === 0 || (value >= MIN_SYNC_INTERVAL_S && value <= MAX_SYNC_INTERVAL_S) ? value : null;
 }
 
 async function applySyncInterval() {
   const seconds = syncIntervalInput();
   if (seconds == null) {
-    setStatus(`enter a whole number of seconds, 1 ... ${MAX_SYNC_INTERVAL_S}`, 'err');
+    setStatus(`enter 0 (always online) or ${MIN_SYNC_INTERVAL_S} ... ${MAX_SYNC_INTERVAL_S} seconds`, 'err');
     return;
   }
   const ids = [...selected];

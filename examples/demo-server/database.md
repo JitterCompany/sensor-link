@@ -41,8 +41,9 @@ SET data_rate = EXCLUDED.data_rate, sync_interval_s = EXCLUDED.sync_interval_s;
 
 - The server sends the settings until the device confirms their hash.
   `devices.config_confirmed` is `false` until then.
-- `sync_interval_s` is at most 14400 (4 h). A `CHECK` constraint rejects more,
-  because the device clamps to the same bound.
+- `sync_interval_s` is 0 (always online) or 180 ... 14400 (4 h). A `CHECK`
+  constraint rejects anything else. The device turns 1 ... 179 into 0 and clamps
+  to 4 h, so only these values mean what they say.
 - A device without a row keeps the settings it has.
 
 **Send a command.** `UPDATE devices SET command = 'Reboot' WHERE id = ...`.
@@ -110,7 +111,7 @@ Operational settings per device (current state, no history). Deleted along with 
 |---|---|---|---|
 | `device_id` | `text` | no | Device the settings belong to; FK to devices.id |
 | `data_rate` | `text` | no | Measurement data rate: _1sps, _1spm, _6sph, _2sph or _1sph (samples per second/minute/hour) |
-| `sync_interval_s` | `integer` | no | Maximum interval between status updates, seconds, at most 14400 (4 h) |
+| `sync_interval_s` | `integer` | no | Maximum interval between status updates, seconds: 0 (always online) or 180 ... 14400 (4 h) |
 
 - `PRIMARY KEY (device_id)`
 - `FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE`

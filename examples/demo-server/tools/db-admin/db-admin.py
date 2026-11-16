@@ -265,8 +265,10 @@ DATA_RATES = (
     ("_1sph", "1 sample per hour"),
 )
 
-# Matches the CHECK on `device_settings.sync_interval_s`: the device clamps
-# its sync interval to 4 h, so a larger value could never be confirmed.
+# Matches the CHECK on `device_settings.sync_interval_s`. The device turns
+# 1 ... 179 s into 0 (always online) and clamps to 4 h, so only these values
+# mean what they say.
+SYNC_INTERVAL_MIN = 180
 SYNC_INTERVAL_MAX = 4 * 3600
 
 # Values for `devices.command`. Start, Stop and Reboot go through the core
@@ -327,9 +329,9 @@ def set_sync_interval(device_ids, sync_interval_s):
     """Set `device_settings.sync_interval_s` for the given devices."""
     if isinstance(sync_interval_s, bool) or not isinstance(sync_interval_s, int):
         raise SqlError(f"sync interval must be a whole number of seconds, got {sync_interval_s!r}")
-    if not 1 <= sync_interval_s <= SYNC_INTERVAL_MAX:
+    if sync_interval_s != 0 and not SYNC_INTERVAL_MIN <= sync_interval_s <= SYNC_INTERVAL_MAX:
         raise SqlError(
-            f"sync interval must be 1 ... {SYNC_INTERVAL_MAX} s, got {sync_interval_s}"
+            f"sync interval must be 0 or {SYNC_INTERVAL_MIN} ... {SYNC_INTERVAL_MAX} s, got {sync_interval_s}"
         )
     return write_settings(device_ids, {"sync_interval_s": sync_interval_s})
 

@@ -79,14 +79,14 @@ CREATE TABLE device_settings (
     -- 4 h is the longest interval the device accepts, so a larger value
     -- could never be confirmed.
     sync_interval_s INTEGER NOT NULL DEFAULT 900
-        CHECK (sync_interval_s BETWEEN 1 AND 14400)
+        CHECK (sync_interval_s = 0 OR sync_interval_s BETWEEN 180 AND 14400)
 );
 
 COMMENT ON TABLE device_settings IS
     'Operational settings per device (current state, no history). Deleted along with the device. Writable by an admin: the server picks up changes and syncs them to the device.';
 COMMENT ON COLUMN device_settings.device_id IS 'Device the settings belong to; FK to devices.id';
 COMMENT ON COLUMN device_settings.data_rate IS 'Measurement data rate: _1sps, _1spm, _6sph, _2sph or _1sph (samples per second/minute/hour)';
-COMMENT ON COLUMN device_settings.sync_interval_s IS 'Maximum interval between status updates, seconds, at most 14400 (4 h)';
+COMMENT ON COLUMN device_settings.sync_interval_s IS 'Maximum interval between status updates, seconds: 0 (always online) or 180 ... 14400 (4 h)';
 
 -- Firmware: one row per firmware image (per device type).
 --

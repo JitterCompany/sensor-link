@@ -797,12 +797,14 @@ where
         schedule: &mut ScheduleChanges,
     ) -> AppState {
         match (sig, self.state) {
-            // Button press while booting: stop & reset settings
+            // Button held at boot: reset settings. Arrives before Booted, so the
+            // store is not initialized yet; Booted then finds no settings.
             (signal::Generic::ButtonPressed, AppState::Boot) => {
-                log::info!(target: "Orch", "Force stop: reset settings");
-                self.set_program_state(false, "reset (button)");
-
-                self.app.store().delete_settings().await.ok();
+                log::info!(target: "Orch", "Button held at boot: reset settings");
+                self.app.store().initialize_writeable(true).await.ok();
+                if self.app.store().delete_settings().await.is_err() {
+                    log::warn!(target: "Orch", "Failed to delete settings");
+                }
 
                 self.state
             }
@@ -810,6 +812,7 @@ where
             // Button in all other states: spawn network + status update
             (signal::Generic::ButtonPressed, _) => {
                 log::info!(target: "Orch", "Button press");
+                self.send_event(Event::ButtonPressed).await.ok();
                 if !self.network_is_connected() {
                     actions.push(Action::SpawnNetwork).ok();
                 } else {
@@ -1460,6 +1463,50 @@ mod tests {
             .unwrap();
         let _ = orch.run().await;
         assert_eq!(orch.state, AppState::Active);
+    }
+
+    /// The button held at boot wipes the stored settings: Booted then reads
+    /// none and keeps the defaults.
+    #[tokio::test]
+    async fn test_orchestrator_button_at_boot_resets_settings() {
+        let mut orch = init_in_state(AppState::Boot);
+        orch.app.store().initialize_writeable(true).await.unwrap();
+        orch.app
+            .store()
+            .write_settings(&proto_settings(1800, 7))
+            .await
+            .unwrap();
+
+        orch.signal_sender()
+            .send(Signal::Common(CommonSignal::ButtonPressed))
+            .await
+            .unwrap();
+        let _ = orch.run().await;
+        assert_eq!(orch.state, AppState::Boot);
+        assert!(orch.app.store().read_settings().await.is_err());
+
+        orch.signal_sender()
+            .send(Signal::Common(CommonSignal::Booted(BootReason::PowerOn)))
+            .await
+            .unwrap();
+        let _ = orch.run().await;
+        assert_eq!(orch.status.settings_hash, 0);
+        assert_eq!(
+            orch.settings.sync_interval_s,
+            Settings::default().sync_interval_s
+        );
+    }
+
+    /// A press after boot forces a sync.
+    #[tokio::test]
+    async fn test_orchestrator_button_forces_sync() {
+        let mut orch = init_in_state(AppState::Active);
+        orch.signal_sender()
+            .send(Signal::Common(CommonSignal::ButtonPressed))
+            .await
+            .unwrap();
+        let actions = orch.run().await;
+        assert!(actions.iter().any(|a| matches!(a, Action::SpawnNetwork)));
     }
 
     /// A boot loop skips measuring and goes to Error, to stay reachable.

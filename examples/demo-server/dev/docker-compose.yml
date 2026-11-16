@@ -1,0 +1,37 @@
+# Local dev environment: MQTT broker (no TLS, anonymous) + TimescaleDB, plus
+# nginx serving the firmware images. Non-default host ports to avoid clashing
+# with local services.
+# An explicit project name, so the volume does not collide with other projects
+# that also keep their compose file in a `dev/` directory.
+name: demo-dev
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1884:1883"
+    volumes:
+      - ./mosquitto-dev.conf:/mosquitto/config/mosquitto.conf:ro
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: demo
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+    volumes:
+      - timescaledb-dev-data:/var/lib/postgresql/data
+
+  # Serves dev/firmwares at http://localhost:8089/fw/<file>, like the
+  # firmware-files service in production.
+  firmware-files:
+    image: nginx:alpine
+    ports:
+      - "8089:80"
+    volumes:
+      - ./firmwares:/usr/share/nginx/html/fw:ro
+
+volumes:
+  timescaledb-dev-data:

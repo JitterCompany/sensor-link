@@ -1,0 +1,14 @@
+# Local dev configuration: copy to .cargo/config.toml (git-ignored) and
+# adjust as needed. Matches the services in ../dev/docker-compose.yml.
+[env]
+MQTT_BROKER_HOST_NAME = "localhost"
+MQTT_BROKER_PORT = "1884"
+# For mTLS, set all three (see scripts/gen-dev-certs.sh); unset = plain TCP:
+# MQTT_CA_CERT_PATH = "certs/ca.pem"
+# MQTT_CLIENT_CERT_PATH = "certs/demo-server.cert"
+# MQTT_CLIENT_KEY_PATH = "certs/demo-server.key"
+TIMESCALEDB_URL = "postgres://demo:demo@localhost:5433/demo?sslmode=disable"
+HTTP_BIND_ADDR = "127.0.0.1:8087"
+FIRMWARE_DIR = "dev/firmwares"
+FIRMWARE_BASE_URL = "http://localhost:8089/fw"
+RUST_LOG = "info"

@@ -1,0 +1,36 @@
+[package]
+name = "demo-server"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license.workspace = true
+publish = false
+
+[dependencies]
+actix-web = "4.14"
+anyhow.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+demo-protocol = { path = "../demo-protocol", features = ["use-std"] }
+diesel = { version = "2.3", features = ["postgres", "chrono", "serde_json"] }
+diesel-async = { version = "0.9", features = ["postgres", "deadpool", "async-connection-wrapper"] }
+diesel_migrations = { version = "2.3", features = ["postgres"] }
+notify = "8.2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+sensor-link-mqtt.workspace = true
+sensor-link-server-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_with.workspace = true
+strum.workspace = true
+task-supervisor.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio-postgres = "0.7"
+tokio-postgres-rustls = "0.14"
+tracing.workspace = true
+tracing-actix-web = "0.7"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2.5"
+
+[build-dependencies]
+chrono.workspace = true

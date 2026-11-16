@@ -1,0 +1,10 @@
+.cargo/config.toml
+# Throwaway keys from scripts/gen-dev-certs.sh, never committed
+certs/
+dev/firmwares/
+deploy/.env
+deploy/demo-server/
+deploy/firmwares/
+deploy/mosquitto/certs/
+deploy/mosquitto/data/
+deploy/traefik/acme.json

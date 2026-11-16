@@ -1,5 +1,5 @@
 [workspace]
-members = ["server/*", "sensor-link-firmware", "sensor-link-protocol", "sensor-link-provision", "examples/demo-protocol"]
+members = ["server/*", "sensor-link-firmware", "sensor-link-protocol", "sensor-link-provision", "examples/demo-protocol", "examples/demo-server"]
 # Embedded workspaces with their own target and toolchain.
 exclude = ["factory-test/modem-test"]
 resolver = "2"

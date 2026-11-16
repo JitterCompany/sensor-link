@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo db-admin</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #fff;
+    --border: #d8dce2;
+    --text: #1d2128;
+    --muted: #6a7280;
+    --accent: #1f6feb;
+    --warn: #9a3412;
+    --ok: #166534;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+    overflow-x: auto;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td {
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  tbody tr:hover { background: #f0f4fb; }
+  tr.selected { background: #e8f0fe; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 11.5px;
+    background: #eef1f5;
+    color: var(--muted);
+  }
+  .pill.on { background: #dcfce7; color: var(--ok); }
+  .pill.mark { background: #fef3c7; color: var(--warn); }
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  #sync-interval { width: 8em; }
+  select, button, input[type=search], input[type=datetime-local], input[type=date] {
+    font: inherit;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: inherit;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #status, #fw-status { min-height: 20px; margin-left: auto; }
+  #status.err, #fw-status.err { color: var(--warn); }
+  #status.ok, #fw-status.ok { color: var(--ok); }
+  .chart-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .chart-head h2 { margin: 0; }
+  #chart-status, #events-status { color: var(--muted); margin-left: auto; }
+  #chart-status.err, #events-status.err { color: var(--warn); }
+  .chart { margin-bottom: 8px; }
+  .chart svg { width: 100%; height: auto; display: block; }
+  .chart .title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 2px 0 16px; font-size: 12.5px; }
+  .legend span.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
+  .legend .off { opacity: .45; }
+  .plot-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+<h1>Demo db-admin</h1>
+<p class="sub">Local admin tool for the demo-server database: settings, commands, firmware and measurements.</p>
+
+<div class="panel">
+  <h2>Devices (<span id="device-count">0</span>)</h2>
+  <div class="bar">
+    <label><input type="checkbox" id="all"> select all</label>
+    <input type="search" id="filter" placeholder="filter devices…">
+    <label>sync interval
+      <input type="number" id="sync-interval" min="1" max="14400" step="1" placeholder="seconds">
+    </label>
+    <button class="primary" id="apply-sync" disabled>Apply sync interval</button>
+    <label>data rate
+      <select id="data-rate"></select>
+    </label>
+    <button class="primary" id="apply-data-rate" disabled>Apply data rate</button>
+    <label>command
+      <select id="command">
+        <option value="">— pick a command —</option>
+        <option value="Start">Start</option>
+        <option value="Stop">Stop</option>
+        <option value="Reboot">Reboot</option>
+        <option value="Blink">Blink</option>
+      </select>
+    </label>
+    <button class="primary" id="apply-command" disabled>Send command</button>
+    <button id="reload">Reload</button>
+    <span id="status"></span>
+  </div>
+  <table>
+    <thead><tr>
+      <th></th><th>ID</th><th>Type</th><th>Online</th>
+      <th>Pending command</th>
+      <th>Last contact</th><th>Sync interval</th><th>Data rate</th><th>Reported version</th>
+      <th>Marked for update</th>
+    </tr></thead>
+    <tbody id="devices"></tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <div class="chart-head">
+    <h2>Measurements</h2>
+    <select id="chart-device"></select>
+    <select id="chart-window">
+      <optgroup label="Rolling">
+        <option value="1h" selected>last hour</option>
+        <option value="3h">last 3 hours</option>
+        <option value="12h">last 12 hours</option>
+        <option value="24h">last 24 hours</option>
+      </optgroup>
+      <optgroup label="Calendar">
+        <option value="day">day</option>
+        <option value="week">week (Mon–Sun)</option>
+      </optgroup>
+    </select>
+    <label id="chart-until-label">until <input type="datetime-local" id="chart-until" title="blank: now"></label>
+    <input type="date" id="chart-date" hidden>
+    <button id="chart-prev" title="previous period">◀</button>
+    <button id="chart-next" title="next period">▶</button>
+    <button id="chart-now" title="back to the current period">Now</button>
+    <button id="chart-reload">Refresh</button>
+    <span id="chart-status"></span>
+  </div>
+  <div id="charts"></div>
+</div>
+
+<div class="panel">
+  <div class="chart-head">
+    <h2>Recent events</h2>
+    <button id="events-reload">Refresh</button>
+    <span id="events-status"></span>
+  </div>
+  <div id="events"></div>
+</div>
+
+<div class="panel">
+  <h2>Firmware (<span id="firmware-count">0</span>)</h2>
+  <div class="bar">
+    <select id="firmware-select"></select>
+    <button class="primary" id="apply" disabled>Apply to selected</button>
+    <button id="clear" disabled>Clear update</button>
+    <span class="muted" id="fw-selection"></span>
+    <span id="fw-status"></span>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Version</th><th>Type</th><th>Date</th><th>ID</th>
+    </tr></thead>
+    <tbody id="firmware"></tbody>
+  </table>
+</div>
+
+<script>
+let devices = [], firmware = [];
+const selected = new Set();
+const $ = id => document.getElementById(id);
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const fmtDate = s => s ? new Date(s).toLocaleString() : '';
+const fmtEpochMs = ms => ms == null ? '' : new Date(Number(ms)).toLocaleString();
+
+function setStatus(msg, kind) {
+  $('status').textContent = msg;
+  $('status').className = kind || '';
+}
+
+// The two appliers sit in different panels, so each reports next to its own
+// buttons rather than into one status line the user may have scrolled past.
+function setFwStatus(msg, kind) {
+  $('fw-status').textContent = msg;
+  $('fw-status').className = kind || '';
+}
+
+function versionText(v) {
+  if (v == null) return '';
+  if (typeof v === 'object') {
+    const s = v.firmware ?? v.version ?? v.fw ?? null;
+    if (s != null && typeof s !== 'object') return String(s);
+    return JSON.stringify(v);
+  }
+  return String(v);
+}
+
+function firmwareLabel(f) {
+  return `${f.version} · ${f.device_type} · ${fmtDate(f.date)}`;
+}
+
+function render() {
+  const q = $('filter').value.trim().toLowerCase();
+  const byId = Object.fromEntries(firmware.map(f => [f.id, f]));
+  const visible = devices.filter(d => !q ||
+    [d.id, d.device_type].some(v => String(v ?? '').toLowerCase().includes(q)));
+
+  $('devices').innerHTML = visible.map(d => {
+    const fw = d.marked_for_update ? byId[d.marked_for_update] : null;
+    const mark = d.marked_for_update
+      ? `<span class="pill mark">${esc(fw ? fw.version : d.marked_for_update + ' (unknown)')}</span>`
+      : '<span class="muted">—</span>';
+    const command = d.command && d.command !== 'None'
+      ? `<span class="pill mark">${esc(d.command)}</span>`
+      : '<span class="muted">—</span>';
+    return `<tr class="${selected.has(d.id) ? 'selected' : ''}" data-id="${esc(d.id)}">
+      <td><input type="checkbox" data-id="${esc(d.id)}" ${selected.has(d.id) ? 'checked' : ''}></td>
+      <td class="mono"><span class="plot-link" data-plot-id="${esc(d.id)}">${esc(d.id)}</span></td>
+      <td>${esc(d.device_type)}</td>
+      <td>${d.online_since ? `<span class="pill on">online</span>` : '<span class="pill">offline</span>'}</td>
+      <td>${command}</td>
+      <td>${esc(fmtEpochMs(d.last_contact))}</td>
+      <td class="mono">${d.sync_interval_s == null
+        ? '<span class="muted">(no settings)</span>'
+        : esc(d.sync_interval_s + ' s')}</td>
+      <td class="mono">${d.data_rate == null
+        ? '<span class="muted">(no settings)</span>'
+        : esc(d.data_rate)}</td>
+      <td class="mono">${esc(versionText(d.version))}</td>
+      <td>${mark}</td>
+    </tr>`;
+  }).join('');
+
+  $('firmware').innerHTML = firmware.map(f => `<tr>
+    <td>${esc(f.version)}</td>
+    <td>${esc(f.device_type)}</td>
+    <td>${esc(fmtDate(f.date))}</td>
+    <td class="mono">${esc(f.id)}</td>
+  </tr>`).join('');
+
+  $('device-count').textContent = devices.length;
+  $('firmware-count').textContent = firmware.length;
+  const any = selected.size > 0;
+  $('apply').disabled = !any || !$('firmware-select').value;
+  $('clear').disabled = !any;
+  $('apply').textContent = any ? `Apply to ${selected.size} selected` : 'Apply to selected';
+  $('apply-sync').disabled = !any || syncIntervalInput() == null;
+  $('apply-data-rate').disabled = !any || !$('data-rate').value;
+  $('apply-command').disabled = !any || !$('command').value;
+  // The firmware applier acts on the devices table a panel up, so say so.
+  $('fw-selection').textContent = any
+    ? `${selected.size} device(s) selected above`
+    : 'select devices in the table above';
+  $('all').checked = visible.length > 0 && visible.every(d => selected.has(d.id));
+}
+
+async function load() {
+  setStatus('loading…');
+  try {
+    const res = await fetch('/api/overview');
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    devices = data.devices;
+    firmware = data.firmware;
+    const dataRates = data.data_rates;
+    const keepRate = $('data-rate').value;
+    $('data-rate').innerHTML = '<option value="">— pick a data rate —</option>' +
+      dataRates.map(r => `<option value="${esc(r.value)}">${esc(r.value)} · ${esc(r.label)}</option>`).join('');
+    if (dataRates.some(r => r.value === keepRate)) $('data-rate').value = keepRate;
+    const keep = $('firmware-select').value;
+    $('firmware-select').innerHTML = '<option value="">— pick firmware —</option>' +
+      firmware.map(f => `<option value="${esc(f.id)}">${esc(firmwareLabel(f))}</option>`).join('');
+    if (firmware.some(f => f.id === keep)) $('firmware-select').value = keep;
+    for (const id of [...selected]) if (!devices.some(d => d.id === id)) selected.delete(id);
+
+    const keepDevice = $('chart-device').value;
+    $('chart-device').innerHTML = '<option value="">— pick a device —</option>' +
+      devices.map(d => `<option value="${esc(d.id)}">${esc(d.id)}</option>`).join('');
+    if (devices.some(d => d.id === keepDevice)) $('chart-device').value = keepDevice;
+
+    setStatus('');
+    render();
+  } catch (e) {
+    setStatus('load failed: ' + e.message, 'err');
+  }
+}
+
+async function assign(firmwareId) {
+  const ids = [...selected];
+  const fw = firmware.find(f => f.id === firmwareId);
+  const picked = devices.filter(d => selected.has(d.id));
+
+  if (fw) {
+    const mismatch = picked.filter(d => d.device_type !== fw.device_type);
+    if (mismatch.length) {
+      setFwStatus(`refused: ${mismatch.length} selected device(s) are not ${fw.device_type}`, 'err');
+      return;
+    }
+  }
+
+  const what = fw ? `firmware ${fw.version}` : 'no firmware (clear)';
+  if (!confirm(`Set marked_for_update to ${what} for ${ids.length} device(s)?\n\n` +
+      picked.map(d => `· ${d.id}`).join('\n'))) return;
+
+  setFwStatus('applying…');
+  try {
+    const res = await fetch('/api/assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: ids, firmware_id: firmwareId || null }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { updated } = await res.json();
+    setFwStatus(`updated ${updated} device(s)`, 'ok');
+    selected.clear();
+    await load();
+  } catch (e) {
+    setFwStatus('update failed: ' + e.message, 'err');
+  }
+}
+
+// Same bound as the CHECK on device_settings.sync_interval_s (4 h).
+const MAX_SYNC_INTERVAL_S = 14400;
+
+/** The entered interval as a whole number of seconds within 1 ... 4 h, or null
+ *  when the field is empty or holds something else. */
+function syncIntervalInput() {
+  const raw = $('sync-interval').value.trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 1 && value <= MAX_SYNC_INTERVAL_S ? value : null;
+}
+
+async function applySyncInterval() {
+  const seconds = syncIntervalInput();
+  if (seconds == null) {
+    setStatus(`enter a whole number of seconds, 1 ... ${MAX_SYNC_INTERVAL_S}`, 'err');
+    return;
+  }
+  const ids = [...selected];
+  const picked = devices.filter(d => selected.has(d.id));
+  const fresh = picked.filter(d => d.sync_interval_s == null);
+
+  if (!confirm(`Set the sync interval to ${seconds} s for ${ids.length} device(s)?\n\n` +
+      picked.map(d => `· ${d.id}: ${
+        d.sync_interval_s == null ? 'no settings yet' : d.sync_interval_s + ' s'} → ${seconds} s`).join('\n') +
+      (fresh.length ? `\n\n${fresh.length} device(s) have no settings row yet; one is created with the default data rate.` : ''))) return;
+
+  setStatus('applying…');
+  try {
+    const res = await fetch('/api/sync-interval', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: ids, sync_interval_s: seconds }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { updated } = await res.json();
+    // After `load()`, which ends by clearing the status line it shares.
+    await load();
+    setStatus(`sync interval set on ${updated} device(s)`, 'ok');
+  } catch (e) {
+    setStatus('update failed: ' + e.message, 'err');
+  }
+}
+
+async function applyDataRate() {
+  const rate = $('data-rate').value;
+  if (!rate) {
+    setStatus('pick a data rate', 'err');
+    return;
+  }
+  const ids = [...selected];
+  const picked = devices.filter(d => selected.has(d.id));
+  const fresh = picked.filter(d => d.data_rate == null);
+
+  if (!confirm(`Set the data rate to ${rate} for ${ids.length} device(s)?\n\n` +
+      picked.map(d => `· ${d.id}: ${d.data_rate ?? 'no settings yet'} → ${rate}`).join('\n') +
+      (fresh.length ? `\n\n${fresh.length} device(s) have no settings row yet; one is created with the default sync interval.` : ''))) return;
+
+  setStatus('applying…');
+  try {
+    const res = await fetch('/api/data-rate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: ids, data_rate: rate }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { updated } = await res.json();
+    // After `load()`, which ends by clearing the status line it shares.
+    await load();
+    setStatus(`data rate set on ${updated} device(s)`, 'ok');
+  } catch (e) {
+    setStatus('update failed: ' + e.message, 'err');
+  }
+}
+
+async function applyCommand() {
+  const command = $('command').value;
+  if (!command) {
+    setStatus('pick a command', 'err');
+    return;
+  }
+  const ids = [...selected];
+  if (!confirm(`Send ${command} to ${ids.length} device(s) at their next sync?\n\n` +
+      ids.map(id => `· ${id}`).join('\n'))) return;
+
+  setStatus('applying…');
+  try {
+    const res = await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: ids, command }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const { updated } = await res.json();
+    // After `load()`, which ends by clearing the status line it shares.
+    await load();
+    setStatus(`${command} queued for ${updated} device(s)`, 'ok');
+  } catch (e) {
+    setStatus('update failed: ' + e.message, 'err');
+  }
+}
+
+$('sync-interval').addEventListener('input', render);
+$('apply-sync').addEventListener('click', applySyncInterval);
+$('data-rate').addEventListener('change', render);
+$('apply-data-rate').addEventListener('click', applyDataRate);
+$('command').addEventListener('change', render);
+$('apply-command').addEventListener('click', applyCommand);
+
+// ---------------------------------------------------------------- charts ---
+
+// One plot per unit, so a current in A cannot flatten a voltage trace.
+const PLOTS = [
+  { title: 'Board temperature (°C)', unit: ' °C', series: [
+    { key: 'board_temperature', color: '#d64545' },
+  ]},
+  { title: 'Voltages (V)', unit: ' V', series: [
+    { key: 'vbus', color: '#1f6feb' },
+    { key: 'vsys', color: '#0f9d58' },
+  ]},
+  { title: 'Input current (A)', unit: ' A', series: [
+    { key: 'ibus', color: '#ea8c00' },
+  ]},
+];
+
+// Above this the SVG gets heavy without showing more: an hour of samples is far
+// wider than the pixels available for it.
+const MAX_PLOT_POINTS = 1500;
+
+const SVG_W = 900, SVG_H = 240;
+const PAD = { top: 10, right: 12, bottom: 26, left: 52 };
+
+let measurementRows = [];
+// [start, end] in ms of the loaded range: the time axis of every plot.
+let measurementRange = [0, 0];
+
+function setChartStatus(msg, kind) {
+  $('chart-status').textContent = msg;
+  $('chart-status').className = kind || '';
+}
+
+/** Thin `rows` to at most MAX_PLOT_POINTS by keeping each bucket's extremes,
+ *  which preserves spikes that plain every-Nth sampling would drop. */
+function decimate(rows) {
+  if (rows.length <= MAX_PLOT_POINTS) return rows;
+  const size = Math.ceil(rows.length / (MAX_PLOT_POINTS / 2));
+  const out = [];
+  for (let i = 0; i < rows.length; i += size) {
+    const bucket = rows.slice(i, i + size);
+    // Rank on the first channel that has a value, so a bucket is picked by
+    // something real rather than being dropped when one channel is NULL.
+    const rank = r => PLOTS.flatMap(p => p.series).map(s => r[s.key]).find(v => v != null) ?? 0;
+    let lo = bucket[0], hi = bucket[0];
+    for (const r of bucket) {
+      if (rank(r) < rank(lo)) lo = r;
+      if (rank(r) > rank(hi)) hi = r;
+    }
+    out.push(...(lo.ts <= hi.ts ? [lo, hi] : [hi, lo]));
+  }
+  return out;
+}
+
+function niceTicks(min, max, count) {
+  if (!(max > min)) return [min];
+  const raw = (max - min) / count;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].find(m => m * mag >= raw) * mag;
+  const ticks = [];
+  for (let v = Math.ceil(min / step) * step; v <= max + step / 1e6; v += step) ticks.push(v);
+  return ticks;
+}
+
+// Clock-friendly tick steps: a plain "nice number" of milliseconds puts ticks
+// at 16:40, 16:56:40, ... which nobody can read against a wall clock.
+const MIN = 60000, HOUR = 60 * MIN;
+const TIME_STEPS = [MIN, 2 * MIN, 5 * MIN, 10 * MIN, 15 * MIN, 30 * MIN,
+  HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, 24 * HOUR];
+
+/** Ticks on round local-clock times between `t0` and `t1` (ms), about `count`. */
+function timeTicks(t0, t1, count) {
+  if (!(t1 > t0)) return [t0];
+  const step = TIME_STEPS.find(s => s >= (t1 - t0) / count) ?? TIME_STEPS[TIME_STEPS.length - 1];
+  const tz = new Date(t0).getTimezoneOffset() * MIN;   // align to local, not UTC
+  const ticks = [];
+  for (let t = Math.ceil((t0 - tz) / step) * step + tz; t <= t1; t += step) {
+    // Past a DST change the offset differs from t0's: shift back onto the clock.
+    const shifted = t + (new Date(t).getTimezoneOffset() * MIN - tz);
+    if (shifted >= t0 && shifted <= t1) ticks.push(shifted);
+  }
+  return ticks;
+}
+
+/** Vertical grid lines plus labels for the time axis, from `yTop` to `yBottom`. */
+function xAxisSvg(ticks, x, yTop, yBottom, labelY) {
+  return ticks.map(t =>
+    `<line x1="${x(t).toFixed(1)}" x2="${x(t).toFixed(1)}" y1="${yTop}" y2="${yBottom}" stroke="#e7eaee"/>` +
+    `<text x="${x(t).toFixed(1)}" y="${labelY}" text-anchor="middle" font-size="11" fill="#6a7280">${
+      esc(fmtTick(t))}</text>`).join('');
+}
+
+// Rolling windows longer than an hour cross midnight often enough to need the
+// date; a day has it in its date picker.
+const fmtClock = ms => ['1h', 'day'].includes($('chart-window').value)
+  ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  : new Date(ms).toLocaleString([], { weekday: $('chart-window').value === 'week' ? 'short' : undefined,
+      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+// A week's ticks fall on midnights, so the time would only repeat 00:00.
+const fmtTick = ms => $('chart-window').value === 'week'
+  ? new Date(ms).toLocaleDateString([], { weekday: 'short', month: 'numeric', day: 'numeric' })
+  : fmtClock(ms);
+
+/** `[t0, t1]` is the time axis, passed in so every plot and the state band
+ *  share one: decimation does not keep a plot's first and last row. */
+function plotSvg(rows, plot, [t0, t1]) {
+  const keys = plot.series.map(s => s.key);
+  const values = rows.flatMap(r => keys.map(k => r[k])).filter(v => v != null);
+  if (!values.length) return null;
+
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (hi === lo) { lo -= 1; hi += 1; }          // a flat trace still needs a range
+  const margin = (hi - lo) * 0.08;
+  lo -= margin; hi += margin;
+
+  const x = t => PAD.left + (t1 === t0 ? 0 : (t - t0) / (t1 - t0)) * (SVG_W - PAD.left - PAD.right);
+  const y = v => PAD.top + (1 - (v - lo) / (hi - lo)) * (SVG_H - PAD.top - PAD.bottom);
+
+  const yTicks = niceTicks(lo, hi, 5).map(v =>
+    `<line x1="${PAD.left}" x2="${SVG_W - PAD.right}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#e7eaee"/>` +
+    `<text x="${PAD.left - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#6a7280">${
+      Number(v.toFixed(2))}</text>`).join('');
+
+  const xTicks = xAxisSvg(timeTicks(t0, t1, 6), x, PAD.top, SVG_H - PAD.bottom, SVG_H - 8);
+
+  // One path per channel, restarted at every NULL so gaps stay gaps.
+  const paths = plot.series.map(s => {
+    let d = '', pen = false;
+    for (const r of rows) {
+      const v = r[s.key];
+      if (v == null) { pen = false; continue; }
+      d += `${pen ? 'L' : 'M'}${x(r.ts).toFixed(1)} ${y(v).toFixed(1)} `;
+      pen = true;
+    }
+    return d ? `<path d="${d.trim()}" fill="none" stroke="${s.color}" stroke-width="1.4"
+      stroke-linejoin="round" stroke-linecap="round"/>` : '';
+  }).join('');
+
+  return `<svg viewBox="0 0 ${SVG_W} ${SVG_H}" role="img" aria-label="${esc(plot.title)}">
+    ${yTicks}${xTicks}
+    <line x1="${PAD.left}" x2="${PAD.left}" y1="${PAD.top}" y2="${SVG_H - PAD.bottom}" stroke="#c4cad2"/>
+    <line x1="${PAD.left}" x2="${SVG_W - PAD.right}" y1="${SVG_H - PAD.bottom}" y2="${SVG_H - PAD.bottom}" stroke="#c4cad2"/>
+    ${paths}
+  </svg>`;
+}
+
+function legendHtml(rows, plot) {
+  return `<div class="legend">` + plot.series.map(s => {
+    const last = [...rows].reverse().find(r => r[s.key] != null);
+    const value = last ? Number(last[s.key].toFixed(2)) + plot.unit : 'no data';
+    return `<span class="${last ? '' : 'off'}"><span class="swatch" style="background:${s.color}"></span>${
+      esc(s.key)}: ${esc(value)}</span>`;
+  }).join('') + `</div>`;
+}
+
+function renderCharts() {
+  const rows = decimate(measurementRows);
+  if (!rows.length) {
+    $('charts').innerHTML = $('chart-device').value
+      ? '<p class="muted">no measurements in this window</p>'
+      : '<p class="muted">pick a device to plot its measurements.</p>';
+    return;
+  }
+  // A plot whose every channel is NULL, e.g. the charger channels while its
+  // I2C fails, is reduced to one line rather than an empty axis.
+  const domain = measurementRange;
+  $('charts').innerHTML = PLOTS.map(plot => {
+    const svg = plotSvg(rows, plot, domain);
+    if (!svg) return `<p class="muted">${esc(plot.title)}: no data</p>`;
+    return `<div class="chart">
+      <div class="title">${esc(plot.title)}</div>
+      ${svg}
+    </div>${legendHtml(rows, plot)}`;
+  }).join('');
+}
+
+const ROLLING_MS = { '1h': HOUR, '3h': 3 * HOUR, '12h': 12 * HOUR, '24h': 24 * HOUR };
+
+const pad2 = n => String(n).padStart(2, '0');
+/** `d` as the value of a date input, in the browser's zone. */
+const dateValue = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+/** `d` as the value of a datetime-local input, in the browser's zone. */
+const datetimeValue = d => `${dateValue(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+
+/** The picked period as [start, end] Dates. Calendar periods run between local
+ *  midnights, built from date parts so a DST day comes out 23 or 25 h long. */
+function chartRange() {
+  const w = $('chart-window').value;
+  if (w in ROLLING_MS) {
+    // datetime-local is in the browser's zone; the server gets an instant.
+    const end = $('chart-until').value ? new Date($('chart-until').value) : new Date();
+    if (isNaN(end)) throw new Error('invalid until time');
+    return [new Date(end - ROLLING_MS[w]), end];
+  }
+  const [y, m, d] = ($('chart-date').value || dateValue(new Date())).split('-').map(Number);
+  const monday = w === 'week' ? (new Date(y, m - 1, d).getDay() + 6) % 7 : 0;
+  const start = new Date(y, m - 1, d - monday);
+  const end = new Date(y, m - 1, d - monday + (w === 'week' ? 7 : 1));
+  return [start, end];
+}
+
+/** Move the picked period `dir` (-1 or 1) periods back or forth. */
+function stepRange(dir) {
+  const w = $('chart-window').value;
+  if (w in ROLLING_MS) {
+    const end = chartRange()[1].getTime() + dir * ROLLING_MS[w];
+    // Reaching the present clears until, so the window follows the clock again.
+    $('chart-until').value = end < Date.now() ? datetimeValue(new Date(end)) : '';
+  } else {
+    const start = chartRange()[0];
+    start.setDate(start.getDate() + dir * (w === 'week' ? 7 : 1));
+    $('chart-date').value = dateValue(start);
+  }
+  loadMeasurements();
+}
+
+/** Show the input that sets the picked mode's period: until or a date. */
+function showRangeInput() {
+  const rolling = $('chart-window').value in ROLLING_MS;
+  $('chart-until-label').hidden = !rolling;
+  $('chart-date').hidden = rolling;
+}
+
+async function loadMeasurements() {
+  const deviceId = $('chart-device').value;
+  measurementRows = [];
+  if (!deviceId) { setChartStatus(''); renderCharts(); return; }
+
+  setChartStatus('loading…');
+  try {
+    const [start, end] = chartRange();
+    measurementRange = [start.getTime(), end.getTime()];
+    const res = await fetch('/api/measurements?device_id=' + encodeURIComponent(deviceId) +
+      '&start=' + encodeURIComponent(start.toISOString()) +
+      '&end=' + encodeURIComponent(end.toISOString()));
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    measurementRows = data.rows;
+    setChartStatus(`${data.rows.length} sample(s)` +
+      (data.bucket_s > 1 ? `, averaged per ${data.bucket_s} s` : '') +
+      (data.truncated ? ' — truncated, showing the most recent' : ''));
+    renderCharts();
+  } catch (e) {
+    setChartStatus('load failed: ' + e.message, 'err');
+  }
+}
+
+// ---------------------------------------------------------------- events ---
+
+// Newest first, as the server returns them.
+let deviceEvents = [];
+
+// Events that report a fault, highlighted in the list.
+const FAULT_EVENTS = new Set(['sensorerror', 'processingwarning', 'contacttimeout']);
+
+function setEventsStatus(msg, kind) {
+  $('events-status').textContent = msg;
+  $('events-status').className = kind || '';
+}
+
+function renderEvents() {
+  if (!deviceEvents.length) {
+    $('events').innerHTML = $('chart-device').value
+      ? '<p class="muted">no events stored for this device</p>'
+      : '<p class="muted">pick a device in the Measurements panel to list its events.</p>';
+    return;
+  }
+  const body = deviceEvents.map(ev => `<tr>
+      <td>${ev.ts ? esc(fmtEpochMs(ev.ts)) : '<span class="muted">clock not set</span>'}</td>
+      <td><span class="pill ${FAULT_EVENTS.has(ev.event) ? 'mark' : ''}">${esc(ev.event)}</span></td>
+      <td class="mono">${esc(ev.message ?? '')}</td>
+      <td class="muted">${esc(fmtEpochMs(ev.received_at))}</td>
+    </tr>`).join('');
+  $('events').innerHTML = `<table>
+      <thead><tr><th>Time</th><th>Event</th><th>Message</th><th>Received</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+async function loadEvents() {
+  const deviceId = $('chart-device').value;
+  deviceEvents = [];
+  if (!deviceId) { setEventsStatus(''); renderEvents(); return; }
+
+  setEventsStatus('loading…');
+  try {
+    const res = await fetch('/api/events?device_id=' + encodeURIComponent(deviceId));
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    deviceEvents = data.events;
+    setEventsStatus(`${data.events.length} event(s)` +
+      (data.truncated ? ' — showing the most recent' : ''));
+    renderEvents();
+  } catch (e) {
+    renderEvents();
+    setEventsStatus('load failed: ' + e.message, 'err');
+  }
+}
+
+// All device panels follow the one device picker.
+function loadDevicePanels() {
+  loadMeasurements();
+  loadEvents();
+}
+
+$('chart-device').addEventListener('change', loadDevicePanels);
+$('chart-window').addEventListener('change', () => { showRangeInput(); loadMeasurements(); });
+$('chart-until').addEventListener('change', loadMeasurements);
+$('chart-date').addEventListener('change', loadMeasurements);
+$('chart-prev').addEventListener('click', () => stepRange(-1));
+$('chart-next').addEventListener('click', () => stepRange(1));
+$('chart-now').addEventListener('click', () => {
+  $('chart-until').value = '';
+  $('chart-date').value = dateValue(new Date());
+  loadMeasurements();
+});
+$('chart-reload').addEventListener('click', loadMeasurements);
+$('events-reload').addEventListener('click', loadEvents);
+$('devices').addEventListener('click', e => {
+  const link = e.target.closest('.plot-link');
+  if (!link) return;
+  $('chart-device').value = link.dataset.plotId;
+  loadDevicePanels();
+  $('charts').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+
+// -------------------------------------------------------------- listeners ---
+
+$('devices').addEventListener('change', e => {
+  const cb = e.target.closest('input[type=checkbox]');
+  if (!cb) return;
+  cb.checked ? selected.add(cb.dataset.id) : selected.delete(cb.dataset.id);
+  render();
+});
+$('all').addEventListener('change', e => {
+  const q = $('filter').value.trim().toLowerCase();
+  const visible = devices.filter(d => !q ||
+    [d.id, d.device_type].some(v => String(v ?? '').toLowerCase().includes(q)));
+  for (const d of visible) e.target.checked ? selected.add(d.id) : selected.delete(d.id);
+  render();
+});
+$('filter').addEventListener('input', render);
+$('firmware-select').addEventListener('change', render);
+$('apply').addEventListener('click', () => assign($('firmware-select').value));
+$('clear').addEventListener('click', () => assign(null));
+$('reload').addEventListener('click', load);
+
+load();
+$('chart-date').value = dateValue(new Date());
+renderCharts();
+renderEvents();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip STM32L4R7ZITx"
+rustflags = [
+  # This is needed if your flash or ram addresses are not aligned to 0x10000 in memory.x
+  # See https://github.com/rust-embedded/cortex-m-quickstart/pull/95
+  "-C", "link-arg=--nmagic",
+
+  # LLD (shipped with the Rust toolchain) is used as the default linker
+  "-C", "link-arg=-Tlink.x",
+]
+
+[build]
+target = "thumbv7em-none-eabihf"     # Cortex-M4F and Cortex-M7F (with FPU)
+
+[net]
+git-fetch-with-cli = true
+
+# Build-time settings. A variable set in the environment wins over these.
+[env]
+# The MQTT broker the firmware connects to. Obviously fake: set your own.
+DEMO_MQTT_HOST = "mqtt.demo.example"
+DEMO_MQTT_PORT = "8883"
+# The CA that signed the broker's certificate (PEM), and the public key the
+# bootloader checks firmware signatures against (PEM). Neither is committed:
+# scripts/gen-dev-keys.sh creates throwaway ones for a development build.
+DEMO_MQTT_CA = { value = "keys/mqtt-ca.pem", relative = true }
+DEMO_APP_PUBKEY = { value = "keys/app-signing-pub.pem", relative = true }

@@ -15,6 +15,12 @@ to produce devices.
 | [server/sensor-link-notify](server/sensor-link-notify/) | Server-side Notifications: alarms, e-mail and SMS |
 | [server/task-supervisor](server/task-supervisor/) | Supervised tokio background tasks: auto-restart on panic, graceful shutdown with timeout |
 
+## Example application
+
+[examples/](examples/) holds a demo built on these libraries: firmware for the
+SL23-modem-tester board, its protocol, a mock device and a TimescaleDB server.
+Use it as the starting point for a new product.
+
 ## Production tooling
 
 Tools to help build & test hardware during manufacturing.

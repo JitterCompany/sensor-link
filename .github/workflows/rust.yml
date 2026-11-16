@@ -30,6 +30,9 @@ jobs:
       - name: Check formatting (modem factory test)
         working-directory: factory-test/modem-test
         run: cargo +nightly fmt --all -- --check
+      - name: Check formatting (demo firmware)
+        working-directory: examples/demo-firmware
+        run: cargo +nightly fmt --all -- --check
 
   test:
     timeout-minutes: 20
@@ -74,6 +77,31 @@ jobs:
         with:
           workspaces: factory-test/modem-test
       - name: Check
+        run: cargo check --release
+
+  # The demo firmware is its own embedded workspace too, on path dependencies,
+  # so this catches library changes that break it.
+  demo-firmware:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/demo-firmware
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: thumbv7em-none-eabihf
+          components: rust-src, rustfmt, llvm-tools
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/demo-firmware
+      # Throwaway signing key and broker CA: the build needs both, neither is committed
+      - name: Development keys
+        run: ./scripts/gen-dev-keys.sh
+      - name: Check (application and bootloader)
         run: cargo check --release
 
   # examples/demo-server/database.md is generated from the migrated schema; fail

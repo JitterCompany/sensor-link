@@ -2,7 +2,7 @@
 # workspace at the repo root. It builds for thumbv7em-none-eabihf only (see
 # .cargo/config.toml).
 [workspace]
-members = ["bsp"]
+members = ["app", "bootloader", "bsp"]
 resolver = "2"
 
 [workspace.dependencies]

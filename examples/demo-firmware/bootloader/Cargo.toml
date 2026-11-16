@@ -1,0 +1,28 @@
+[package]
+name = "demo-bootloader"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+autobins = false
+
+[dependencies]
+cortex-m-rt = { workspace = true }
+critical-section = { workspace = true }
+demo-firmware-core = { workspace = true }
+futures = { workspace = true }
+hardware = { workspace = true }
+paste = { workspace = true }
+rtic = { workspace = true }
+rtic-sync = { workspace = true }
+rtt-target = { workspace = true }
+
+[build-dependencies]
+demo-firmware-core = { workspace = true, features = ["alloc", "use-std"] }
+
+[[bin]]
+name = "bootloader"
+path = "src/main.rs"
+test = false
+bench = false

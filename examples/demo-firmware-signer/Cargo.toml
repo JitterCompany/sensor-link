@@ -1,0 +1,11 @@
+[package]
+name = "demo-firmware-signer"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license.workspace = true
+publish = false
+description = "Signs demo firmware images for the demo bootloader."
+
+[dependencies]
+demo-firmware-core = { path = "../demo-firmware-core", features = ["alloc", "use-std"] }

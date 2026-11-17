@@ -85,7 +85,12 @@
   #chart-status.err, #events-status.err { color: var(--warn); }
   .chart { margin-bottom: 8px; }
   .chart svg { width: 100%; height: auto; display: block; }
-  .chart .title { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 2px; }
+  .chart .title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+    margin-bottom: 2px; cursor: pointer; user-select: none;
+  }
+  .chart .title:hover { color: var(--text); }
+  .chart:not([open]) { margin-bottom: 10px; }
   .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 2px 0 16px; font-size: 12.5px; }
   .legend span.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
   .legend .off { opacity: .45; }
@@ -506,6 +511,17 @@ const SVG_W = 900, SVG_H = 240;
 const PAD = { top: 10, right: 12, bottom: 26, left: 52 };
 
 let measurementRows = [];
+
+// Titles of the plots the user folded away. Kept per browser, so the charts
+// they do not care about stay folded across reloads and device switches.
+const COLLAPSED_KEY = 'db-admin.collapsed-plots';
+const collapsedPlots = new Set((() => {
+  try { return JSON.parse(localStorage.getItem(COLLAPSED_KEY)) || []; } catch { return []; }
+})());
+
+function saveCollapsedPlots() {
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsedPlots])); } catch {}
+}
 // From /api/online: the state at the start of the range and the transitions in it.
 let onlineHistory = { initial: null, rows: [] };
 // [start, end] in ms of the loaded range: the time axis of every plot.
@@ -685,10 +701,11 @@ function renderCharts() {
   $('charts').innerHTML = connectivity + PLOTS.map(plot => {
     const svg = plotSvg(rows, plot, domain);
     if (!svg) return `<p class="muted">${esc(plot.title)}: no data</p>`;
-    return `<div class="chart">
-      <div class="title">${esc(plot.title)}</div>
+    return `<details class="chart" data-plot="${esc(plot.title)}" ${collapsedPlots.has(plot.title) ? '' : 'open'}>
+      <summary class="title">${esc(plot.title)}</summary>
       ${svg}
-    </div>${legendHtml(rows, plot)}`;
+      ${legendHtml(rows, plot)}
+    </details>`;
   }).join('');
 }
 
@@ -838,6 +855,13 @@ $('chart-now').addEventListener('click', () => {
   loadMeasurements();
 });
 $('chart-reload').addEventListener('click', loadMeasurements);
+// `toggle` does not bubble, hence the capture listener on the container.
+$('charts').addEventListener('toggle', e => {
+  const plot = e.target.dataset?.plot;
+  if (!plot) return;
+  e.target.open ? collapsedPlots.delete(plot) : collapsedPlots.add(plot);
+  saveCollapsedPlots();
+}, true);
 $('events-reload').addEventListener('click', loadEvents);
 $('devices').addEventListener('click', e => {
   const link = e.target.closest('.plot-link');

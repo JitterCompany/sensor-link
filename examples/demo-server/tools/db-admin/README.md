@@ -76,6 +76,7 @@ the devices table.
 
 - Four plots: board temperature (°C), VBUS and VSYS (V), IBUS (A), power
   (VBUS × IBUS, W).
+- Click a plot's title to fold it. Folded plots stay folded in this browser.
 - The range is the last 1, 3, 12 or 24 hours, or a calendar day or week. ◀ and
   ▶ step one period, **Now** returns to the current one.
 - Ranges over an hour are averaged into time buckets on the server, to about

@@ -275,6 +275,12 @@ where
             }
         }
 
+        self.network_timeout()
+    }
+
+    /// Idle timeout for the network task. Every session starts at the default,
+    /// so this is sent again on each connect, not only when the settings change.
+    fn network_timeout(&self) -> NetworkAction<DeviceStatusUpload> {
         if self.settings.sync_interval_s == 0 {
             NetworkAction::SetTimeout(INFINITE_TIMEOUT_S)
         } else {
@@ -583,6 +589,7 @@ where
                 self.stats.network_connect_recovery_count = 0;
                 self.connected_since = Some(monotonic_time::now());
                 schedule_status_update(schedule, true);
+                self.send_network_action(self.network_timeout()).await.ok();
             }
             signal::Status::Network(NetworkSignal::ConnectFailed) => {}
             signal::Status::Network(NetworkSignal::SpawnFailed) => {
@@ -1026,7 +1033,8 @@ where
                     log::warn!(target: "Orch", "Failed to write settings: {:?}", err);
                 }
 
-                self.process_new_settings(new_settings);
+                let network_timeout = self.process_new_settings(new_settings);
+                self.send_network_action(network_timeout).await.ok();
 
                 schedule_status_update(schedule, false);
                 self.reschedule_network_sync_timer(schedule);
@@ -1436,6 +1444,57 @@ mod tests {
             changes.get(Schedule::SyncNetwork).unwrap(),
             1800 * 1_000_000
         );
+    }
+
+    fn pending_timeouts(orch: &mut TestOrch) -> Vec<u32> {
+        core::iter::from_fn(|| orch.to_network.try_next_action())
+            .filter_map(|action| match action {
+                NetworkAction::SetTimeout(timeout) => Some(timeout),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Always online takes effect in the session the settings arrive in.
+    #[tokio::test]
+    async fn test_orchestrator_always_online_applies_to_current_session() {
+        let mut orch = init_in_state(AppState::Ready);
+
+        orch.signal_sender()
+            .send(Signal::Settings(proto_settings(0, 1)))
+            .await
+            .unwrap();
+        let _ = orch.run().await;
+        assert_eq!(pending_timeouts(&mut orch), [INFINITE_TIMEOUT_S]);
+
+        orch.signal_sender()
+            .send(Signal::Settings(proto_settings(900, 2)))
+            .await
+            .unwrap();
+        let _ = orch.run().await;
+        assert_eq!(pending_timeouts(&mut orch), [DEFAULT_TIMEOUT_S]);
+    }
+
+    /// Every network session starts at the default timeout, so a reconnect
+    /// must get the always-online timeout again.
+    #[tokio::test]
+    async fn test_orchestrator_always_online_survives_reconnect() {
+        let mut orch = init_in_state(AppState::Ready);
+        orch.signal_sender()
+            .send(Signal::Settings(proto_settings(0, 1)))
+            .await
+            .unwrap();
+        let _ = orch.run().await;
+        let _ = pending_timeouts(&mut orch);
+
+        orch.signal_sender()
+            .send(Signal::Common(CommonSignal::Network(
+                NetworkSignal::Connected,
+            )))
+            .await
+            .unwrap();
+        let _ = orch.run().await;
+        assert_eq!(pending_timeouts(&mut orch), [INFINITE_TIMEOUT_S]);
     }
 
     /// Boot goes straight to measuring: there is no self-test to wait for.

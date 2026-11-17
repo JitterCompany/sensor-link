@@ -90,12 +90,28 @@
   .legend span.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; }
   .legend .off { opacity: .45; }
   .plot-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+  .tabs a {
+    padding: 8px 14px;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tabs a:hover { color: var(--text); }
+  .tabs a[aria-selected=true] { color: var(--accent); border-bottom-color: var(--accent); }
 </style>
 </head>
 <body>
 <h1>Demo db-admin</h1>
 <p class="sub">Local admin tool for the demo-server database: settings, commands, firmware and measurements.</p>
 
+<nav class="tabs" role="tablist">
+  <a href="#devices" role="tab" data-tab="devices">Devices</a>
+  <a href="#measurements" role="tab" data-tab="measurements">Measurements</a>
+</nav>
+
+<section data-tab="devices" role="tabpanel">
 <div class="panel">
   <h2>Devices (<span id="device-count">0</span>)</h2>
   <div class="bar">
@@ -134,6 +150,25 @@
 </div>
 
 <div class="panel">
+  <h2>Firmware (<span id="firmware-count">0</span>)</h2>
+  <div class="bar">
+    <select id="firmware-select"></select>
+    <button class="primary" id="apply" disabled>Apply to selected</button>
+    <button id="clear" disabled>Clear update</button>
+    <span class="muted" id="fw-selection"></span>
+    <span id="fw-status"></span>
+  </div>
+  <table>
+    <thead><tr>
+      <th>Version</th><th>Type</th><th>Date</th><th>ID</th>
+    </tr></thead>
+    <tbody id="firmware"></tbody>
+  </table>
+</div>
+</section>
+
+<section data-tab="measurements" role="tabpanel" hidden>
+<div class="panel">
   <div class="chart-head">
     <h2>Measurements</h2>
     <select id="chart-device"></select>
@@ -168,23 +203,8 @@
   </div>
   <div id="events"></div>
 </div>
+</section>
 
-<div class="panel">
-  <h2>Firmware (<span id="firmware-count">0</span>)</h2>
-  <div class="bar">
-    <select id="firmware-select"></select>
-    <button class="primary" id="apply" disabled>Apply to selected</button>
-    <button id="clear" disabled>Clear update</button>
-    <span class="muted" id="fw-selection"></span>
-    <span id="fw-status"></span>
-  </div>
-  <table>
-    <thead><tr>
-      <th>Version</th><th>Type</th><th>Date</th><th>ID</th>
-    </tr></thead>
-    <tbody id="firmware"></tbody>
-  </table>
-</div>
 
 <script>
 let devices = [], firmware = [];
@@ -824,8 +844,25 @@ $('devices').addEventListener('click', e => {
   if (!link) return;
   $('chart-device').value = link.dataset.plotId;
   loadDevicePanels();
-  $('charts').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  location.hash = 'measurements';
 });
+
+// ------------------------------------------------------------------- tabs ---
+
+const TABS = ['devices', 'measurements'];
+
+/** Show the tab named in the URL hash, so a reload or bookmark keeps it. */
+function showTab() {
+  const name = location.hash.slice(1);
+  const tab = TABS.includes(name) ? name : TABS[0];
+  for (const el of document.querySelectorAll('section[data-tab]')) el.hidden = el.dataset.tab !== tab;
+  for (const a of document.querySelectorAll('.tabs a')) {
+    a.setAttribute('aria-selected', a.dataset.tab === tab);
+  }
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', showTab);
+showTab();
 
 // -------------------------------------------------------------- listeners ---
 

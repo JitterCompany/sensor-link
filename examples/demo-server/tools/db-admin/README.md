@@ -71,7 +71,7 @@ sets `marked_for_update` back to `NULL`.
 - Ids must match `^[A-Za-z0-9._:-]{1,128}$` and are quoted before they reach
   SQL.
 
-**Measurements.** Pick a device in the Measurements panel, or click its id in
+**Measurements.** Pick a device on the Measurements tab, or click its id in
 the devices table.
 
 - Four plots: board temperature (°C), VBUS and VSYS (V), IBUS (A), power

@@ -52,6 +52,32 @@ pub struct CellInfo {
     pub rsrp: Option<i16>,
 }
 
+/// Position from the modem's GNSS receiver, WGS84.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct GnssFix {
+    /// Degrees, north positive. `f64`: `f32` only resolves about 1 m.
+    pub lat: f64,
+    /// Degrees, east positive
+    pub lon: f64,
+    /// Meters above mean sea level
+    pub alt: f32,
+    /// Horizontal dilution of precision
+    pub hdop: f32,
+    /// Satellites used for the fix
+    pub sat: u8,
+}
+
+/// Result of one GNSS search during a network session.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct GnssReport {
+    /// Seconds from the start of the search to the fix, or to giving up
+    #[serde(rename = "s")]
+    pub search_s: u16,
+    /// `None` when the search timed out without a fix
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<GnssFix>,
+}
+
 /// All manufacturer-agnostic events that can be sent from device to the server.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -66,6 +92,9 @@ pub enum Event {
 
     /// Serving cell at the start of a network session
     CellInfo(CellInfo),
+
+    /// GNSS search during a network session
+    Gnss(GnssReport),
 
     /// Failed to connect to the server (typically after multiple failed attempts)
     ContactTimeout(Desc),
@@ -108,6 +137,7 @@ impl Event {
             Event::NetworkConnected => false,
             Event::NetworkDisconnected => false,
             Event::CellInfo(_) => false,
+            Event::Gnss(_) => false,
             Event::ContactTimeout(_) => false,
 
             Event::FirmwareUpdateStarted => true,
@@ -243,5 +273,47 @@ mod tests {
             panic!("expected CellInfo, got {:?}", parsed.event);
         };
         assert_eq!(parsed, info);
+    }
+
+    fn gnss_roundtrip(report: GnssReport) -> String {
+        let bytes = EventPayload {
+            event: Event::Gnss(report.clone()),
+            ts: i64::MAX,
+        }
+        .serialize_topic_payload()
+        .unwrap();
+        let (parsed, _) = serde_json_core::from_slice::<EventPayload<Event>>(&bytes).unwrap();
+        let Event::Gnss(parsed) = parsed.event else {
+            panic!("expected Gnss, got {:?}", parsed.event);
+        };
+        assert_eq!(parsed, report);
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn gnss_fix_fits_and_roundtrips() {
+        let json = gnss_roundtrip(GnssReport {
+            search_s: 65535,
+            fix: Some(GnssFix {
+                lat: -52.123456,
+                lon: -178.123456,
+                alt: -1234.5,
+                hdop: 99.9,
+                sat: 255,
+            }),
+        });
+        assert_eq!(
+            json,
+            r#"{"e":{"gnss":{"s":65535,"fix":{"lat":-52.123456,"lon":-178.123456,"alt":-1234.5,"hdop":99.9,"sat":255}}},"t":9223372036854775807}"#
+        );
+    }
+
+    #[test]
+    fn gnss_without_fix() {
+        let json = gnss_roundtrip(GnssReport {
+            search_s: 120,
+            fix: None,
+        });
+        assert_eq!(json, r#"{"e":{"gnss":{"s":120}},"t":9223372036854775807}"#);
     }
 }

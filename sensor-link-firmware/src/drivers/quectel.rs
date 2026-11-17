@@ -18,7 +18,7 @@ use atat::{
 use embedded_io_async::{Read, Write};
 use heapless::{spsc, String, Vec};
 use sensor_link_protocol::{
-    event::CellInfo,
+    event::{CellInfo, GnssFix},
     info::{Iccid, VersionString, VERSION_STRING_MAX_LEN},
     Error, MAX_FILE_CHUNK_LEN, MAX_MESSAGE_LEN, MAX_TOPIC_LEN,
 };
@@ -27,7 +27,7 @@ use static_cell::StaticCell;
 use crate::{
     drivers::{quectel::commands::mqtt::urc::MQTTReceive, ATClient},
     monotonic_time::{delay_ms, FutureTimeout},
-    mqtt::{Event, FileError, MqttClient, Will},
+    mqtt::{Event, FileError, GnssError, MqttClient, Will},
     traits::{BaudRateControl, ErrorReport, Split, Suspend, Suspendable},
 };
 
@@ -147,6 +147,9 @@ pub struct Quectel<W: Write, R: Read + ErrorReport + Suspendable, V: ModemVarian
 
     /// URC that needs to be handled
     urc: Option<Urc>,
+
+    /// GNSS search budget per session, see [Quectel::enable_gnss]
+    gnss_search_s: Option<u16>,
 }
 
 /// Progress of a file download that is fetched in slices via HTTP range requests.
@@ -250,6 +253,7 @@ where
                 file_handle: None,
                 download: None,
                 urc: None,
+                gnss_search_s: None,
             },
             QuectelBackend { ingress, rx },
         )
@@ -515,6 +519,13 @@ where
         let cmd = general::GetSignalQuality;
         let resp = self.client.send(&cmd).await.map_err(Error::Client)?;
         Ok(resp.signal_strength())
+    }
+
+    /// Search for a GNSS fix for up to `search_s` in every network session.
+    ///
+    /// Ignored when the modem variant has no GNSS receiver.
+    pub fn enable_gnss(&mut self, search_s: u16) {
+        self.gnss_search_s = V::HAS_GNSS.then_some(search_s);
     }
 
     pub async fn get_serving_cell(&mut self) -> Result<Option<CellInfo>, Error<atat::Error>> {
@@ -2007,6 +2018,48 @@ where
 
     async fn signal_quality(&mut self) -> Option<i16> {
         self.get_signal_quality().await.ok()
+    }
+
+    fn gnss_search_s(&self) -> Option<u16> {
+        self.gnss_search_s
+    }
+
+    async fn gnss_start(&mut self) -> Result<(), GnssError> {
+        if self.gnss_search_s.is_none() {
+            return Err(GnssError::Unsupported);
+        }
+        // AT+QGPS=1 fails when GNSS is already on, and that error code is not
+        // distinguishable here, so check the state first.
+        let state = self.client.send(&gnss::GetGnssState).await.map_err(|e| {
+            log::warn!(target: "quectel", "GNSS state: {e:?}");
+            GnssError::Modem
+        })?;
+        if state.on == 1 {
+            return Ok(());
+        }
+        self.client.send(&gnss::GnssStart).await.map_err(|e| {
+            log::warn!(target: "quectel", "GNSS start: {e:?}");
+            GnssError::Modem
+        })?;
+        Ok(())
+    }
+
+    async fn gnss_fix(&mut self) -> Result<Option<GnssFix>, GnssError> {
+        match self.client.send(&gnss::GetGnssLocation).await {
+            Ok(location) => Ok(Some(location.fix)),
+            // 516 "not fixed now" is the expected one. atat maps it to Unknown.
+            Err(atat::Error::CmeError(_)) => Ok(None),
+            Err(e) => {
+                log::warn!(target: "quectel", "GNSS location: {e:?}");
+                Err(GnssError::Modem)
+            }
+        }
+    }
+
+    async fn gnss_stop(&mut self) {
+        if let Err(e) = self.client.send(&gnss::GnssEnd).await {
+            log::debug!(target: "quectel", "GNSS end: {e:?}");
+        }
     }
 
     async fn cell_info(&mut self) -> Option<CellInfo> {

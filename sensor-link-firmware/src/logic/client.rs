@@ -11,12 +11,12 @@ use crate::{
         NetworkStatus, SendChannel,
     },
     meta::DeviceMetaDataProvider,
-    mqtt::{Event, FileError, Message, MqttClient, Will},
+    mqtt::{Event, FileError, GnssError, Message, MqttClient, Will},
     serialize::{internal::Internal, Sendable},
 };
 use sensor_link_protocol::{
     cmd,
-    event::CellInfo,
+    event::{CellInfo, GnssFix},
     fwupdate::{self, FWChunk, FWStatus, FWUpdateURL, B64_ENCODED_CHUNK_SIZE, FW_CHUNK_SIZE},
     info::DeviceInfoV3,
     online::Online,
@@ -445,5 +445,21 @@ impl<M: MqttClient, S: NetworkStatus> NetworkClient for crate::logic::client::Cl
 
     async fn cell_info(&mut self) -> Option<CellInfo> {
         self.driver.cell_info().await
+    }
+
+    fn gnss_search_s(&self) -> Option<u16> {
+        self.driver.gnss_search_s()
+    }
+
+    async fn gnss_start(&mut self) -> Result<(), GnssError> {
+        self.driver.gnss_start().await
+    }
+
+    async fn gnss_fix(&mut self) -> Result<Option<GnssFix>, GnssError> {
+        self.driver.gnss_fix().await
+    }
+
+    async fn gnss_stop(&mut self) {
+        self.driver.gnss_stop().await
     }
 }

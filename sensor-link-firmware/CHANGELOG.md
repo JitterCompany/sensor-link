@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- GNSS (#43): the Quectel driver can search for a GNSS fix in every network session.
+  It is off by default: `Quectel::enable_gnss(search_s)` turns it on, and only
+  variants with `HAS_GNSS` (the EC2x on miniPCIe) support it. The network task starts
+  the search right after connecting and polls `AT+QGPSLOC=2` every second, so the
+  session stays open until a fix or until `search_s` has passed. The result goes to
+  the orchestrator as `Signal::Gnss(GnssReport)`.
+- Protocol: new `Event::Gnss(GnssReport)` with the search time and, if found, the fix
+  (lat, lon, alt, HDOP, satellites). Breaking for exhaustive matches on `Event`.
+  Servers built against an older protocol crate fail to parse this event and drop it.
+- `MqttClient` and `NetworkClient` have `gnss_search_s()`, `gnss_start()`,
+  `gnss_fix()` and `gnss_stop()`, with defaults that report no GNSS.
 - Protocol: `DeviceInfoV3` has an optional `sim_iccid`. The Quectel driver reads it
   with `AT+QCCID`, so the server no longer depends on a manually entered SIM ID.
   Old servers ignore the field and old firmware omits it. Breaking: struct literals

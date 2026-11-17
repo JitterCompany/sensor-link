@@ -3,10 +3,18 @@ use core::fmt::Debug;
 use heapless::{String, Vec};
 
 use sensor_link_protocol::{
-    event::CellInfo,
+    event::{CellInfo, GnssFix},
     info::{Iccid, VersionString},
     Error, MAX_FILE_CHUNK_LEN, MAX_MESSAGE_LEN, MAX_ONLINE_PAYLOAD_LEN, MAX_TOPIC_LEN,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GnssError {
+    /// No GNSS receiver, or GNSS is not enabled for this build
+    Unsupported,
+    /// The modem returned an error
+    Modem,
+}
 
 /// Events the network client implementation can return
 // `ReceivedMessage` carries inline topic/payload buffers, which dwarf the empty `Disconnected`.
@@ -109,6 +117,26 @@ pub trait MqttClient {
     async fn cell_info(&mut self) -> Option<CellInfo> {
         None
     }
+
+    /// Time budget for a GNSS search in each network session.
+    ///
+    /// `None` (the default) means no GNSS search.
+    fn gnss_search_s(&self) -> Option<u16> {
+        None
+    }
+
+    /// Turn the GNSS receiver on. Already on counts as success.
+    async fn gnss_start(&mut self) -> Result<(), GnssError> {
+        Err(GnssError::Unsupported)
+    }
+
+    /// Current position, `Ok(None)` while there is no fix yet.
+    async fn gnss_fix(&mut self) -> Result<Option<GnssFix>, GnssError> {
+        Err(GnssError::Unsupported)
+    }
+
+    /// Turn the GNSS receiver off.
+    async fn gnss_stop(&mut self) {}
 
     /// ICCID of the SIM, if it can be read.
     ///

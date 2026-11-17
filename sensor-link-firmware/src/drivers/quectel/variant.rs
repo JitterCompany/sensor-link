@@ -19,6 +19,9 @@ pub trait ModemVariant {
     /// and the driver re-negotiates after every power-on.
     const PERSIST_BAUDRATE: bool;
 
+    /// The modem has a GNSS receiver (AT+QGPS).
+    const HAS_GNSS: bool = false;
+
     /// Best-effort check whether the modem is already powered.
     fn is_powered(&mut self) -> bool;
 
@@ -49,6 +52,7 @@ impl<EP: StatefulOutputPin, RP: OutputPin> ModemVariant for MiniPcie<EP, RP> {
     const MODEL_PREFIX: &'static str = "ec2";
     const TARGET_BAUDRATE: Option<u32> = Some(3_000_000);
     const PERSIST_BAUDRATE: bool = true;
+    const HAS_GNSS: bool = true;
 
     fn is_powered(&mut self) -> bool {
         self.enable.is_set_high().unwrap_or(false)

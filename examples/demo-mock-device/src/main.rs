@@ -77,11 +77,14 @@ struct Args {
     no_interactive: bool,
 }
 
-async fn read_line() -> String {
+/// `None` at end of input, e.g. when stdin is not a terminal
+async fn read_line() -> Option<String> {
     tokio::task::spawn_blocking(|| {
         let mut line = String::new();
-        std::io::stdin().read_line(&mut line).unwrap();
-        line
+        match std::io::stdin().read_line(&mut line) {
+            Ok(0) | Err(_) => None,
+            Ok(_) => Some(line),
+        }
     })
     .await
     .unwrap()
@@ -148,7 +151,10 @@ async fn main() {
             println!();
             print!("> ");
             stdout().flush().unwrap();
-            let line = read_line().await;
+            let Some(line) = read_line().await else {
+                println!("End of input, the devices keep running");
+                break;
+            };
             let parts: Vec<&str> = line.split_whitespace().collect();
             let signal: fn() -> Signal = match parts.as_slice() {
                 ["start"] => || Signal::Common(CommonSignal::Command(Cmd::Start, CmdSource::RTT)),

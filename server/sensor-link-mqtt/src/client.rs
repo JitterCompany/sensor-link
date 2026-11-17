@@ -22,7 +22,7 @@ use rumqttc::{
     Transport,
 };
 use sensor_link_server_core::{
-    event::SendStatus,
+    event::{SendStatus, SmsProvider},
     sensor_server_log::SensorServerLog,
     store_traits::{DeviceStore, EventStore},
 };
@@ -48,7 +48,8 @@ pub struct MqttHooks {
 }
 
 use crate::{
-    metrics, ControlMessageIn, ControlMessageOut, DeviceControlIn, DeviceControlOut, MqttDataType,
+    metrics::{self, SmsOutcome},
+    ControlMessageIn, ControlMessageOut, DeviceControlIn, DeviceControlOut, MqttDataType,
     ParsedMqttIn, ParsedMqttInFor, ProcessingIn, ProcessingMessage, SystemMessageIn, TopicCodec,
 };
 
@@ -542,9 +543,12 @@ where
         }
         ParsedMqttIn::System(SystemMessageIn::SMSResponse(sms_response)) => {
             if sms_response.result == SMSResult::Success {
+                metrics::count_sms(SmsProvider::JitterGateway, SmsOutcome::Sent, 1);
                 if let Err(err) = db.event_mark_sent(&sms_response.id, SendStatus::Sent).await {
                     tracing::error!("Failed to mark event as sent: {}", err);
                 }
+            } else {
+                metrics::count_sms(SmsProvider::JitterGateway, SmsOutcome::Failed, 1);
             }
             return Ok(());
         }

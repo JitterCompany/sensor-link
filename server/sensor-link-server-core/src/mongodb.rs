@@ -24,7 +24,7 @@ use crate::{
     data_kind::DataKind,
     data_set::{DataSet, NewDataSet},
     device::{Device, DeviceExt, DeviceFieldType, DeviceQuery, DeviceStatusLike},
-    event::{EventQuery, EventType, EventsWithStats, NewEvent, SendStatus},
+    event::{EventQuery, EventType, EventsWithStats, NewEvent, SendStatus, SmsProvider},
     firmware::{Firmware, NewFirmware},
     materialized_views::MatViewMsg,
     sensor_data::{MPSensorData, MPSensorDataChannels, SensorData, TimeResolution},
@@ -2182,6 +2182,29 @@ where
             return Err(anyhow::anyhow!(
                 "event_update_code: Unexpected modified_count: {}",
                 result.modified_count
+            ));
+        }
+        Ok(())
+    }
+
+    async fn event_set_sms_provider(
+        &self,
+        event_id: &DataStoreId,
+        provider: SmsProvider,
+    ) -> anyhow::Result<()> {
+        let id = ObjectId::parse_str(event_id)?;
+        let collection = self.collection::<bson::Document>(EVENTS_COLL_NAME);
+        let result = collection
+            .update_one(
+                doc! { "_id": id },
+                doc! { "$set": { "sms_provider": provider.as_str() } },
+            )
+            .await?;
+
+        if result.matched_count != 1 {
+            return Err(anyhow::anyhow!(
+                "event_set_sms_provider: Unexpected matched_count: {}",
+                result.matched_count
             ));
         }
         Ok(())

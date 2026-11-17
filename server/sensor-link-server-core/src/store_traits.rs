@@ -10,7 +10,7 @@ use crate::{
     data_kind::DataKind,
     data_set::{DataSet, NewDataSet},
     device::{Device, DeviceExt, DeviceFieldType, DeviceQuery, DeviceStatusLike},
-    event::{EventQuery, EventType, EventsWithStats, NewEvent, SendStatus},
+    event::{EventQuery, EventType, EventsWithStats, NewEvent, SendStatus, SmsProvider},
     firmware::{Firmware, NewFirmware},
     sensor_data::{MPSensorData, SensorData, TimeResolution},
     sensor_server_log::SensorServerLog,
@@ -427,6 +427,12 @@ pub trait EventStore: Send + Sync + 'static {
         event_id: &DataStoreId,
         event_code: u32,
         event_type: EventType,
+    ) -> anyhow::Result<()>;
+
+    async fn event_set_sms_provider(
+        &self,
+        event_id: &DataStoreId,
+        provider: SmsProvider,
     ) -> anyhow::Result<()>;
 }
 

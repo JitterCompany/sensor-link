@@ -8,3 +8,4 @@ deploy/firmwares/
 deploy/mosquitto/certs/
 deploy/mosquitto/data/
 deploy/traefik/acme.json
+__pycache__/

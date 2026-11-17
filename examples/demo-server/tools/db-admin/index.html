@@ -500,7 +500,7 @@ const PLOTS = [
   ]},
 ];
 
-const ONLINE_FILL = '#d8f3e3';
+const ONLINE_FILL = '#a8dfbd';
 const DROP_COLOR = '#d64545';
 
 // Above this the SVG gets heavy without showing more: an hour of samples is far
@@ -695,7 +695,7 @@ function renderCharts() {
   // I2C fails, is reduced to one line rather than an empty axis.
   const domain = measurementRange;
   const connectivity = `<div class="legend">
-    <span><span class="swatch" style="background:${ONLINE_FILL};outline:1px solid #8fd1ab"></span>online</span>
+    <span><span class="swatch" style="background:${ONLINE_FILL}"></span>online</span>
     <span><span class="swatch" style="background:${DROP_COLOR}"></span>connection dropped</span>
   </div>`;
   $('charts').innerHTML = connectivity + PLOTS.map(plot => {

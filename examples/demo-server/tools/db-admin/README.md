@@ -74,7 +74,8 @@ sets `marked_for_update` back to `NULL`.
 **Measurements.** Pick a device in the Measurements panel, or click its id in
 the devices table.
 
-- Three plots: board temperature (°C), VBUS and VSYS (V), IBUS (A).
+- Four plots: board temperature (°C), VBUS and VSYS (V), IBUS (A), power
+  (VBUS × IBUS, W).
 - The range is the last 1, 3, 12 or 24 hours, or a calendar day or week. ◀ and
   ▶ step one period, **Now** returns to the current one.
 - Ranges over an hour are averaged into time buckets on the server, to about

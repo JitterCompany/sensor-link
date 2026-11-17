@@ -64,7 +64,7 @@
     margin-bottom: 14px;
   }
   .bar label { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-  #sync-interval { width: 8em; }
+  #sync-interval { width: 11em; }
   select, button, input[type=search], input[type=datetime-local], input[type=date] {
     font: inherit;
     padding: 6px 10px;
@@ -246,8 +246,7 @@ function render() {
       <td>${esc(fmtEpochMs(d.last_contact))}</td>
       <td class="mono">${d.sync_interval_s == null
         ? '<span class="muted">(no settings)</span>'
-        : d.sync_interval_s === 0 ? 'always online'
-        : esc(d.sync_interval_s + ' s')}</td>
+        : esc(fmtInterval(d.sync_interval_s))}</td>
       <td class="mono">${d.data_rate == null
         ? '<span class="muted">(no settings)</span>'
         : esc(d.data_rate)}</td>
@@ -344,6 +343,8 @@ async function assign(firmwareId) {
   }
 }
 
+const fmtInterval = s => s === 0 ? 'always online' : `${s} s`;
+
 // Same bounds as the CHECK on device_settings.sync_interval_s.
 const MIN_SYNC_INTERVAL_S = 180;
 const MAX_SYNC_INTERVAL_S = 14400;
@@ -368,9 +369,9 @@ async function applySyncInterval() {
   const picked = devices.filter(d => selected.has(d.id));
   const fresh = picked.filter(d => d.sync_interval_s == null);
 
-  if (!confirm(`Set the sync interval to ${seconds} s for ${ids.length} device(s)?\n\n` +
+  if (!confirm(`Set the sync interval to ${fmtInterval(seconds)} for ${ids.length} device(s)?\n\n` +
       picked.map(d => `· ${d.id}: ${
-        d.sync_interval_s == null ? 'no settings yet' : d.sync_interval_s + ' s'} → ${seconds} s`).join('\n') +
+        d.sync_interval_s == null ? 'no settings yet' : fmtInterval(d.sync_interval_s)} → ${fmtInterval(seconds)}`).join('\n') +
       (fresh.length ? `\n\n${fresh.length} device(s) have no settings row yet; one is created with the default data rate.` : ''))) return;
 
   setStatus('applying…');

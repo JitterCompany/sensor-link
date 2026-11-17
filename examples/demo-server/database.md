@@ -74,6 +74,7 @@ When the device reports the new `version`, the server clears
 | Settings applied? | `devices.config_confirmed` |
 | Firmware version | `devices.version` |
 | Boots, starts and stops, sensor errors, button presses | `device_events` |
+| Online history, dropped connections | `device_online_events` |
 
 ## Tables
 
@@ -102,6 +103,20 @@ Events published by devices on the MQTT events topic (boot, start/stop, sensor e
 | `received_at` | `timestamp with time zone` | no | When the server stored the event |
 
 - `PRIMARY KEY (device_id, "time", event)`
+
+### device_online_events
+
+Online and offline transitions per device, from the MQTT online topic and the broker's last will; one row per message.
+
+| Column | Type | Nullable | Description |
+|---|---|---|---|
+| `time` | `timestamp with time zone` | no | When the server received the message (UTC). The offline last will carries no device timestamp |
+| `device_id` | `text` | no | Device the message is about; joins to devices.id |
+| `online` | `boolean` | no | true: the device connected; false: it disconnected |
+| `graceful` | `boolean` | no | false for an offline row from the broker's last will: the connection dropped without a clean disconnect. Always true for online rows |
+
+- `PRIMARY KEY (device_id, "time")`
+- Hypertable partitioned on `time`; compressed after 7 days (segmented by `device_id`); retention: dropped after 1 year
 
 ### device_settings
 

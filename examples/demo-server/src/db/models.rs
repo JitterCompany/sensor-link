@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use demo_protocol::{
     data::std::Data,
+    online::Online,
     settings::{DataRate, Settings},
     status::{DeviceStatus as ProtocolDeviceStatus, Status as BaseStatus},
     DeviceType, EventPayload,
@@ -14,8 +15,8 @@ use sensor_link_server_core::{
 use serde::{de::DeserializeOwned, Serialize};
 
 use super::schema::{
-    device_events, device_settings, device_status, devices, firmware, measurement_data,
-    sensor_server_log,
+    device_events, device_online_events, device_settings, device_status, devices, firmware,
+    measurement_data, sensor_server_log,
 };
 use crate::{
     device::{Firmware, NewFirmware},
@@ -527,6 +528,32 @@ impl From<SensorServerLogRow> for SensorServerLog {
     }
 }
 
+/// Row model for the `device_online_events` table: one row per online or
+/// offline message.
+#[derive(Debug, Clone, PartialEq, Queryable, Selectable, Insertable)]
+#[diesel(table_name = device_online_events)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub(crate) struct DeviceOnlineEventRow {
+    pub time: DateTime<Utc>,
+    pub device_id: String,
+    pub online: bool,
+    pub graceful: bool,
+}
+
+impl DeviceOnlineEventRow {
+    /// Stamped with the receive time rather than the payload's `since`: the
+    /// offline last will has no timestamp, and the device clock may not be
+    /// set yet when it comes online.
+    pub fn from_payload(device_id: &str, payload: &Online, received_at: DateTime<Utc>) -> Self {
+        Self {
+            time: received_at,
+            device_id: device_id.to_owned(),
+            online: payload.since().is_some(),
+            graceful: !payload.ungraceful_offline(),
+        }
+    }
+}
+
 /// Row model for the `device_events` table: one row per received event.
 #[derive(Debug, Clone, PartialEq, Queryable, Selectable, Insertable)]
 #[diesel(table_name = device_events)]
@@ -570,6 +597,41 @@ impl DeviceEventRow {
             message,
             received_at: Utc::now(),
         })
+    }
+}
+
+#[cfg(test)]
+mod device_online_event_tests {
+    use demo_protocol::Milliseconds;
+
+    use super::*;
+
+    fn row(payload: Online) -> DeviceOnlineEventRow {
+        let received_at = DateTime::from_timestamp_millis(1_727_000_000_000).unwrap();
+        DeviceOnlineEventRow::from_payload("DEMO-0002", &payload, received_at)
+    }
+
+    #[test]
+    fn online_is_stamped_with_the_receive_time() {
+        let row = row(Online::yes(Milliseconds(5)));
+        assert!(row.online);
+        assert!(row.graceful);
+        assert_eq!(row.time.timestamp_millis(), 1_727_000_000_000);
+        assert_eq!(row.device_id, "DEMO-0002");
+    }
+
+    #[test]
+    fn clean_disconnect_is_graceful() {
+        let row = row(Online::no());
+        assert!(!row.online);
+        assert!(row.graceful);
+    }
+
+    #[test]
+    fn last_will_is_not_graceful() {
+        let row = row(Online::will());
+        assert!(!row.online);
+        assert!(!row.graceful);
     }
 }
 

@@ -14,7 +14,7 @@ use crate::{
     db::TimescaleDb,
     device_status::DeviceStatus,
     mqtt::{ControlMessageIn, ControlMessageOut},
-    AppDeviceStore, DeviceEventStore,
+    AppDeviceStore, DeviceEventStore, DeviceOnlineEventStore,
 };
 
 // Type aliases binding the demo concrete types to generic sensor-link-server-core structs
@@ -114,6 +114,12 @@ pub async fn process_device_online(
         tracing::debug!("Device {} is offline (ungraceful)", device_id);
     } else {
         tracing::debug!("Device {} is offline", device_id);
+    }
+
+    // The history is for plotting only: losing a row must not stop the
+    // devices table from showing the current state.
+    if let Err(err) = db.insert_online_event(device_id, &payload).await {
+        tracing::error!("Error storing online event of {device_id}: {err:?}");
     }
 
     let ts = payload

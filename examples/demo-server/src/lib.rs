@@ -1,5 +1,7 @@
 use async_trait::async_trait;
-use demo_protocol::{data::std::Data, settings::Settings, DeviceType, EventPayload};
+use demo_protocol::{
+    data::std::Data, online::Online, settings::Settings, DeviceType, EventPayload,
+};
 use sensor_link_server_core::store_traits::{DeviceStore, EventStore, Result};
 
 mod data_types;
@@ -108,6 +110,15 @@ pub trait MeasurementDataStore: Send + Sync {
     /// Samples already stored for that device and timestamp are left untouched,
     /// so a device re-sending a set of samples does not fail the insert.
     async fn insert_measurement_data(&self, device_id: &str, data: &Data) -> Result<()>;
+}
+
+/// Storage for the online and offline transitions of devices.
+#[async_trait]
+pub trait DeviceOnlineEventStore: Send + Sync {
+    /// Store an online or offline message for `device_id`, received now.
+    ///
+    /// A second message for the same device and timestamp is dropped.
+    async fn insert_online_event(&self, device_id: &str, payload: &Online) -> Result<()>;
 }
 
 /// Storage for the events devices publish on their `events` topic.

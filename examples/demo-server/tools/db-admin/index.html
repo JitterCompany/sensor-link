@@ -470,7 +470,13 @@ const PLOTS = [
   { title: 'Input current (A)', unit: ' A', series: [
     { key: 'ibus', color: '#ea8c00' },
   ]},
+  { title: 'Power (W)', unit: ' W', series: [
+    { key: 'power', color: '#7c3aed' },
+  ]},
 ];
+
+const ONLINE_FILL = '#d8f3e3';
+const DROP_COLOR = '#d64545';
 
 // Above this the SVG gets heavy without showing more: an hour of samples is far
 // wider than the pixels available for it.
@@ -480,6 +486,8 @@ const SVG_W = 900, SVG_H = 240;
 const PAD = { top: 10, right: 12, bottom: 26, left: 52 };
 
 let measurementRows = [];
+// From /api/online: the state at the start of the range and the transitions in it.
+let onlineHistory = { initial: null, rows: [] };
 // [start, end] in ms of the loaded range: the time axis of every plot.
 let measurementRange = [0, 0];
 
@@ -561,6 +569,25 @@ const fmtTick = ms => $('chart-window').value === 'week'
 
 /** `[t0, t1]` is the time axis, passed in so every plot and the state band
  *  share one: decimation does not keep a plot's first and last row. */
+/** Online periods within [t0, t1] as [from, to] pairs, and the times the
+ *  connection dropped (offline from the broker's last will). An unknown state
+ *  at the start is drawn as offline. */
+function onlineSpans([t0, t1]) {
+  const spans = [], drops = [];
+  let since = onlineHistory.initial ? t0 : null;
+  for (const r of onlineHistory.rows) {
+    if (r.online) {
+      if (since == null) since = r.ts;
+    } else {
+      if (since != null) spans.push([since, r.ts]);
+      since = null;
+      if (!r.graceful) drops.push(r.ts);
+    }
+  }
+  if (since != null) spans.push([since, Math.min(t1, Date.now())]);
+  return { spans, drops };
+}
+
 function plotSvg(rows, plot, [t0, t1]) {
   const keys = plot.series.map(s => s.key);
   const values = rows.flatMap(r => keys.map(k => r[k])).filter(v => v != null);
@@ -581,6 +608,15 @@ function plotSvg(rows, plot, [t0, t1]) {
 
   const xTicks = xAxisSvg(timeTicks(t0, t1, 6), x, PAD.top, SVG_H - PAD.bottom, SVG_H - 8);
 
+  // Behind the traces, so a current spike can be read against the connection.
+  const { spans, drops } = onlineSpans([t0, t1]);
+  const plotH = SVG_H - PAD.top - PAD.bottom;
+  const online = spans.map(([a, b]) =>
+    `<rect x="${x(a).toFixed(1)}" y="${PAD.top}" width="${Math.max(1, x(b) - x(a)).toFixed(1)}"
+      height="${plotH}" fill="${ONLINE_FILL}"/>`).join('') +
+    drops.map(t => `<line x1="${x(t).toFixed(1)}" x2="${x(t).toFixed(1)}" y1="${PAD.top}"
+      y2="${SVG_H - PAD.bottom}" stroke="${DROP_COLOR}" stroke-dasharray="3 3"/>`).join('');
+
   // One path per channel, restarted at every NULL so gaps stay gaps.
   const paths = plot.series.map(s => {
     let d = '', pen = false;
@@ -595,7 +631,7 @@ function plotSvg(rows, plot, [t0, t1]) {
   }).join('');
 
   return `<svg viewBox="0 0 ${SVG_W} ${SVG_H}" role="img" aria-label="${esc(plot.title)}">
-    ${yTicks}${xTicks}
+    ${online}${yTicks}${xTicks}
     <line x1="${PAD.left}" x2="${PAD.left}" y1="${PAD.top}" y2="${SVG_H - PAD.bottom}" stroke="#c4cad2"/>
     <line x1="${PAD.left}" x2="${SVG_W - PAD.right}" y1="${SVG_H - PAD.bottom}" y2="${SVG_H - PAD.bottom}" stroke="#c4cad2"/>
     ${paths}
@@ -622,7 +658,11 @@ function renderCharts() {
   // A plot whose every channel is NULL, e.g. the charger channels while its
   // I2C fails, is reduced to one line rather than an empty axis.
   const domain = measurementRange;
-  $('charts').innerHTML = PLOTS.map(plot => {
+  const connectivity = `<div class="legend">
+    <span><span class="swatch" style="background:${ONLINE_FILL};outline:1px solid #8fd1ab"></span>online</span>
+    <span><span class="swatch" style="background:${DROP_COLOR}"></span>connection dropped</span>
+  </div>`;
+  $('charts').innerHTML = connectivity + PLOTS.map(plot => {
     const svg = plotSvg(rows, plot, domain);
     if (!svg) return `<p class="muted">${esc(plot.title)}: no data</p>`;
     return `<div class="chart">
@@ -682,18 +722,23 @@ function showRangeInput() {
 async function loadMeasurements() {
   const deviceId = $('chart-device').value;
   measurementRows = [];
+  onlineHistory = { initial: null, rows: [] };
   if (!deviceId) { setChartStatus(''); renderCharts(); return; }
 
   setChartStatus('loading…');
   try {
     const [start, end] = chartRange();
     measurementRange = [start.getTime(), end.getTime()];
-    const res = await fetch('/api/measurements?device_id=' + encodeURIComponent(deviceId) +
+    const range = 'device_id=' + encodeURIComponent(deviceId) +
       '&start=' + encodeURIComponent(start.toISOString()) +
-      '&end=' + encodeURIComponent(end.toISOString()));
+      '&end=' + encodeURIComponent(end.toISOString());
+    const [res, onlineRes] = await Promise.all(
+      [fetch('/api/measurements?' + range), fetch('/api/online?' + range)]);
     if (!res.ok) throw new Error(await res.text());
+    if (!onlineRes.ok) throw new Error(await onlineRes.text());
     const data = await res.json();
     measurementRows = data.rows;
+    onlineHistory = await onlineRes.json();
     setChartStatus(`${data.rows.length} sample(s)` +
       (data.bucket_s > 1 ? `, averaged per ${data.bucket_s} s` : '') +
       (data.truncated ? ' — truncated, showing the most recent' : ''));

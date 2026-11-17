@@ -11,7 +11,9 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use demo_protocol::{data::std::Data, settings::Settings, DeviceType, EventPayload};
+use demo_protocol::{
+    data::std::Data, online::Online, settings::Settings, DeviceType, EventPayload,
+};
 use diesel::{ExpressionMethods, JoinOnDsl, OptionalExtension, QueryDsl, SelectableHelper};
 use diesel_async::{
     async_connection_wrapper::AsyncConnectionWrapper,
@@ -33,13 +35,13 @@ use tokio::sync::watch;
 
 use crate::{
     db::schema::{
-        device_events::dsl as de, device_settings::dsl as dsett, device_status::dsl as ds,
-        devices::dsl as d, firmware::dsl as f, measurement_data::dsl as md,
-        sensor_server_log::dsl as ssl,
+        device_events::dsl as de, device_online_events::dsl as doe, device_settings::dsl as dsett,
+        device_status::dsl as ds, devices::dsl as d, firmware::dsl as f,
+        measurement_data::dsl as md, sensor_server_log::dsl as ssl,
     },
     device::{Firmware, NewFirmware},
     device_status::DeviceStatus,
-    DeviceEventStore, DeviceSettingsStore, MeasurementDataStore,
+    DeviceEventStore, DeviceOnlineEventStore, DeviceSettingsStore, MeasurementDataStore,
 };
 
 pub type TimescalePool = Pool<AsyncPgConnection>;
@@ -847,6 +849,22 @@ impl DeviceEventStore for TimescaleDb {
         diesel::insert_into(de::device_events)
             .values(&row)
             .on_conflict((de::device_id, de::time, de::event))
+            .do_nothing()
+            .execute(&mut conn)
+            .await
+            .map_err(write_err)?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl DeviceOnlineEventStore for TimescaleDb {
+    async fn insert_online_event(&self, device_id: &str, payload: &Online) -> Result<()> {
+        let row = models::DeviceOnlineEventRow::from_payload(device_id, payload, Utc::now());
+        let mut conn = self.pool.get().await.map_err(db_err)?;
+        diesel::insert_into(doe::device_online_events)
+            .values(&row)
+            .on_conflict((doe::device_id, doe::time))
             .do_nothing()
             .execute(&mut conn)
             .await

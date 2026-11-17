@@ -44,6 +44,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    device_online_events (device_id, time) {
+        time -> Timestamptz,
+        device_id -> Text,
+        online -> Bool,
+        graceful -> Bool,
+    }
+}
+
+diesel::table! {
     sensor_server_log (time, sensor_id) {
         time -> Timestamptz,
         sensor_id -> Text,

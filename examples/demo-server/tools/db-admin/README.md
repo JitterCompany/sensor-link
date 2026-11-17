@@ -6,7 +6,9 @@ Local-only web page for the demo-server database:
 - set the sync interval and data rate (`device_settings`)
 - queue a command: Start, Stop, Reboot or Blink (`devices.command`)
 - assign a firmware update (`devices.marked_for_update`)
-- plot a device's `measurement_data` and list its `device_events`
+- plot a device's `measurement_data`, with its power (VBUS × IBUS) and the
+  periods it was online (`device_online_events`) shaded behind every chart
+- list a device's `device_events`
 
 | | |
 |---|---|
@@ -89,6 +91,7 @@ the devices table.
 | `GET /` | the page |
 | `GET /api/overview` | `{ devices: [...], firmware: [...], data_rates: [{ value, label }] }` |
 | `GET /api/measurements?device_id=…&start=…&end=…` | samples from `start` up to `end` (ISO 8601 with zone, at most 8 days apart): `{ device_id, start, end, bucket_s, channels, truncated, rows: [{ ts, fs, …channels }] }`, oldest first, `ts` in epoch ms |
+| `GET /api/online?device_id=…&start=…&end=…` | `{ device_id, initial, truncated, rows: [{ ts, online, graceful }] }`, oldest first; `initial` is the state at `start`, `null` when unknown |
 | `GET /api/events?device_id=…` | `{ device_id, truncated, events: [{ ts, received_at, event, message }] }`, newest first |
 | `POST /api/assign` | `{ device_ids: [...], firmware_id: "…" \| null }` → `{ updated: N }` |
 | `POST /api/sync-interval` | `{ device_ids: [...], sync_interval_s: N }` → `{ updated: N }`, `N` is 0 or in `180 … 14400` |

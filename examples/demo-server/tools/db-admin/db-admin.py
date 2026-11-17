@@ -200,7 +200,10 @@ def measurements(device_id, start, end):
         )
     bucket_s = max(1, int(span_s) // MEASUREMENT_TARGET_POINTS)
 
+    # Power is averaged per sample rather than computed from the averages, so
+    # a short burst of current at high voltage is not diluted.
     channels = ", ".join(f"avg({c}) AS {c}" for c in MEASUREMENT_CHANNELS)
+    channels += ", avg(vbus * ibus) AS power"
     rows = query_json(f"""
         SELECT * FROM (
             SELECT extract(epoch FROM time_bucket(make_interval(secs => {bucket_s}), time, {timestamptz_sql(start_t)})) * 1000 AS ts,
@@ -221,7 +224,7 @@ def measurements(device_id, start, end):
         "start": start_t.isoformat(),
         "end": end_t.isoformat(),
         "bucket_s": bucket_s,
-        "channels": list(MEASUREMENT_CHANNELS),
+        "channels": [*MEASUREMENT_CHANNELS, "power"],
         "truncated": len(rows) >= MEASUREMENT_ROW_LIMIT,
         "rows": rows,
     }
@@ -229,6 +232,43 @@ def measurements(device_id, start, end):
 
 # Newest events listed per device.
 EVENTS_ROW_LIMIT = 200
+
+# Two rows per sync, so even a week at the shortest interval stays far below.
+ONLINE_ROW_LIMIT = 10000
+
+
+def online_events(device_id, start, end):
+    """Return one device's online/offline transitions from `start` up to `end`.
+
+    `initial` is the state at `start`, from the last row before it: null when
+    there is none, so the graph does not invent a state. Times are epoch ms.
+    """
+    if not ID_RE.match(str(device_id)):
+        raise SqlError(f"invalid device id {device_id!r}")
+    start_t, end_t = parse_time(start, "start"), parse_time(end, "end")
+    device = sql_literal(device_id)
+    initial = query_json(f"""
+        SELECT online
+        FROM device_online_events
+        WHERE device_id = {device} AND time < {timestamptz_sql(start_t)}
+        ORDER BY time DESC
+        LIMIT 1
+    """)
+    rows = query_json(f"""
+        SELECT extract(epoch FROM time) * 1000 AS ts, online, graceful
+        FROM device_online_events
+        WHERE device_id = {device}
+          AND time >= {timestamptz_sql(start_t)}
+          AND time < {timestamptz_sql(end_t)}
+        ORDER BY time
+        LIMIT {ONLINE_ROW_LIMIT}
+    """)
+    return {
+        "device_id": device_id,
+        "initial": initial[0]["online"] if initial else None,
+        "truncated": len(rows) >= ONLINE_ROW_LIMIT,
+        "rows": rows,
+    }
 
 
 def device_events(device_id):
@@ -421,6 +461,15 @@ class Handler(BaseHTTPRequestHandler):
             end = params.get("end", [""])[0]
             try:
                 self._json(200, measurements(device_id, start, end))
+            except SqlError as err:
+                self._send(500, str(err), "text/plain; charset=utf-8")
+        elif path == "/api/online":
+            params = parse_qs(query)
+            device_id = params.get("device_id", [""])[0]
+            start = params.get("start", [""])[0]
+            end = params.get("end", [""])[0]
+            try:
+                self._json(200, online_events(device_id, start, end))
             except SqlError as err:
                 self._send(500, str(err), "text/plain; charset=utf-8")
         elif path == "/api/events":

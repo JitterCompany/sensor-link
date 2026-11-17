@@ -197,11 +197,13 @@ impl mqtt::MqttClient for Mqtt {
         // Flush internal events
         while self.rx.try_recv().is_ok() {}
 
+        // Not retained, like the modem driver: a retained will would stay on
+        // the broker and replay as a fresh drop on every server subscribe.
         let lastwill = LastWill::new(
             will.topic.as_str(),
             will.payload.as_str(),
             QoS::AtLeastOnce,
-            true,
+            false,
         );
         self.options.set_last_will(lastwill);
 

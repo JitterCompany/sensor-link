@@ -6,9 +6,9 @@ A docker compose stack for one host:
 |---|---|---|
 | `mosquitto` | MQTT broker, mTLS + ACL | `8883` |
 | `timescaledb` | database | Docker network only |
-| `demo-server` | the server binary, run in a plain Ubuntu image | via Traefik, `https://<host>/api/v1/` |
-| `firmware-files` | nginx serving the signed firmware images | via Traefik, `https://<host>/fw/` |
-| `traefik` | TLS termination with Let's Encrypt | `80`, `443` |
+| `demo-server` | the server binary, run in a plain Ubuntu image | `https://<host>/api/v1/`, via Traefik or a host proxy |
+| `firmware-files` | nginx serving the signed firmware images | `https://<host>/fw/`, via Traefik or a host proxy |
+| `traefik` | optional: TLS termination with Let's Encrypt | `80`, `443` |
 
 The host name lives in three places:
 
@@ -29,10 +29,33 @@ demo-server/demo-server.env    from demo-server.env.example
 demo-server/config/            ca.pem, demo-server.cert, demo-server.key
 mosquitto/certs/               ca.pem, broker.cert, broker.key
 firmwares/                     signed .bin.sig.b64 images
-traefik/acme.json              empty file, chmod 600
+traefik/acme.json              empty file, chmod 600 (Traefik only)
 ```
 
 Then `docker compose up -d`.
+
+## HTTP side: Traefik or a reverse proxy on the host
+
+The API and the firmware downloads need TLS. Pick one in `.env`:
+
+- `COMPOSE_PROFILES=traefik` and `ACME_EMAIL`: Traefik takes ports 80 and
+  443 and gets a Let's Encrypt certificate for `DEMO_HOST`.
+- Otherwise the server and the firmware files listen on
+  `127.0.0.1:$DEMO_HTTP_PORT` and `127.0.0.1:$DEMO_FIRMWARE_PORT`, and an
+  existing proxy forwards to them. For nginx, inside the `server` block for
+  `DEMO_HOST`:
+
+```nginx
+location /api/v1/ {
+    proxy_pass http://127.0.0.1:8087;
+}
+# The trailing slash strips /fw/: the files sit at the root of that server
+location /fw/ {
+    proxy_pass http://127.0.0.1:8088/;
+}
+```
+
+Either way MQTT is not proxied: Mosquitto terminates mTLS on 8883 itself.
 
 - Build the binary on a machine with the same glibc as `ubuntu:24.04`, or
   change the image. The `Demo release build` workflow builds it on

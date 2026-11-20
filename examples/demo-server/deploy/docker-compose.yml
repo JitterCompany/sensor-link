@@ -1,5 +1,7 @@
 # Demo production stack: Mosquitto (mTLS + ACL), TimescaleDB, the demo-server,
-# nginx serving the firmware images and Traefik in front of the HTTP side.
+# nginx serving the firmware images and, optionally, Traefik in front of the
+# HTTP side. Without Traefik a reverse proxy on the host forwards to the
+# localhost ports below (see README.md).
 # Secrets (.env, demo-server/demo-server.env) and certs live on the host only.
 # The host name and the Let's Encrypt email come from .env (DEMO_HOST, ACME_EMAIL).
 
@@ -50,6 +52,9 @@ services:
       # rows in the firmware table (see FIRMWARE_DIR in demo-server.env)
       - ./firmwares:/firmwares:ro
     command: ./demo-server/demo-server
+    # For a reverse proxy on the host; Traefik reaches it over proxy-network
+    ports:
+      - "127.0.0.1:${DEMO_HTTP_PORT:-8087}:8087"
     depends_on:
       - mosquitto
       - timescaledb
@@ -73,6 +78,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./firmwares:/usr/share/nginx/html:ro
+    ports:
+      - "127.0.0.1:${DEMO_FIRMWARE_PORT:-8088}:80"
     networks:
       - proxy-network
     labels:
@@ -88,8 +95,10 @@ services:
       - "traefik.docker.network=proxy-network"
     logging: *default-logging
 
+  # Only with COMPOSE_PROFILES=traefik in .env, when ports 80 and 443 are free
   traefik:
     image: traefik:v3.7
+    profiles: [traefik]
     restart: unless-stopped
     ports:
       - "80:80"
@@ -101,7 +110,7 @@ services:
       - --entryPoints.web.http.redirections.entryPoint.to=websecure
       - --entryPoints.web.http.redirections.entryPoint.scheme=https
       - --entryPoints.websecure.address=:443
-      - --certificatesResolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}
+      - --certificatesResolvers.letsencrypt.acme.email=${ACME_EMAIL:-}
       - --certificatesResolvers.letsencrypt.acme.storage=/acme.json
       - --certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=web
     volumes:

@@ -113,7 +113,7 @@ jobs:
       DATABASE_URL: postgres://demo:demo@localhost:5433/demo
     services:
       timescaledb:
-        image: timescale/timescaledb:latest-pg17
+        image: timescale/timescaledb:2.32.1-pg17
         env:
           POSTGRES_DB: demo
           POSTGRES_USER: demo

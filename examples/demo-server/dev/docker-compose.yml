@@ -7,14 +7,14 @@ name: demo-dev
 
 services:
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.1.4-alpine
     ports:
       - "1884:1883"
     volumes:
       - ./mosquitto-dev.conf:/mosquitto/config/mosquitto.conf:ro
 
   timescaledb:
-    image: timescale/timescaledb:latest-pg17
+    image: timescale/timescaledb:2.32.1-pg17
     ports:
       - "5433:5432"
     environment:
@@ -27,7 +27,7 @@ services:
   # Serves dev/firmwares at http://localhost:8089/fw/<file>, like the
   # firmware-files service in production.
   firmware-files:
-    image: nginx:alpine
+    image: nginx:1.31.9-alpine
     ports:
       - "8089:80"
     volumes:

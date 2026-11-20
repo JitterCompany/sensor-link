@@ -97,6 +97,12 @@ The certificate CN is the MQTT username and client id.
   nothing.
 - There is no revocation. A certificate stays valid until it expires. Add a
   CRL (mosquitto's `crlfile`) if you need to lock a device out.
+- `demo-server` and `admin` are matched by CN alone, so a device certificate
+  with one of those CNs would get their access. The provisioning tool
+  uppercases UIDs, and the match is case-sensitive, so its normal flow cannot
+  issue them. Anything else that signs with the same CA must refuse them, or
+  give the server and admin certificates their own CA (mosquitto accepts
+  several in `cafile`).
 
 Check the broker from outside:
 

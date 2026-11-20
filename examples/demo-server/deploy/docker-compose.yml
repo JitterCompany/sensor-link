@@ -13,7 +13,7 @@ x-logging: &default-logging
 
 services:
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.1.4-alpine
     restart: unless-stopped
     ports:
       - "8883:8883"
@@ -28,7 +28,7 @@ services:
 
   # Not published on the host: only the demo-server reaches it.
   timescaledb:
-    image: timescale/timescaledb:latest-pg17
+    image: timescale/timescaledb:2.32.1-pg17
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
@@ -74,7 +74,7 @@ services:
   # Serves the uploaded firmware images at https://<DEMO_HOST>/fw/<file>.
   # Read-only view of ./firmwares, which the signed .b64 images are copied into.
   firmware-files:
-    image: nginx:alpine
+    image: nginx:1.31.9-alpine
     restart: unless-stopped
     volumes:
       - ./firmwares:/usr/share/nginx/html:ro
@@ -97,7 +97,7 @@ services:
 
   # Only with COMPOSE_PROFILES=traefik in .env, when ports 80 and 443 are free
   traefik:
-    image: traefik:v3.7
+    image: traefik:v3.7.19
     profiles: [traefik]
     restart: unless-stopped
     ports:

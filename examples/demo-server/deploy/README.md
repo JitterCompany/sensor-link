@@ -34,6 +34,20 @@ traefik/acme.json              empty file, chmod 600 (Traefik only)
 
 Then `docker compose up -d`.
 
+- Build the binary on a machine with the same glibc as `ubuntu:24.04`, or
+  change the image. The `Demo release build` workflow builds it on
+  ubuntu-24.04. libpq is built in, so the image needs no extra packages.
+  An artifact download loses the executable bit: `chmod +x` it.
+- Mosquitto runs as uid 1883 and exits when it cannot read the broker key.
+  The certs are mounted read-only, so set the owner on the host:
+  `sudo chown 1883:1883 mosquitto/certs/broker.key mosquitto/demo.acl &&
+  sudo chmod 600 mosquitto/certs/broker.key mosquitto/demo.acl`. For the ACL
+  file it only silences a warning, for now.
+- Without membership of the `docker` group, run `docker compose` with
+  `sudo`. That group is root-equivalent on the host.
+- `POSTGRES_PASSWORD` is baked into the database volume on first start.
+  Rotating it later also needs an `ALTER USER`.
+
 ## HTTP side: Traefik or a reverse proxy on the host
 
 The API and the firmware downloads need TLS. Pick one in `.env`:
@@ -56,14 +70,6 @@ location /fw/ {
 ```
 
 Either way MQTT is not proxied: Mosquitto terminates mTLS on 8883 itself.
-
-- Build the binary on a machine with the same glibc as `ubuntu:24.04`, or
-  change the image. The `Demo release build` workflow builds it on
-  ubuntu-24.04. libpq is built in, so the image needs no extra packages.
-- The broker key must be readable by the mosquitto user in the container
-  (uid 1883): `chown 1883 broker.key && chmod 600 broker.key`.
-- `POSTGRES_PASSWORD` is baked into the database volume on first start.
-  Rotating it later also needs an `ALTER USER`.
 
 ## Certificates
 

@@ -106,8 +106,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo Deps
         uses: Swatinem/rust-cache@v2
+      # Reported on /api/v1/status
       - name: Build
-        run: cargo build --release -p demo-server
+        env:
+          BUILD_VERSION: ${{ inputs.version }}
+        run: |
+          export GIT_REV="$(git rev-parse --short=8 HEAD)"
+          cargo build --release -p demo-server
       - name: Package
         run: |
           mkdir -p dist

@@ -41,7 +41,9 @@ trap 'rm -rf "$WORK"' EXIT
 
 cp "$TARGET/bootloader" "$OUT/bootloader-$NAME.elf"
 
-"$OBJCOPY" -O binary "$TARGET/demo" "$WORK/demo.bin"
+# Fill section gaps like erased flash, or the signature fails on a board
+# flashed from the ELF
+"$OBJCOPY" -O binary --gap-fill=0xff "$TARGET/demo" "$WORK/demo.bin"
 (cd "$REPO" && cargo run --quiet --release -p demo-firmware-signer -- "$WORK/demo.bin" "$KEY")
 
 # The bootloader only boots a signed image, so the provisioning ELF gets the

@@ -16,6 +16,9 @@ diesel = { version = "2.3", features = ["postgres", "chrono", "serde_json"] }
 diesel-async = { version = "0.9", features = ["postgres", "deadpool", "async-connection-wrapper"] }
 diesel_migrations = { version = "2.3", features = ["postgres"] }
 notify = "8.2"
+# Build libpq in, so the binary runs on a plain ubuntu image. No TLS: the
+# database is only reached inside the Docker network.
+pq-sys = { version = "0.7", features = ["bundled_without_openssl"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 sensor-link-mqtt.workspace = true
 sensor-link-server-core.workspace = true

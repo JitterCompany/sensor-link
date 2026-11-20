@@ -30,7 +30,8 @@ traefik/acme.json              empty file, chmod 600
 Then `docker compose up -d`.
 
 - Build the binary on a machine with the same glibc as `ubuntu:24.04`, or
-  change the image.
+  change the image. The `Demo release build` workflow builds it on
+  ubuntu-24.04. libpq is built in, so the image needs no extra packages.
 - The broker key must be readable by the mosquitto user in the container
   (uid 1883): `chown 1883 broker.key && chmod 600 broker.key`.
 - `POSTGRES_PASSWORD` is baked into the database volume on first start.

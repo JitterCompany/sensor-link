@@ -141,7 +141,10 @@ impl<W: Write, const INGRESS_BUF_SIZE: usize> AtatClient for ATClient<'_, W, ING
             let response: &Response<INGRESS_BUF_SIZE> = &response.borrow();
             let result = cmd.parse(response.into());
             if let (Err(Error::Parse), Response::Ok(slice)) = (&result, response) {
-                log::warn!("Cannot parse response: {:?}", LossyStr(slice));
+                log::warn!(
+                    "Cannot parse response: {:?}",
+                    LossyStr(&slice[..slice.len().min(128)])
+                );
             }
             result
         }

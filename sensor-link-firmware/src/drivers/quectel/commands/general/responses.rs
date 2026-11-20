@@ -66,14 +66,16 @@ pub struct SoftwareVersion {
     pub id: String<64>,
 }
 
-/// The response line as is: serde_at stops an unquoted string at the first
-/// character that is not alphanumeric, and models and versions contain `-` or
-/// `_` (an EC21 reports `EC21-E`).
+/// The first non-empty response line as is: serde_at stops an unquoted string
+/// at the first character that is not alphanumeric, and models and versions
+/// contain `-` or `_` (an EC21 reports `EC21-E`).
 fn parse_id_line(bytes: &[u8]) -> Result<String<64>, ()> {
-    let line = core::str::from_utf8(bytes).map_err(|_| ())?.trim();
-    if line.is_empty() {
-        return Err(());
-    }
+    let text = core::str::from_utf8(bytes).map_err(|_| ())?;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .ok_or(())?;
     String::try_from(line).map_err(|_| ())
 }
 
@@ -276,6 +278,17 @@ mod test {
     fn software_version_with_underscore() {
         let parsed = parse_software_version(b"EC21EFAR06A01M4G_01.200\r\n").unwrap();
         assert_eq!(parsed.id.as_str(), "EC21EFAR06A01M4G_01.200");
+    }
+
+    #[test]
+    fn id_line_takes_the_first_line() {
+        assert_eq!(
+            parse_model_id(b"\r\nEC21-E\r\nextra\r\n")
+                .unwrap()
+                .id
+                .as_str(),
+            "EC21-E"
+        );
     }
 
     #[test]

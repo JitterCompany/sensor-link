@@ -139,7 +139,11 @@ impl<W: Write, const INGRESS_BUF_SIZE: usize> AtatClient for ATClient<'_, W, ING
         } else {
             let response = self.wait_response(Cmd::MAX_TIMEOUT_MS).await?;
             let response: &Response<INGRESS_BUF_SIZE> = &response.borrow();
-            cmd.parse(response.into())
+            let result = cmd.parse(response.into());
+            if let (Err(Error::Parse), Response::Ok(slice)) = (&result, response) {
+                log::warn!("Cannot parse response: {:?}", LossyStr(slice));
+            }
+            result
         }
     }
 }

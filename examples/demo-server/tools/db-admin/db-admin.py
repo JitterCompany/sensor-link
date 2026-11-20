@@ -27,6 +27,11 @@ from urllib.parse import parse_qs
 # database owner.
 BIND_ADDR = "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8088"))
+# Binding to localhost does not stop other pages in the same browser: a
+# different Host means a DNS-rebinding page, a different Origin a cross-site
+# request.
+OWN_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
+OWN_ORIGINS = {f"http://{host}" for host in OWN_HOSTS}
 
 DB_NAME = os.environ.get("DB_NAME", "demo")
 DB_USER = os.environ.get("DB_USER", "demo")
@@ -448,7 +453,28 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code, obj):
         self._send(code, json.dumps(obj), "application/json")
 
+    def _refuse_foreign(self, post):
+        """Answer 403 and return True unless the request came from this tool's page.
+
+        A POST must be JSON: that is not a "simple" request, so a browser asks
+        a preflight first, which this server never answers.
+        """
+        if self.headers.get("Host") not in OWN_HOSTS:
+            reason = "unexpected Host"
+        elif post and self.headers.get_content_type() != "application/json":
+            reason = "Content-Type must be application/json"
+        elif post and self.headers.get("Origin") not in (None, *OWN_ORIGINS):
+            reason = "foreign Origin"
+        else:
+            return False
+        # The body is not read, so the connection cannot be reused.
+        self.close_connection = True
+        self._send(403, reason, "text/plain; charset=utf-8")
+        return True
+
     def do_GET(self):
+        if self._refuse_foreign(post=False):
+            return
         path, _, query = self.path.partition("?")
         if path == "/":
             # Read per request, so editing the page needs no restart.
@@ -486,6 +512,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, "not found", "text/plain; charset=utf-8")
 
     def do_POST(self):
+        if self._refuse_foreign(post=True):
+            return
         if self.path not in ("/api/assign", "/api/sync-interval", "/api/data-rate", "/api/command"):
             self._send(404, "not found", "text/plain; charset=utf-8")
             return

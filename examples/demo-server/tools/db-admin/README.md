@@ -26,6 +26,9 @@ It prints the command it runs SQL through and the database and role it
 reached, then serves <http://127.0.0.1:8088>.
 
 - Binding is localhost-only. The tool has no authentication of its own.
+- Other pages in the same browser can reach localhost too, so it refuses
+  requests with a foreign `Host` (DNS rebinding) and POSTs that are not JSON
+  or carry a foreign `Origin` (cross-site requests).
 - It connects as the database owner, so the only guard on a mistake is the
   confirmation dialog.
 - SQL runs as `psql` inside the TimescaleDB container. Queries return their

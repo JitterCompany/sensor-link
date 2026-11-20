@@ -3,6 +3,8 @@
 certs/
 dev/firmwares/
 deploy/.env
+# Filled-in env files hold the database password
+deploy/*.env
 deploy/demo-server/
 deploy/firmwares/
 deploy/mosquitto/certs/

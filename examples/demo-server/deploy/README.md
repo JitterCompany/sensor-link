@@ -10,8 +10,13 @@ A docker compose stack for one host:
 | `firmware-files` | nginx serving the signed firmware images | via Traefik, `https://<host>/fw/` |
 | `traefik` | TLS termination with Let's Encrypt | `80`, `443` |
 
-`mqtt.demo.example` is a placeholder. Replace it in `docker-compose.yml`,
-`demo-server.env` and the broker certificate.
+The host name lives in three places:
+
+- `DEMO_HOST` in `.env`, used by the Traefik rules in `docker-compose.yml`
+- `FIRMWARE_BASE_URL` in `demo-server.env`
+- the broker certificate: `BROKER_HOSTS=<host>,mosquitto ../scripts/gen-dev-certs.sh`
+
+The firmware gets it at build time, as `DEMO_MQTT_HOST`.
 
 ## Layout on the host
 

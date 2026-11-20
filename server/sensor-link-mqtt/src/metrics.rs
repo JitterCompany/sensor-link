@@ -1,6 +1,8 @@
 use opentelemetry::{global, KeyValue};
 use std::fmt::Display;
 
+use sensor_link_server_core::event::SmsProvider;
+
 /// Increments a counter metric with the given name and attributes
 ///
 /// # Arguments
@@ -90,4 +92,43 @@ pub fn increment_counter_with_attribute<T, V>(
     V: Display,
 {
     increment_counter(meter_name, counter_name, value, &[(attr_name, attr_value)]);
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SmsOutcome {
+    Sent,
+    Failed,
+}
+
+impl SmsOutcome {
+    const ALL: [SmsOutcome; 2] = [SmsOutcome::Sent, SmsOutcome::Failed];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            SmsOutcome::Sent => "sent",
+            SmsOutcome::Failed => "failed",
+        }
+    }
+}
+
+/// Adds `count` SMS messages to the `sms_sent` counter.
+pub fn count_sms(provider: SmsProvider, outcome: SmsOutcome, count: u64) {
+    increment_counter(
+        "sms",
+        "sms_sent",
+        count,
+        &[
+            ("provider", provider.as_str()),
+            ("status", outcome.as_str()),
+        ],
+    );
+}
+
+/// Creates every `sms_sent` series at zero, so `increase()` also sees the first SMS after a restart.
+pub fn init_sms_metrics() {
+    for provider in SmsProvider::ALL {
+        for outcome in SmsOutcome::ALL {
+            count_sms(provider, outcome, 0);
+        }
+    }
 }

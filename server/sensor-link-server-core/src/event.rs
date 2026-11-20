@@ -25,6 +25,25 @@ pub enum SendStatus {
     Failed,
 }
 
+/// The service an SMS event was handed to. Stored on the event as `sms_provider`.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum SmsProvider {
+    Spryng,
+    JitterGateway,
+}
+
+impl SmsProvider {
+    pub const ALL: [SmsProvider; 2] = [SmsProvider::Spryng, SmsProvider::JitterGateway];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SmsProvider::Spryng => "spryng",
+            SmsProvider::JitterGateway => "jitter_gateway",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Comment {
     #[serde(rename = "_id")]

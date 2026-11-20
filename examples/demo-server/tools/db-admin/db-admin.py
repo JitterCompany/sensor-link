@@ -116,7 +116,7 @@ def query_json(select_sql, cte=None):
 # so `sync_interval_s` comes back NULL for a device that was never configured.
 DEVICES_SQL = """
     SELECT d.id, d.device_type, d.last_contact, d.version,
-           d.marked_for_update, d.online_since, d.command,
+           d.marked_for_update, d.online_since, d.command, d.config_confirmed,
            s.sync_interval_s, s.data_rate
     FROM devices d
     LEFT JOIN device_settings s ON s.device_id = d.id

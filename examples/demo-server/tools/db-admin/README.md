@@ -68,6 +68,8 @@ Tick devices in the devices table first. Every applier acts on that selection.
   `_1spm` and 900 s.
 - No push is needed. The server hashes the stored settings at every sync and
   sends them when the hash differs from what the device reports.
+- The *Settings* column shows *pending* until the device echoes the hash of
+  the stored settings (`devices.config_confirmed`), then *applied*.
 
 **Commands.** Pick one and press **Send command**. The server delivers it at
 the device's next sync. The *Pending command* column shows it until then.

@@ -147,7 +147,7 @@
     <thead><tr>
       <th></th><th>ID</th><th>Type</th><th>Online</th>
       <th>Pending command</th>
-      <th>Last contact</th><th>Sync interval</th><th>Data rate</th><th>Reported version</th>
+      <th>Last contact</th><th>Sync interval</th><th>Data rate</th><th>Settings</th><th>Reported version</th>
       <th>Marked for update</th>
     </tr></thead>
     <tbody id="devices"></tbody>
@@ -259,6 +259,12 @@ function render() {
     const mark = d.marked_for_update
       ? `<span class="pill mark">${esc(fw ? fw.version : d.marked_for_update + ' (unknown)')}</span>`
       : '<span class="muted">—</span>';
+    // config_confirmed: the device echoed the hash of the stored settings
+    const settings = d.sync_interval_s == null
+      ? '<span class="muted">—</span>'
+      : d.config_confirmed
+        ? '<span class="pill on" title="the device confirmed these settings">applied</span>'
+        : '<span class="pill mark" title="sent at the next sync, until the device confirms them">pending</span>';
     const command = d.command && d.command !== 'None'
       ? `<span class="pill mark">${esc(d.command)}</span>`
       : '<span class="muted">—</span>';
@@ -275,6 +281,7 @@ function render() {
       <td class="mono">${d.data_rate == null
         ? '<span class="muted">(no settings)</span>'
         : esc(d.data_rate)}</td>
+      <td>${settings}</td>
       <td class="mono">${esc(versionText(d.version))}</td>
       <td>${mark}</td>
     </tr>`;

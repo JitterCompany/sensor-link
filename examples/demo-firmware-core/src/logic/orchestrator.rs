@@ -251,6 +251,18 @@ where
         schedule.update(Schedule::SyncNetwork, dt);
     }
 
+    /// Next sync after the sync interval, once the network task is done or gave up.
+    ///
+    /// A status update that is still due would spawn the network while the task tears
+    /// down, and the SpawnFailed retry would undo the backoff: it goes out with the
+    /// next sync instead.
+    fn back_off_network_sync(&self, schedule: &mut ScheduleChanges) {
+        self.reschedule_network_sync_timer(schedule);
+        if let Some(next_sync) = schedule.get(Schedule::SyncNetwork) {
+            schedule.update(Schedule::StatusUpdate, next_sync);
+        }
+    }
+
     fn process_new_settings(
         &mut self,
         new_settings: demo_protocol::settings::Settings,
@@ -591,7 +603,11 @@ where
                 schedule_status_update(schedule, true);
                 self.send_network_action(self.network_timeout()).await.ok();
             }
-            signal::Status::Network(NetworkSignal::ConnectFailed) => {}
+            // Sent per failed attempt and when the task gives up without ever connecting:
+            // only the second needs the backoff, but it is harmless while the task retries.
+            signal::Status::Network(NetworkSignal::ConnectFailed) => {
+                self.back_off_network_sync(schedule);
+            }
             signal::Status::Network(NetworkSignal::SpawnFailed) => {
                 // The RTIC network task slot isn't free (still tearing down, or
                 // starting/connecting). Defer via the SyncNetwork
@@ -608,7 +624,7 @@ where
                 self.connected_since = None;
                 self.stats.last_disconnect = Some(monotonic_time::now());
                 log::info!(target: "Orch", "Network Disconnected {info:?}");
-                self.reschedule_network_sync_timer(schedule);
+                self.back_off_network_sync(schedule);
             }
 
             // Dispatch queue empty: disconnect network after some time
@@ -1260,7 +1276,7 @@ mod tests {
             orchestrator::{
                 application_behavior::ApplicationBehavior, demo_behavior::DemoBehavior,
             },
-            signal::{BootReason, CmdSource, CommonSignal, NetworkSignal},
+            signal::{BootReason, CmdSource, CommonSignal, DisconnectInfo, NetworkSignal},
             NetworkAction, NetworkActionList, NetworkActionNotifier,
         },
         storage::{
@@ -2051,6 +2067,31 @@ mod tests {
             .unwrap();
         let actions = orch.run().await;
         assert!(actions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn network_end_backs_off_sync_and_status_update() {
+        for end in [
+            NetworkSignal::Disconnected(DisconnectInfo::Final),
+            NetworkSignal::ConnectFailed,
+        ] {
+            let mut orch = init_in_state(AppState::Ready);
+
+            orch.signal_sender()
+                .send(Signal::Common(CommonSignal::Network(end.clone())))
+                .await
+                .unwrap();
+            let actions = orch.run().await;
+
+            let changes = schedule_from_actions(&actions).expect("expected a ScheduleTimer action");
+            let next_sync = changes.get(Schedule::SyncNetwork).unwrap();
+            assert!(next_sync > SPAWN_RETRY_DELAY_US, "{end:?}");
+            assert_eq!(
+                changes.get(Schedule::StatusUpdate),
+                Some(next_sync),
+                "{end:?}: a due status update must not respawn the network right away"
+            );
+        }
     }
 
     #[tokio::test]

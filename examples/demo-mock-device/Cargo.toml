@@ -1,0 +1,25 @@
+[package]
+name = "demo-mock-device"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license.workspace = true
+publish = false
+description = "Simulated demo devices, running the demo firmware logic on the host."
+
+[dependencies]
+chrono.workspace = true
+clap = { version = "4.5.5", features = ["derive"] }
+demo-firmware-core = { path = "../demo-firmware-core", features = ["use-std"] }
+futures.workspace = true
+log = "0.4"
+rand.workspace = true
+rumqttc.workspace = true
+# rumqttc does not pick a TLS provider, and rustls cannot choose when a build enables two.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+sensor-link-firmware = { path = "../../sensor-link-firmware", features = ["use-std"] }
+simplelog = "0.12.1"
+tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+approx = "0.5"

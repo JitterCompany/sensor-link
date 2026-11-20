@@ -1,0 +1,25 @@
+[package]
+name = "demo-protocol"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license.workspace = true
+publish = false
+
+[dependencies]
+heapless = { version = "0.8.0", default-features = false, features = ["serde"] }
+log = "0.4.19"
+serde = { version = "1", default-features = false, features = ["derive"] }
+sensor-link-protocol = { path = "../../sensor-link-protocol" }
+strum = { version = "0.25.0", default-features = false, features = ["derive"] }
+
+[dependencies.xxhash-rust]
+version = "0.8.15"
+features = ["xxh3", "const_xxh3"]
+optional = true
+
+[dev-dependencies]
+serde-json-core = { version = "0.6.0", default-features = false, features = ["heapless"] }
+
+[features]
+use-std = ["sensor-link-protocol/use-std", "serde/alloc", "xxhash-rust"]

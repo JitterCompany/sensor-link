@@ -1,0 +1,39 @@
+# Profile for sensor-link-provision (see sensor-link-provision/README.md).
+# scripts/release.sh puts it in dist/ next to the bootloader and the signed
+# application ELF; zip that directory to get a release the tool accepts.
+
+version = 1
+
+[project]
+name = "Sensor-link demo"
+
+[[variants]]
+name = "Demo (SL23-modem-tester)"
+device_type = 0              # DeviceType::Demo in demo-firmware-core/src/meta/firmware.rs
+firmware = "demo-*"
+
+[artifacts]
+bootloader = "bootloader-*"
+
+[target]
+chip = "STM32L4R7ZITx"
+swd_speed_khz = 4000
+config_flash_start = 0x081FE000   # FLASH_CFG, last 8 KB of internal flash
+config_flash_end = 0x08200000
+rtt_address = 0x2009FF00          # pinned by bsp/src/linker/inc_base.x
+boot_banner = "# Starting"
+rtt_timeout_s = 10
+
+[identity]
+uid_min = 5
+uid_max = 9
+cert_subject = { OU = "Devices", O = "Sensor-link demo", C = "NL" }
+cert_validity_days = 3650
+ca_piv_slot = "R1"
+
+[checks]
+iccid = true
+mqtt = false                 # turn on once the SIMs are active
+
+[session]
+default_log = "~/sensor-link-demo-provisioning/issuance.csv"

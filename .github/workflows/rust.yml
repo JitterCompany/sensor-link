@@ -30,6 +30,9 @@ jobs:
       - name: Check formatting (modem factory test)
         working-directory: factory-test/modem-test
         run: cargo +nightly fmt --all -- --check
+      - name: Check formatting (demo firmware)
+        working-directory: examples/demo-firmware
+        run: cargo +nightly fmt --all -- --check
 
   test:
     timeout-minutes: 20
@@ -75,6 +78,64 @@ jobs:
           workspaces: factory-test/modem-test
       - name: Check
         run: cargo check --release
+
+  # The demo firmware is its own embedded workspace too, on path dependencies,
+  # so this catches library changes that break it.
+  demo-firmware:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/demo-firmware
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: thumbv7em-none-eabihf
+          components: rust-src, rustfmt, llvm-tools
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/demo-firmware
+      # Throwaway signing key and broker CA: the build needs both, neither is committed
+      - name: Development keys
+        run: ./scripts/gen-dev-keys.sh
+      - name: Check (application and bootloader)
+        run: cargo check --release
+
+  # examples/demo-server/database.md is generated from the migrated schema; fail
+  # when the committed version is stale (see scripts/generate-db-docs.sh there).
+  demo-db-docs:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://demo:demo@localhost:5433/demo
+    services:
+      timescaledb:
+        image: timescale/timescaledb:2.32.1-pg17
+        env:
+          POSTGRES_DB: demo
+          POSTGRES_USER: demo
+          POSTGRES_PASSWORD: demo
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U demo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: examples/demo-server
+    steps:
+      - uses: actions/checkout@v6
+      - name: Apply migrations
+        run: for d in migrations/*/; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$d/up.sql"; done
+      - name: Regenerate database.md
+        run: ./scripts/generate-db-docs.sh
+      - name: Check the committed doc is up to date
+        run: git diff --exit-code -- database.md
 
   # Short smoke run of the protocol decoder fuzz targets. Longer runs are local,
   # see sensor-link-protocol/fuzz/.

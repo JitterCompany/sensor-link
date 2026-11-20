@@ -1,0 +1,123 @@
+name: Demo release build
+
+# Manual: builds the demo firmware (unsigned) and the demo-server binary from
+# the selected branch. Sign the application locally with
+# examples/demo-firmware/scripts/release.sh, the signing key never leaves it.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables):
+#   DEMO_MQTT_HOST       broker host the firmware connects to
+#   DEMO_MQTT_CA_PEM     CA that signed the broker certificate (PEM)
+#   DEMO_APP_PUBKEY_PEM  public key the bootloader checks images against (PEM)
+# All three are public. Without them the build uses throwaway keys and the
+# placeholder host, which is only good for checking that it builds.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Firmware version
+        required: true
+        default: "0.1.0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  firmware:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/demo-firmware
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+          targets: thumbv7em-none-eabihf
+          components: rust-src, rustfmt, llvm-tools
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/demo-firmware
+
+      - name: Keys
+        env:
+          MQTT_CA: ${{ vars.DEMO_MQTT_CA_PEM }}
+          APP_PUBKEY: ${{ vars.DEMO_APP_PUBKEY_PEM }}
+        run: |
+          if [ -n "$MQTT_CA" ] && [ -n "$APP_PUBKEY" ]; then
+            mkdir -p keys
+            printf '%s\n' "$MQTT_CA" > keys/mqtt-ca.pem
+            printf '%s\n' "$APP_PUBKEY" > keys/app-signing-pub.pem
+          else
+            echo "::warning::DEMO_MQTT_CA_PEM or DEMO_APP_PUBKEY_PEM not set: throwaway keys"
+            ./scripts/gen-dev-keys.sh
+          fi
+
+      - name: Build
+        env:
+          MQTT_HOST: ${{ vars.DEMO_MQTT_HOST }}
+          BUILD_VERSION: ${{ inputs.version }}
+        run: |
+          # An empty variable would override the placeholder in .cargo/config.toml
+          if [ -n "$MQTT_HOST" ]; then
+            export DEMO_MQTT_HOST="$MQTT_HOST"
+          else
+            echo "::warning::DEMO_MQTT_HOST not set: placeholder host"
+          fi
+          export GIT_REV="$(git rev-parse --short=8 HEAD)"
+          echo "GIT_REV=$GIT_REV" >> "$GITHUB_ENV"
+          cargo build --release --locked -p demo-bootloader -p demo-firmware-app
+
+      - name: Package
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          NAME="v$VERSION-$GIT_REV"
+          TARGET=target/thumbv7em-none-eabihf/release
+          LLVM="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+
+          # Provisioning attaches to RTT at this fixed address
+          "$LLVM/llvm-nm" "$TARGET/demo" | grep -q '^2009ff00 B _SEGGER_RTT$' \
+            || { echo "RTT control block is not at 0x2009FF00"; exit 1; }
+
+          mkdir -p dist
+          cp "$TARGET/bootloader" "dist/bootloader-$NAME.elf"
+          cp "$TARGET/demo" "dist/demo-$NAME-unsigned.elf"
+          # Gaps filled like erased flash, as release.sh signs it
+          "$LLVM/llvm-objcopy" -O binary --gap-fill=0xff "$TARGET/demo" "dist/demo-$NAME-unsigned.bin"
+          cp provision.toml dist/
+          "$LLVM/llvm-size" "$TARGET/bootloader" "$TARGET/demo"
+          ls -l dist
+
+      - name: Archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-firmware-${{ inputs.version }}-${{ github.run_number }}
+          path: examples/demo-firmware/dist/*
+          retention-days: 90
+
+  # The deploy stack runs the binary in ubuntu:24.04, so build it on the same glibc
+  server:
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo Deps
+        uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release -p demo-server
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp target/release/demo-server dist/
+          # libpq is built in: the binary must not need it from the image
+          ! ldd dist/demo-server | grep -q libpq
+          ldd dist/demo-server
+      - name: Archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-server-${{ github.run_number }}
+          path: dist/demo-server
+          retention-days: 90

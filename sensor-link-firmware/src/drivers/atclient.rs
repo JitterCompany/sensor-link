@@ -126,7 +126,7 @@ impl<W: Write, const INGRESS_BUF_SIZE: usize> AtatClient for ATClient<'_, W, ING
             log::error!("Command cannot be sent: {} > buffer size!", Cmd::MAX_LEN);
             return Err(Error::Custom);
         }
-        let len = cmd.write(&mut self.buf);
+        let len = cmd.write(self.buf);
         match self.send_request(len).with_timeout_ms(1000).await {
             Some(res) => res?,
             None => {

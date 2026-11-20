@@ -7,7 +7,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
-actix-web = "4.14"
+# No default features: HTTP/2 pulls in h2 0.3, and the status endpoint sits
+# behind a proxy that terminates TLS and HTTP/2 anyway
+actix-web = { version = "4.14", default-features = false, features = ["macros"] }
 anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true

@@ -8,9 +8,8 @@ database port. Results come back as JSON so no output parsing is needed.
 
 Stdlib only, no venv:
 
-    ./db-admin.py                  # local dev database (../../dev/)
-    DB_ADMIN_SQL_CMD="ssh host 'docker compose exec -T timescaledb psql -qX -U demo -d demo'" \
-        ./db-admin.py              # a deployed stack, via SSH
+    ./db-admin.py                          # local dev database (../../dev/)
+    SSH_TARGET=demo@host ./db-admin.py     # a deployed stack, via SSH
 """
 
 import json
@@ -32,14 +31,19 @@ PORT = int(os.environ.get("PORT", "8088"))
 DB_NAME = os.environ.get("DB_NAME", "demo")
 DB_USER = os.environ.get("DB_USER", "demo")
 DEV_COMPOSE = Path(__file__).resolve().parents[2] / "dev" / "docker-compose.yml"
+# A deployed stack: the compose project lives in the SSH user's home dir, which
+# is ssh's working directory (see ../../deploy/README.md).
+SSH_TARGET = os.environ.get("SSH_TARGET")
+
+PSQL = f"exec -T timescaledb psql -qX -U {DB_USER} -d {DB_NAME}"
+if SSH_TARGET:
+    DEFAULT_SQL_CMD = f"ssh {shlex.quote(SSH_TARGET)} 'docker compose {PSQL}'"
+else:
+    DEFAULT_SQL_CMD = f"docker compose -f {shlex.quote(str(DEV_COMPOSE))} {PSQL}"
 
 # Base psql invocation; SQL is fed on stdin. Override to point somewhere else
-# (a deployed stack, another host) without touching the code.
-SQL_CMD = os.environ.get(
-    "DB_ADMIN_SQL_CMD",
-    f"docker compose -f {shlex.quote(str(DEV_COMPOSE))} "
-    f"exec -T timescaledb psql -qX -U {DB_USER} -d {DB_NAME}",
-)
+# without touching the code.
+SQL_CMD = os.environ.get("DB_ADMIN_SQL_CMD", DEFAULT_SQL_CMD)
 
 INDEX_HTML = Path(__file__).with_name("index.html")
 

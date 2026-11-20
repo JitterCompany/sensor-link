@@ -20,7 +20,10 @@ The firmware gets it at build time, as `DEMO_MQTT_HOST`.
 
 ## Layout on the host
 
-Copy this directory to the host, then add the git-ignored parts:
+Copy this directory to the host, as the home directory of a dedicated user in
+the `docker` group (db-admin reaches the database over SSH as that user, see
+[../tools/db-admin/README.md](../tools/db-admin/README.md)). Then add the
+git-ignored parts:
 
 ```
 .env                           from .env.example

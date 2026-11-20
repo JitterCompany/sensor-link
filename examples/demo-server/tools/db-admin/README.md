@@ -36,14 +36,23 @@ reached, then serves <http://127.0.0.1:8088>.
 | `PORT` | `8088` | HTTP port |
 | `DB_NAME` | `demo` | database |
 | `DB_USER` | `demo` | PostgreSQL role |
-| `DB_ADMIN_SQL_CMD` | `docker compose -f ../../dev/docker-compose.yml exec -T timescaledb psql …` | any command that reads SQL on stdin and prints psql output |
+| `SSH_TARGET` | unset | `user@host` of a deployed stack, see below |
+| `DB_ADMIN_SQL_CMD` | from the two above | any command that reads SQL on stdin and prints psql output |
 
 A deployed stack, over SSH:
 
 ```sh
-DB_ADMIN_SQL_CMD="ssh host 'docker compose exec -T timescaledb psql -qX -U demo -d demo'" \
-    ./db-admin.py
+SSH_TARGET=demo@host ./db-admin.py
+# runs: ssh demo@host 'docker compose exec -T timescaledb psql -qX -U demo -d demo'
 ```
+
+- The compose project has to be the SSH user's home directory, which is
+  where `ssh` starts. A dedicated user for the stack does that.
+- That user runs `docker` without `sudo`, so it is in the `docker` group.
+- The key must load without a prompt (agent or no passphrase): nothing can
+  answer one.
+- The SQL arrives over the container's local socket, so no database port
+  is opened.
 
 ## Using it
 

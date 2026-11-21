@@ -66,6 +66,31 @@ pub struct SoftwareVersion {
     pub id: String<64>,
 }
 
+/// The first non-empty response line as is: serde_at stops an unquoted string
+/// at the first character that is not alphanumeric, and models and versions
+/// contain `-` or `_` (an EC21 reports `EC21-E`).
+fn parse_id_line(bytes: &[u8]) -> Result<String<64>, ()> {
+    let text = core::str::from_utf8(bytes).map_err(|_| ())?;
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .ok_or(())?;
+    String::try_from(line).map_err(|_| ())
+}
+
+pub fn parse_model_id(bytes: &[u8]) -> Result<ModelId, ()> {
+    Ok(ModelId {
+        id: parse_id_line(bytes)?,
+    })
+}
+
+pub fn parse_software_version(bytes: &[u8]) -> Result<SoftwareVersion, ()> {
+    Ok(SoftwareVersion {
+        id: parse_id_line(bytes)?,
+    })
+}
+
 /// Network Registration Status for CREG, CGREG and CEREG
 #[derive(Clone, Debug, AtatResp)]
 pub struct Registration {
@@ -242,6 +267,34 @@ fn dbm_to_percentage(dbm: i16) -> i16 {
 mod test {
 
     use super::*;
+
+    // Captured from an EC21 on the demo board
+    #[test]
+    fn model_id_with_dash() {
+        assert_eq!(parse_model_id(b"EC21-E").unwrap().id.as_str(), "EC21-E");
+    }
+
+    #[test]
+    fn software_version_with_underscore() {
+        let parsed = parse_software_version(b"EC21EFAR06A01M4G_01.200\r\n").unwrap();
+        assert_eq!(parsed.id.as_str(), "EC21EFAR06A01M4G_01.200");
+    }
+
+    #[test]
+    fn id_line_takes_the_first_line() {
+        assert_eq!(
+            parse_model_id(b"\r\nEC21-E\r\nextra\r\n")
+                .unwrap()
+                .id
+                .as_str(),
+            "EC21-E"
+        );
+    }
+
+    #[test]
+    fn id_line_rejects_empty() {
+        assert!(parse_model_id(b"\r\n").is_err());
+    }
 
     // Example from the EC2x AT manual, not captured from a modem.
     #[test]

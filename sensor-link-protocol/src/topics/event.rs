@@ -52,6 +52,26 @@ pub struct CellInfo {
     pub rsrp: Option<i16>,
 }
 
+/// Why a firmware image failed validation.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FirmwareRejectReason {
+    /// Signature does not match the signing key
+    Signature,
+    /// Hash does not match the image
+    Integrity,
+    /// Built for another device type
+    DeviceType,
+    /// Anti-downgrade version (the argument) is below that of the installed firmware
+    Downgrade(u32),
+    /// Security level below the required level, e.g. an unsigned image
+    SecurityLevel,
+    /// Header could not be parsed
+    Malformed,
+    /// Image ended before the length in its header
+    Incomplete,
+}
+
 /// All manufacturer-agnostic events that can be sent from device to the server.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -73,6 +93,9 @@ pub enum Event {
     FirmwareUpdateStarted,
     FirmwareUpdateFailed,
     FirmwareUpdateReceived,
+
+    /// A firmware image failed validation and was not installed
+    FirmwareRejected(FirmwareRejectReason),
 
     /// Missing calibration data: measurement is possible but with suboptimal accuracy
     NotCalibrated,
@@ -113,6 +136,7 @@ impl Event {
             Event::FirmwareUpdateStarted => true,
             Event::FirmwareUpdateFailed => true,
             Event::FirmwareUpdateReceived => true,
+            Event::FirmwareRejected(_) => true,
 
             Event::SensorError(_) => true,
             Event::ProcessingWarning(_) => true,
@@ -222,6 +246,34 @@ mod tests {
             panic!("expected CellInfo, got {:?}", parsed.event);
         };
         assert_eq!(parsed, cell_info());
+    }
+
+    #[test]
+    fn firmware_rejected_roundtrips() {
+        for (reason, json) in [
+            (
+                FirmwareRejectReason::Signature,
+                r#"{"e":{"firmwarerejected":"signature"},"t":0}"#,
+            ),
+            (
+                FirmwareRejectReason::Downgrade(7),
+                r#"{"e":{"firmwarerejected":{"downgrade":7}},"t":0}"#,
+            ),
+        ] {
+            let bytes = EventPayload {
+                event: Event::FirmwareRejected(reason),
+                ts: 0,
+            }
+            .serialize_topic_payload()
+            .unwrap();
+            assert_eq!(core::str::from_utf8(&bytes).unwrap(), json);
+
+            let (parsed, _) = serde_json_core::from_slice::<EventPayload<Event>>(&bytes).unwrap();
+            let Event::FirmwareRejected(parsed) = parsed.event else {
+                panic!("expected FirmwareRejected, got {:?}", parsed.event);
+            };
+            assert_eq!(parsed, reason);
+        }
     }
 
     #[test]

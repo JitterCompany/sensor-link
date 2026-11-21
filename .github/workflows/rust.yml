@@ -81,6 +81,11 @@ jobs:
   fuzz:
     timeout-minutes: 20
     runs-on: ubuntu-latest
+    strategy:
+      # One crashing target should not cancel the others' runs
+      fail-fast: false
+      matrix:
+        target: [downlink_json, samples_postcard, samples_q15, samples_q15xl]
     defaults:
       run:
         working-directory: sensor-link-protocol/fuzz
@@ -91,13 +96,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: sensor-link-protocol/fuzz
+          # All targets share the same dependencies, so one cache serves them all
+          shared-key: fuzz
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
-      - name: Fuzz downlink JSON decoders
-        run: cargo fuzz run downlink_json -- -max_total_time=60
-      - name: Fuzz postcard samples decoder
-        run: cargo fuzz run samples_postcard -- -max_total_time=60
-      - name: Fuzz Q15 samples decoders
-        run: cargo fuzz run samples_q15 -- -max_total_time=60
-      - name: Fuzz Q15XL samples decoders
-        run: cargo fuzz run samples_q15xl -- -max_total_time=60
+      - name: Fuzz ${{ matrix.target }}
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60

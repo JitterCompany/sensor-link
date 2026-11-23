@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+base64 = "0.22.1"
 chrono.workspace = true
 eframe = { version = "0.33.3", features = ["persistence"] }
 env_logger = "0.11.11"
@@ -15,6 +16,7 @@ glob = "0.3.4"
 hex = "0.4.3"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 log = "0.4.34"
+object = { version = "0.39.1", default-features = false, features = ["read_core", "elf", "std"] }
 p256 = "0.14.0"
 pem = "4.0.0"
 probe-rs = { version = "0.32.0", default-features = false, features = ["builtin-targets", "builtin-formats"] }

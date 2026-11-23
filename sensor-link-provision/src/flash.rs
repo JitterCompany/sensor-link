@@ -13,6 +13,8 @@ use probe_rs::{
     probe::{DebugProbeInfo, list::Lister},
 };
 
+use crate::artifacts::Firmware;
+
 /// A connected probe and, if it cannot be opened, why.
 #[derive(Clone, Debug)]
 pub struct ProbeStatus {
@@ -129,6 +131,43 @@ pub fn flash_elf(session: &mut Session, path: &Path, on_progress: impl FnMut(f32
     download_file_with_options(session, path, ElfLoader(ElfOptions::default()), options)
         .map_err(anyhow::Error::from)
         .with_context(|| format!("flashing {}", path.display()))
+}
+
+/// Write a raw image at `address`; only the sectors it covers are erased.
+pub fn flash_image(
+    session: &mut Session,
+    address: u64,
+    data: &[u8],
+    on_progress: impl FnMut(f32),
+) -> Result<()> {
+    let mut loader = FlashLoader::new(
+        session.target().memory_map.clone(),
+        session.target().source().clone(),
+    );
+    loader
+        .add_data(address, data)
+        .map_err(anyhow::Error::from)
+        .context("staging image")?;
+    let mut options = DownloadOptions::default();
+    options.verify = true;
+    options.progress = fraction_progress(on_progress);
+    loader
+        .commit(session, options)
+        .map_err(anyhow::Error::from)
+        .with_context(|| format!("writing image at {address:#x}"))
+}
+
+/// Flash a firmware from the zip, the ELF or its signed image.
+pub fn flash_firmware(
+    session: &mut Session,
+    firmware: &Firmware,
+    on_progress: impl FnMut(f32),
+) -> Result<()> {
+    match firmware {
+        Firmware::Elf(file) => flash_elf(session, &file.path, on_progress),
+        Firmware::Signed(image) => flash_image(session, image.address, &image.data, on_progress)
+            .with_context(|| format!("flashing {}", image.name)),
+    }
 }
 
 /// A FlashProgress that accumulates AddProgressBar totals and Progress sizes

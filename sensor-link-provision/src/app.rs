@@ -457,7 +457,7 @@ impl Setup {
                                         });
                                     ui.end_row();
                                     ui.label("Firmware");
-                                    ui.label(&a.firmwares[self.variant].name);
+                                    ui.label(a.firmwares[self.variant].name());
                                     ui.end_row();
                                     ui.label("Chip");
                                     ui.label(&a.profile.target.chip);

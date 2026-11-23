@@ -257,7 +257,7 @@ impl Worker {
             variant: variant.name.clone(),
             device_type: variant.device_type,
             bootloader: artifacts.bootloader.name.clone(),
-            firmware: artifacts.firmwares[cfg.variant].name.clone(),
+            firmware: artifacts.firmwares[cfg.variant].name().to_owned(),
             ca_subject: ca.subject(),
             yubikey,
             dev_ca: cfg.dev_ca.is_some(),
@@ -358,9 +358,9 @@ impl Worker {
                 })
             })?;
             self.step(4, || {
-                flash::flash_elf(
+                flash::flash_firmware(
                     &mut probe,
-                    &session.artifacts.firmwares[session.variant].path,
+                    &session.artifacts.firmwares[session.variant],
                     |f| progress(4, f),
                 )
             })?;

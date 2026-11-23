@@ -8,7 +8,11 @@ use serde::Deserialize;
 
 /// Highest provision.toml schema version this build understands. Bump it
 /// when a change would make an older tool misread a newer profile.
-pub const SUPPORTED_VERSION: u32 = 1;
+pub const SUPPORTED_VERSION: u32 = 2;
+
+/// The first schema version with [`Variant::signed`]. A 1.2 tool would ignore that field and
+/// flash an unsigned image, so a profile that uses it must say so.
+pub const SIGNED_IMAGE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Profile {
@@ -40,6 +44,11 @@ pub struct Variant {
     pub device_type: u8,
     /// Glob matched against file names in the zip (ELF, no extension).
     pub firmware: String,
+    /// Glob for the signed image of the same build (raw, or base64url when it ends in `.b64`).
+    /// When set, it is written at the load address of the ELF instead of the ELF itself, for
+    /// bootloaders that only start a signed application.
+    #[serde(default)]
+    pub signed: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -163,6 +172,14 @@ impl Profile {
         if self.variants.is_empty() {
             bail!("provision.toml: at least one [[variants]] entry is required");
         }
+        if self.version < SIGNED_IMAGE_VERSION
+            && let Some(v) = self.variants.iter().find(|v| v.signed.is_some())
+        {
+            bail!(
+                "provision.toml: variant '{}' sets `signed`, which needs version = {SIGNED_IMAGE_VERSION}",
+                v.name
+            );
+        }
         let t = &self.target;
         if t.config_flash_start == 0 || t.config_flash_end <= t.config_flash_start {
             bail!("provision.toml: invalid config flash range");
@@ -274,6 +291,24 @@ mod tests {
         assert_eq!(p.identity.piv_slot().unwrap(), 0x82);
         assert_eq!(p.variants[0].device_type, 1);
         assert_eq!(p.version, 1);
+    }
+
+    #[test]
+    fn signed_needs_version_2() {
+        let signed = EXAMPLE_PROFILE.replace(
+            "firmware = \"zonneboiler-*\"",
+            "firmware = \"zonneboiler-*\"\nsigned = \"zonneboiler-*.b64\"",
+        );
+        let err = Profile::parse(&signed).unwrap_err().to_string();
+        assert!(err.contains("needs version = 2"), "{err}");
+
+        let p = Profile::parse(&signed.replace("version = 1", "version = 2")).unwrap();
+        assert_eq!(p.variants[0].signed.as_deref(), Some("zonneboiler-*.b64"));
+        assert!(
+            Profile::parse(EXAMPLE_PROFILE).unwrap().variants[0]
+                .signed
+                .is_none()
+        );
     }
 
     #[test]

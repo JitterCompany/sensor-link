@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-11-23
+
 - A variant can name its signed image with `signed` in `provision.toml`
   (schema version 2). The tool then writes that image at the load address of
   the ELF instead of the ELF itself, for bootloaders that only start a signed

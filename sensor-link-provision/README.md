@@ -222,6 +222,10 @@ For bring-up without the GUI:
 sensor-link-provision --selftest-sign --zip firmware-build-31.zip
 # Flash a board with a throwaway identity and print the RTT boot log
 sensor-link-provision --flash-test --zip firmware-build-31.zip --variant 0 --uid TEST00001
+# Same, with a device certificate from a development CA, so the board can
+# connect to a broker that trusts it
+sensor-link-provision --flash-test --zip firmware-build-31.zip --uid TEST00001 \
+  --dev-ca-key dev_ca.key --dev-ca-cert dev_ca.pem
 ```
 
 ## Building

@@ -1,0 +1,14 @@
+# Devices: cert CN (%u) scopes each device to its own topic tree
+pattern write f/%u/#
+pattern read t/%u/#
+pattern read server/status
+
+# demo-server ingestion application
+user demo-server
+topic read f/#
+topic write t/#
+topic write server/status
+
+# Admin/debug access
+user admin
+topic readwrite #

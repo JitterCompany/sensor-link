@@ -1,0 +1,38 @@
+[package]
+name = "demo-firmware-app"
+version = "0.1.0"
+authors = ["Jitter"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+default-run = "demo"
+autobins = false
+
+[dependencies]
+cortex-m-rt = { workspace = true }
+critical-section = { workspace = true }
+demo-firmware-core = { workspace = true }
+futures = { workspace = true }
+hardware = { workspace = true }
+paste = { workspace = true }
+rtic = { workspace = true }
+rtic-sync = { workspace = true }
+rtt-target = { workspace = true }
+
+[features]
+# Link as a standalone image without bootloader, e.g. for `cargo run` on a
+# board that has none. A stored firmware update is deleted at boot.
+force-standalone = []
+# Keep the MCU awake in idle: easier debugging, higher power consumption
+disable-sleep = []
+# Never start the network task
+offline = []
+
+[build-dependencies]
+demo-firmware-core = { workspace = true, features = ["alloc", "use-std"] }
+
+[[bin]]
+name = "demo"
+path = "src/demo.rs"
+test = false
+bench = false

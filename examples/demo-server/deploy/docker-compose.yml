@@ -1,0 +1,130 @@
+# Demo production stack: Mosquitto (mTLS + ACL), TimescaleDB, the demo-server,
+# nginx serving the firmware images and, optionally, Traefik in front of the
+# HTTP side. Without Traefik a reverse proxy on the host forwards to the
+# localhost ports below (see README.md).
+# Secrets (.env, demo-server/demo-server.env) and certs live on the host only.
+# The host name and the Let's Encrypt email come from .env (DEMO_HOST, ACME_EMAIL).
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.1.4-alpine
+    restart: unless-stopped
+    ports:
+      - "8883:8883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/demo.acl:/mosquitto/config/demo.acl:ro
+      - ./mosquitto/certs:/mosquitto/config/certs:ro
+      - ./mosquitto/data:/mosquitto/data
+    networks:
+      - mqtt-network
+    logging: *default-logging
+
+  # Not published on the host: only the demo-server reaches it.
+  timescaledb:
+    image: timescale/timescaledb:2.32.1-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+    networks:
+      - db-network
+    logging: *default-logging
+
+  demo-server:
+    # Must match the glibc of the machine the binary was built on
+    image: ubuntu:24.04
+    restart: unless-stopped
+    env_file:
+      - ./demo-server/demo-server.env
+    volumes:
+      - ./demo-server:/demo-server
+      # Uploaded firmware images, watched by the server to create the matching
+      # rows in the firmware table (see FIRMWARE_DIR in demo-server.env)
+      - ./firmwares:/firmwares:ro
+    command: ./demo-server/demo-server
+    # For a reverse proxy on the host; Traefik reaches it over proxy-network
+    ports:
+      - "127.0.0.1:${DEMO_HTTP_PORT:-8087}:8087"
+    depends_on:
+      - mosquitto
+      - timescaledb
+    networks:
+      - mqtt-network
+      - db-network
+      - proxy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`${DEMO_HOST:?set DEMO_HOST in .env}`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.api.loadbalancer.server.port=8087"
+      - "traefik.docker.network=proxy-network"
+    logging: *default-logging
+
+  # Serves the uploaded firmware images at https://<DEMO_HOST>/fw/<file>.
+  # Read-only view of ./firmwares, which the signed .b64 images are copied into.
+  firmware-files:
+    image: nginx:1.31.9-alpine
+    restart: unless-stopped
+    volumes:
+      - ./firmwares:/usr/share/nginx/html:ro
+    ports:
+      - "127.0.0.1:${DEMO_FIRMWARE_PORT:-8088}:80"
+    networks:
+      - proxy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.firmware.rule=Host(`${DEMO_HOST:?set DEMO_HOST in .env}`) && PathPrefix(`/fw/`)"
+      # Beat the demo-server catch-all Host router, which matches these paths too
+      - "traefik.http.routers.firmware.priority=100"
+      - "traefik.http.routers.firmware.entrypoints=websecure"
+      - "traefik.http.routers.firmware.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.firmware.middlewares=firmware-strip"
+      - "traefik.http.middlewares.firmware-strip.stripprefix.prefixes=/fw"
+      - "traefik.http.services.firmware.loadbalancer.server.port=80"
+      - "traefik.docker.network=proxy-network"
+    logging: *default-logging
+
+  # Only with COMPOSE_PROFILES=traefik in .env, when ports 80 and 443 are free
+  traefik:
+    image: traefik:v3.7.19
+    profiles: [traefik]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    # Static config as flags, so the email can come from .env
+    command:
+      - --providers.docker.exposedByDefault=false
+      - --entryPoints.web.address=:80
+      - --entryPoints.web.http.redirections.entryPoint.to=websecure
+      - --entryPoints.web.http.redirections.entryPoint.scheme=https
+      - --entryPoints.websecure.address=:443
+      - --certificatesResolvers.letsencrypt.acme.email=${ACME_EMAIL:-}
+      - --certificatesResolvers.letsencrypt.acme.storage=/acme.json
+      - --certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint=web
+    volumes:
+      - ./traefik/acme.json:/acme.json
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy-network
+    logging: *default-logging
+
+networks:
+  proxy-network:
+    name: proxy-network
+  mqtt-network:
+  db-network:
+
+volumes:
+  timescaledb-data:

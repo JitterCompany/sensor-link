@@ -46,13 +46,14 @@ fn main() -> Result<()> {
 
 const USAGE: &str = "sensor-link-provision [--dev-ca-key KEY.pem --dev-ca-cert CA.pem]
 sensor-link-provision --selftest-sign --zip Z [--ca-cert PEM]
-sensor-link-provision --flash-test --zip Z [--variant N] [--uid UID]
+sensor-link-provision --flash-test --zip Z [--variant N] [--uid UID] [--dev-ca-key KEY.pem --dev-ca-cert CA.pem]
 sensor-link-provision --demo
 Without options the GUI starts with the CA on a YubiKey. --dev-ca-key/--dev-ca-cert start the GUI
 with a development CA from files instead (no YubiKey; shown prominently in the GUI).
 The subcommands exercise the hardware paths from a terminal:
   --selftest-sign   sign a test certificate with the YubiKey CA (asks for the PIN) and verify it
-  --flash-test      flash bootloader + firmware + a test config to a connected board and watch RTT
+  --flash-test      flash bootloader + firmware + a test config to a connected board and watch RTT;
+                    the device certificate comes from the development CA if given, else a throwaway CA
 --demo opens a simulated session without any hardware. A UID containing FAIL, NOBOOT or NOMQTT
 picks a failure path.";
 
@@ -150,23 +151,16 @@ fn flash_test(args: &[String]) -> Result<()> {
         }
     }
 
-    // Throwaway CA and device identity: enough to exercise flash + boot check.
-    let ca_key = cert::DeviceKey::generate()?;
-    let ca_signing =
-        p256::ecdsa::SigningKey::from(&p256::SecretKey::from_sec1_pem(&ca_key.sec1_pem()?)?);
-    let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "flash-test CA");
-    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-    let ca_cert = params.self_signed(&SelfSigner(
-        ca_signing.clone(),
-        rcgen::SubjectPublicKeyInfo::from_der(&ca_key.spki_der()?)?,
-    ))?;
-    let ca = cert::Ca::new(
-        ca_cert.der().to_vec(),
-        Box::new(cert::SoftwareSigner(ca_signing)),
-    )?;
+    // A development CA lets the board reach a real broker; without one a throwaway
+    // CA is enough to exercise flash + boot check.
+    let ca = match (arg(args, "--dev-ca-key"), arg(args, "--dev-ca-cert")) {
+        (Some(key), Some(cert)) => {
+            println!("Device certificate from development CA {cert}");
+            cert::load_dev_ca(key.as_ref(), cert.as_ref())?
+        }
+        (None, None) => throwaway_ca()?,
+        _ => bail!("--dev-ca-key and --dev-ca-cert go together"),
+    };
     let key = cert::DeviceKey::generate()?;
     let issued = cert::issue(&profile.identity, &uid, &key, &ca)?;
     let config = config_bin::build(
@@ -221,6 +215,25 @@ fn flash_test(args: &[String]) -> Result<()> {
         if uid_seen { "UID SEEN" } else { "UID NOT SEEN" }
     );
     Ok(())
+}
+
+fn throwaway_ca() -> Result<cert::Ca> {
+    let ca_key = cert::DeviceKey::generate()?;
+    let ca_signing =
+        p256::ecdsa::SigningKey::from(&p256::SecretKey::from_sec1_pem(&ca_key.sec1_pem()?)?);
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "flash-test CA");
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let ca_cert = params.self_signed(&SelfSigner(
+        ca_signing.clone(),
+        rcgen::SubjectPublicKeyInfo::from_der(&ca_key.spki_der()?)?,
+    ))?;
+    cert::Ca::new(
+        ca_cert.der().to_vec(),
+        Box::new(cert::SoftwareSigner(ca_signing)),
+    )
 }
 
 struct SelfSigner(p256::ecdsa::SigningKey, rcgen::SubjectPublicKeyInfo);

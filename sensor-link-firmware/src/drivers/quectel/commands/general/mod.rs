@@ -102,14 +102,14 @@ pub struct GetManufacturerId;
 ///
 /// Read a text string that identifies the device model.
 #[derive(Debug, Clone, AtatCmd)]
-#[at_cmd("+CGMM", ModelId, termination = "\r")]
+#[at_cmd("+CGMM", ModelId, parse = parse_model_id, termination = "\r")]
 pub struct GetModelId;
 
 /// 2.7 Software version identification +CGMR
 ///
 /// Read a text string that identifies the software version of the module
 #[derive(Debug, Clone, AtatCmd)]
-#[at_cmd("+CGMR", SoftwareVersion, termination = "\r")]
+#[at_cmd("+CGMR", SoftwareVersion, parse = parse_software_version, termination = "\r")]
 pub struct GetSoftwareVersion;
 
 /// 2.16 Set Command Echo Mode

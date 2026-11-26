@@ -185,8 +185,8 @@ fn flash_test(args: &[String]) -> Result<()> {
         let _ = std::io::Write::flush(&mut std::io::stdout());
     })?;
     println!();
-    println!("Flashing {}", artifacts.firmwares[variant].name);
-    flash::flash_elf(&mut session, &artifacts.firmwares[variant].path, |f| {
+    println!("Flashing {}", artifacts.firmwares[variant].name());
+    flash::flash_firmware(&mut session, &artifacts.firmwares[variant], |f| {
         print!("\r  {:>3.0}%", f * 100.0);
         let _ = std::io::Write::flush(&mut std::io::stdout());
     })?;

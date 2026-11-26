@@ -5,10 +5,13 @@ use reqwest::{
     header::{HeaderMap, HeaderValue, AUTHORIZATION},
     ClientBuilder,
 };
-use sensor_link_mqtt::{ControlMessageOut, DeviceControlOut};
+use sensor_link_mqtt::{
+    metrics::{self, SmsOutcome},
+    ControlMessageOut, DeviceControlOut,
+};
 use sensor_link_protocol::sms::SMSRequest;
 use sensor_link_server_core::{
-    event::{EventType, SendStatus},
+    event::{EventType, SendStatus, SmsProvider},
     store_traits::EventStore,
     DataStoreId,
 };
@@ -121,6 +124,7 @@ async fn send_task<DS, CO>(
     DS: EventStore,
     CO: From<DeviceControlOut> + Send + 'static,
 {
+    metrics::init_sms_metrics();
     while let Some(sms) = sms_to_send
         .try_lock()
         .expect("SMS receiver channel seems to be locked by another task than SMS task")
@@ -148,6 +152,7 @@ async fn send_task<DS, CO>(
                     .await;
                 } else {
                     tracing::info!("Sent SMS request to Jitter SMS gateway");
+                    set_provider(&db, &event_id, SmsProvider::JitterGateway).await;
                     continue;
                 }
             } else {
@@ -177,12 +182,14 @@ async fn send_task<DS, CO>(
                     "Not sending SMS to {:?} (no SMS gateway configured)",
                     sms.phone_numbers
                 );
+                metrics::count_sms(SmsProvider::Spryng, SmsOutcome::Failed, 1);
                 if let Err(err) = db.event_mark_sent(&event_id, SendStatus::Failed).await {
                     tracing::error!("Failed to mark event as failed: {}", err);
                 }
                 continue;
             }
         };
+        set_provider(&db, &event_id, SmsProvider::Spryng).await;
         let url = "https://rest.spryngsms.com/v1/messages";
         let client = ClientBuilder::new()
             .use_rustls_tls()
@@ -210,10 +217,12 @@ async fn send_task<DS, CO>(
                         "[Spryng] Successfully sent SMS to {:?}",
                         sms_request.recipients
                     );
+                    metrics::count_sms(SmsProvider::Spryng, SmsOutcome::Sent, 1);
                     if let Err(err) = db.event_mark_sent(&event_id, SendStatus::Sent).await {
                         tracing::error!("Failed to mark event as sent: {}", err);
                     }
                 } else {
+                    metrics::count_sms(SmsProvider::Spryng, SmsOutcome::Failed, 1);
                     if let Err(err) = db.event_mark_sent(&event_id, SendStatus::Failed).await {
                         tracing::error!("Failed to mark event as Failed: {}", err);
                     }
@@ -235,6 +244,7 @@ async fn send_task<DS, CO>(
                 }
             }
             Err(e) => {
+                metrics::count_sms(SmsProvider::Spryng, SmsOutcome::Failed, 1);
                 tracing::error!(
                     "Failed to send request to send SMS to {:?}: {e}",
                     sms_request.recipients
@@ -254,6 +264,12 @@ async fn send_task<DS, CO>(
         }
     }
     tracing::info!("Exit SMS task");
+}
+
+async fn set_provider<DS: EventStore>(db: &DS, event_id: &DataStoreId, provider: SmsProvider) {
+    if let Err(err) = db.event_set_sms_provider(event_id, provider).await {
+        tracing::error!("Failed to store SMS provider on event: {}", err);
+    }
 }
 
 //TODO: use a callback instead or define SMS task output (enum) that is fed into MPSCs by the application's task handler

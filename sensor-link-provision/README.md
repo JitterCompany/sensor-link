@@ -120,10 +120,11 @@ launch shows "Windows protected your PC": click **More info**, then
 ## The profile: `provision.toml`
 
 Ship this file in the release zip next to the bootloader and firmware ELFs
-(they must be ELF files; `.bin`/`.b64`/`.cdx.json` siblings are ignored).
+(they must be ELF files; `.bin`/`.b64`/`.cdx.json` siblings are ignored,
+except the signed image a variant names with `signed`).
 
 ```toml
-version = 1                  # provision.toml schema version
+version = 2                  # provision.toml schema version; 2 for `signed`
 
 [project]
 name = "Acme Heat Meter"
@@ -132,7 +133,9 @@ name = "Acme Heat Meter"
 [[variants]]
 name = "Heat meter"
 device_type = 0              # wire byte of the firmware's DeviceType
-firmware = "heatmeter-*"     # glob on file names in the zip
+firmware = "heatmeter-v*"    # glob on file names in the zip
+signed = "heatmeter-v*.b64"  # optional: signed image of the same build, written at
+                             # the ELF's load address instead of the ELF itself
 
 [artifacts]
 bootloader = "bootloader-*"

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-11-23
+
+- A variant can name its signed image with `signed` in `provision.toml`
+  (schema version 2). The tool then writes that image at the load address of
+  the ELF instead of the ELF itself, for bootloaders that only start a signed
+  application. It checks that the image has the same load range as the ELF and
+  the same bytes after the header, so a signed image of another build is
+  refused. A `.b64` file is decoded as base64url.
+- `provision.toml` version 2. Older tools refuse it, so they cannot flash the
+  unsigned ELF of a profile that asks for the signed image.
 - The *FAILED* counter now counts devices. A device that fails and then
   provisions on a rescan leaves the count, and repeated failures of one UID
   count once.

@@ -2069,7 +2069,7 @@ where
             Ok(location) => Ok(Some(location.fix)),
             // 516 "not fixed now" is the expected one. atat maps it to Unknown.
             Err(atat::Error::CmeError(_)) => {
-                if self.gnss_polls % GNSS_STATUS_EVERY_POLLS == 0 {
+                if self.gnss_polls.is_multiple_of(GNSS_STATUS_EVERY_POLLS) {
                     self.log_gnss_status().await;
                 }
                 Ok(None)

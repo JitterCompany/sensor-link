@@ -8,6 +8,7 @@
 
 pub mod file;
 pub mod general;
+pub mod gnss;
 pub mod http;
 pub mod mqtt;
 pub mod packetdomain;

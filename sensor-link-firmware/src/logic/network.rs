@@ -1,7 +1,10 @@
 //! Network logic
 //!
 
-use sensor_link_protocol::{event::CellInfo, Error, Milliseconds, Topic};
+use sensor_link_protocol::{
+    event::{CellInfo, GnssFix, GnssReport},
+    Error, Milliseconds, Topic,
+};
 use serde::Serialize;
 
 use crate::{
@@ -14,7 +17,8 @@ use crate::{
         time_adjust, DrainOnDisconnect,
     },
     meta::DeviceMetaDataProvider,
-    monotonic_time::{self, delay_ms, traits::MonotonicTime, FutureTimeout},
+    monotonic_time::{self, delay_ms, traits::MonotonicTime, FutureTimeout, MonotonicInstant},
+    mqtt::GnssError,
     serialize::Sendable,
     utils::select::{select3, Select3},
 };
@@ -121,6 +125,21 @@ pub trait NetworkClient {
     ///
     /// Implementors may simply return `None` if no cell info can be obtained.
     async fn cell_info(&mut self) -> Option<CellInfo>;
+
+    /// See [MqttClient::gnss_search_s](crate::mqtt::MqttClient::gnss_search_s)
+    fn gnss_search_s(&self) -> Option<u16> {
+        None
+    }
+
+    async fn gnss_start(&mut self) -> Result<(), GnssError> {
+        Err(GnssError::Unsupported)
+    }
+
+    async fn gnss_fix(&mut self) -> Result<Option<GnssFix>, GnssError> {
+        Err(GnssError::Unsupported)
+    }
+
+    async fn gnss_stop(&mut self) {}
 }
 
 /// Logged once the MQTT session is up. sensor-link-provision looks for this
@@ -152,8 +171,70 @@ enum Op<'u, U, S> {
     Action(NetworkAction<S>),
     Upload(&'u U),
     Read,
+    GnssPoll,
     Stop,
     None,
+}
+
+/// A GNSS search running during a network session
+struct GnssSearch {
+    started: MonotonicInstant,
+    budget_s: u16,
+}
+
+impl GnssSearch {
+    async fn start<C: NetworkClient>(client: &mut C) -> Option<Self> {
+        let budget_s = client.gnss_search_s()?;
+        match client.gnss_start().await {
+            Ok(()) => {
+                log::info!(target: "Network", "GNSS search started, {budget_s} s");
+                Some(Self {
+                    started: monotonic_time::now(),
+                    budget_s,
+                })
+            }
+            Err(GnssError::Unsupported) => None,
+            Err(err) => {
+                log::warn!(target: "Network", "GNSS start failed: {err:?}");
+                None
+            }
+        }
+    }
+
+    fn report(&self, fix: Option<GnssFix>) -> GnssReport {
+        report_after(self.started.elapsed_sec(), fix)
+    }
+
+    /// Poll the fix once. Returns the report when the search is over.
+    async fn poll<C: NetworkClient>(&self, client: &mut C) -> Option<GnssReport> {
+        let result = client.gnss_fix().await;
+        search_outcome(result, self.started.elapsed_sec(), self.budget_s)
+    }
+}
+
+/// The report once the search is over: a fix, an error or the budget used up.
+fn search_outcome(
+    result: Result<Option<GnssFix>, GnssError>,
+    elapsed_s: u64,
+    budget_s: u16,
+) -> Option<GnssReport> {
+    let fix = match result {
+        Ok(Some(fix)) => Some(fix),
+        Ok(None) if elapsed_s < u64::from(budget_s) => return None,
+        Ok(None) => None,
+        Err(err) => {
+            log::warn!(target: "Network", "GNSS fix failed: {err:?}");
+            None
+        }
+    };
+    Some(report_after(elapsed_s, fix))
+}
+
+fn report_after(elapsed_s: u64, fix: Option<GnssFix>) -> GnssReport {
+    GnssReport {
+        search_s: elapsed_s.try_into().unwrap_or(u16::MAX),
+        fix,
+    }
 }
 
 impl<'u, U, S> Op<'u, U, S> {
@@ -353,7 +434,11 @@ where
     // channels (NOT upload_r) and exit only when everything in-flight is gone.
     let mut disconnect_pending = false;
 
-    loop {
+    // While a GNSS search runs, wait at most 1 s for the modem, so a timeout
+    // polls the fix instead of ending the session.
+    let mut gnss = GnssSearch::start(client).await;
+
+    let reason = loop {
         let mut op = {
             // Upload still pending for retry
             if let Some(upload) = &state.pending_upload {
@@ -370,6 +455,11 @@ where
                     Op::Action(action)
                 } else if let Some(msg) = msg_qeue.try_recv_drain_only() {
                     Op::Upload(state.pending_upload.insert(msg))
+                } else if gnss.is_some() {
+                    match client.await_response(1).await {
+                        Some(_) => Op::Read,
+                        None => Op::GnssPoll,
+                    }
                 } else {
                     break DisconnectReason::Success;
                 }
@@ -381,13 +471,15 @@ where
                 let msg_fut = msg_qeue.recv();
 
                 // Future for incoming events from the network client
-                let poll_fut = client.await_response(state.timeout_s);
+                let timeout_s = if gnss.is_some() { 1 } else { state.timeout_s };
+                let poll_fut = client.await_response(timeout_s);
 
                 // Wait for an event on either future
                 match select3(poll_fut, cmd_fut, msg_fut).await {
                     // Incomming messages from the network are already parsed by the Client
                     Select3::A(recv) => match recv {
                         Some(_) => Op::Read,
+                        None if gnss.is_some() => Op::GnssPoll,
                         None => Op::Stop, // Timeout or uart error.
                     },
                     Select3::B(action) => Op::Action(action),
@@ -455,6 +547,14 @@ where
                     log::error!("Network: Failed to send upload");
                 }
             }
+            Op::GnssPoll => {
+                if let Some(search) = &gnss {
+                    if let Some(report) = search.poll(client).await {
+                        finish_gnss(client, signal_queue, report).await;
+                        gnss = None;
+                    }
+                }
+            }
             Op::None => {}
             Op::Stop => break DisconnectReason::Success,
         };
@@ -485,7 +585,23 @@ where
                 }
             }
         }
+    };
+
+    // Session ended before the search did: report it as not found
+    if let Some(search) = gnss {
+        finish_gnss(client, signal_queue, search.report(None)).await;
     }
+    reason
+}
+
+async fn finish_gnss<C: NetworkClient, SignalTx: SendChannel<C::Signal>>(
+    client: &mut C,
+    signal_queue: &mut SignalTx,
+    report: GnssReport,
+) {
+    client.gnss_stop().await;
+    log::info!(target: "Network", "GNSS search done: {report:?}");
+    signal_queue.send(Signal::Gnss(report).into()).await.ok();
 }
 
 /// Converts a manufacturer-generic client event into the orchestrator signal it
@@ -525,5 +641,45 @@ impl TryFrom<ClientEvent> for Signal {
             ClientEvent::FWDownloadFailed => Signal::FirmwareUpdateFailed,
             ClientEvent::Disconnected => return Err(ReadOutcome::Disconnected),
         })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn fix() -> GnssFix {
+        GnssFix {
+            lat: 52.0,
+            lon: 5.0,
+            alt: 1.0,
+            hdop: 0.9,
+            sat: 8,
+        }
+    }
+
+    #[test]
+    fn gnss_fix_ends_search() {
+        let report = search_outcome(Ok(Some(fix())), 31, 120).unwrap();
+        assert_eq!(report.search_s, 31);
+        assert_eq!(report.fix, Some(fix()));
+    }
+
+    #[test]
+    fn gnss_keeps_searching_within_budget() {
+        assert_eq!(search_outcome(Ok(None), 119, 120), None);
+    }
+
+    #[test]
+    fn gnss_gives_up_after_budget() {
+        let report = search_outcome(Ok(None), 120, 120).unwrap();
+        assert_eq!(report.search_s, 120);
+        assert_eq!(report.fix, None);
+    }
+
+    #[test]
+    fn gnss_modem_error_ends_search() {
+        let report = search_outcome(Err(GnssError::Modem), 3, 120).unwrap();
+        assert_eq!(report.fix, None);
     }
 }

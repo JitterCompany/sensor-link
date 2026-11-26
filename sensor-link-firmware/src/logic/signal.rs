@@ -1,7 +1,11 @@
 //! Orchestrator signals produced by the generic protocol client
 //! (commands, network time, firmware update protocol).
 
-use sensor_link_protocol::{cmd::Cmd, event::CellInfo, fwupdate::FWChunk};
+use sensor_link_protocol::{
+    cmd::Cmd,
+    event::{CellInfo, GnssReport},
+    fwupdate::FWChunk,
+};
 
 use crate::logic::time_adjust::{NetworkTime, Timestamp};
 
@@ -113,6 +117,9 @@ pub enum Signal {
 
     /// Serving cell, read once per session right after connecting.
     CellInfo(CellInfo),
+
+    /// Result of the GNSS search in a network session.
+    Gnss(GnssReport),
 
     /// Receiving chunk of firmware.
     FirmwareChunk(FWChunk),

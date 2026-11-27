@@ -1,5 +1,10 @@
 # Changelog
 
+An entry that starts with **No downgrade** adds something a device can come to depend on in the
+modem path, such as support for a new module or card. A device that uses it must never run
+firmware built against an older sensor-link: it would lose its modem, and with it the update
+path. Applications should block such downgrades.
+
 ## Unreleased
 
 - Protocol: `DeviceInfoV3` has an optional `sim_iccid`. The Quectel driver reads it

@@ -82,7 +82,7 @@ mod app {
 
     /// Every step must have reported by this point, or the deadline task calls
     /// the run failed. A verdict the operator can read always exists.
-    const RUN_DEADLINE_MS: u32 = 120_000;
+    const RUN_DEADLINE_MS: u32 = 150_000;
 
     #[shared]
     struct Shared {}
@@ -212,8 +212,9 @@ mod app {
         result::finish(now().micros_since(&started) / 1000);
     }
 
-    /// Steps 5-8. An empty slot or a silent module stops early, so the remaining
-    /// steps report NOT RUN rather than piling on failures with one cause.
+    /// Steps 5-8. A silent module skips the SIM step, so it reports NOT RUN
+    /// rather than piling on failures with one cause. Step 5 only stops the run
+    /// when the charger gives no current reading at all.
     async fn modem_steps(modem: &mut modem::ModemIo, charger: &mut Charger, baseline_ma: i32) {
         let powered_on = modem.power_on().await;
         if !factory::run(Step::ModemRail, modem::rail(charger, baseline_ma)).await {

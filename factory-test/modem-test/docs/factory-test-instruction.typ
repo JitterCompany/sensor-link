@@ -54,7 +54,7 @@
   #text(size: 20pt, weight: "bold")[Modem factory test]
   #v(-6pt)
   #text(size: 12pt, fill: jitter-gray)[
-    Work instruction · LTE module on its mini-PCIe carrier · about 20 seconds per module
+    Work instruction · LTE module on its mini-PCIe carrier · about 30 seconds per module
   ]
 ]
 #v(4pt)
@@ -89,7 +89,7 @@ Leave the 12 V connected all day. The *Reset* button starts each new test.
 + Wait until *Busy* stops blinking.
 + Put the SIM card in the modem, and the modem in the slot.
 + Press *Reset*. *Busy* starts blinking.
-+ Wait until *Busy* stops blinking, which takes about 20 seconds.
++ Wait until *Busy* stops blinking, which takes about 30 seconds.
 
 #grid(
   columns: (auto, 1fr),

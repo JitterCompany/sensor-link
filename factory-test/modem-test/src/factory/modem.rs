@@ -29,12 +29,10 @@ use super::{
 
 // ------------------------------------------------------------- constants ----
 
-/// Models this firmware accepts, matched case-insensitively against `AT+CGMM`.
-///
-/// `MiniPcie` in the modem driver declares `MODEL_PREFIX = "ec2"` for the same
-/// carrier, so this is the same acceptance rule stated where the test can see
-/// it. A module outside the list fails loudly rather than passing silently.
-const SUPPORTED_MODELS: &[&str] = &["ec21", "ec25"];
+/// Models this firmware accepts, matched case-insensitively against `AT+CGMM`:
+/// the EC2x cards (profile A) and the EG915N card (profile B) of the SL modem
+/// spec. A module outside the list fails loudly rather than passing silently.
+const SUPPORTED_MODELS: &[&str] = &["ec21", "ec25", "eg915n"];
 
 /// The module's power-on default. A factory-fresh module answers here.
 const BAUD_DEFAULT: u32 = 115_200;
@@ -43,17 +41,27 @@ const BAUD_DEFAULT: u32 = 115_200;
 const BAUD_PROVISIONED: u32 = 3_000_000;
 
 /// How long a module gets to boot far enough to answer `AT`, measured from when
-/// its rail came up.
-const BOOT_TIMEOUT_MS: u32 = 15_000;
+/// its rail came up. An EC21 answers after about 10.7 s. The EG915N card makes
+/// its own PWRKEY press up to 0.42 s after power-on, then needs about 10 s.
+const BOOT_TIMEOUT_MS: u32 = 18_000;
 /// Gap between `AT` probes while waiting for it
 const POLL_MS: u32 = 250;
 /// An ordinary command's reply
 const AT_TIMEOUT_MS: u32 = 1_000;
 /// `AT+CFUN` reconfigures the radio and answers more slowly than a query
 const CFUN_TIMEOUT_MS: u32 = 5_000;
-/// `AT+QPOWD` acknowledges, then powers the module down in its own time. The
-/// acknowledgement is all this waits for; the rail is cut regardless.
-const POWERDOWN_TIMEOUT_MS: u32 = 3_000;
+/// `AT+QPOWD` is refused for a while after boot (an EC21 accepts it about 9 s
+/// after `RDY`), so it is sent again at this interval until accepted.
+const POWERDOWN_RETRY_MS: u32 = 1_000;
+/// Quectel's limit: cut the supply if `POWERED DOWN` has not come by then,
+/// counted from the first `AT+QPOWD`.
+const POWERDOWN_LIMIT_MS: u32 = 65_000;
+/// Wait after `POWERED DOWN` before cutting the supply. Quectel asks 3 s for the
+/// EG91xN; an EC21 stays busy for about 2.5 s after the URC.
+const POWERED_DOWN_SETTLE_MS: u32 = 3_000;
+/// The slot spec's minimum off time. The rail is off from reset until
+/// [`ModemIo::power_on`], so that counts.
+const MIN_RAIL_OFF_MS: u64 = 2_000;
 /// SIM initialisation finishes well after the module starts answering AT, so
 /// `AT+CPIN?` has to be retried rather than asked once.
 const SIM_RETRIES: u32 = 8;
@@ -63,11 +71,9 @@ const SIM_RETRY_MS: u32 = 250;
 const RAIL_SETTLE_MS: u32 = 50;
 /// From releasing reset to resuming the UART
 const RESET_RELEASE_MS: u32 = 2;
-/// Given to an acknowledged `AT+QPOWD` before the rail is cut regardless
-const POWERDOWN_GRACE_MS: u32 = 300;
-
 /// Above this much current over the idle baseline, a module counts as present.
-/// Below it, the slot is empty or the rail did not come up. (A good module: 18 mA.)
+/// Below it, the slot is empty, the rail did not come up, or the module has not
+/// started yet. (A good EC21: 18 to 21 mA. The EG915N card: not measured.)
 const MODULE_PRESENT_MA: i32 = 10;
 /// Above this much over the baseline, a module draws far more than it should:
 /// the known defect class, modules that get hot. A good module draws 18 mA, a
@@ -91,6 +97,10 @@ impl ModemIo {
     ///
     /// The pin sequence only; whether anything answers is step 6's business.
     pub async fn power_on(&mut self) -> MonotonicInstant {
+        let uptime_ms = now().micros_since_init() / 1000;
+        if uptime_ms < MIN_RAIL_OFF_MS {
+            delay_ms((MIN_RAIL_OFF_MS - uptime_ms) as u32).await;
+        }
         self.enable.set_high();
         self.reset.set_high();
         delay_ms(RESET_RELEASE_MS).await;
@@ -158,6 +168,40 @@ impl ModemIo {
             }
         }
         &buf[..filled]
+    }
+
+    /// Wait for `needle` from the module without sending anything, e.g. a URC.
+    async fn wait_for(&mut self, needle: &[u8], timeout_ms: u32) -> bool {
+        let mut buf = [0_u8; 128];
+        let mut filled = 0;
+        let started = now();
+        loop {
+            let elapsed_ms = (now().micros_since(&started) / 1000) as u32;
+            let Some(remaining) = timeout_ms.checked_sub(elapsed_ms).filter(|&r| r > 0) else {
+                return false;
+            };
+            // Keep the tail, so a needle split across two reads still matches
+            if filled == buf.len() {
+                let keep = needle.len().min(filled);
+                buf.copy_within(filled - keep.., 0);
+                filled = keep;
+            }
+            match self
+                .uart
+                .read(&mut buf[filled..])
+                .with_timeout_ms(remaining)
+                .await
+            {
+                Some(Ok(n)) if n > 0 => {
+                    filled += n;
+                    if contains(&buf[..filled], needle) {
+                        return true;
+                    }
+                }
+                Some(Ok(_)) | None => return false,
+                Some(Err(_)) => {}
+            }
+        }
     }
 }
 
@@ -256,9 +300,9 @@ impl core::fmt::Display for Printable<'_> {
 
 // ------------------------------------------------------ step 5 modem_rail --
 
-/// Proves a module is in the slot and drawing current, before anything waits on
-/// it to talk: an empty slot is caught in a moment rather than after a 15 s
-/// boot timeout. Expects the rail to have just been switched on.
+/// Records the current right after the rail comes up. It never fails a module on
+/// its own: too much arms code 4, too little arms code 5, and either shows only
+/// if the module then stays silent. Expects the rail to have just been switched on.
 pub async fn rail(charger: &mut Charger, baseline_ma: i32) -> bool {
     delay_ms(RAIL_SETTLE_MS).await;
 
@@ -289,13 +333,15 @@ pub async fn rail(charger: &mut Charger, baseline_ma: i32) -> bool {
         MODULE_OVERCURRENT_MA.into(),
     );
 
-    // No current at all is a hard gate: nothing is fitted, so there is nothing
-    // to wait fifteen seconds for and nothing to bin.
+    // Low current only arms code 5. A card that makes its own PWRKEY press can
+    // still be starting, so it gets its chance to answer. If it stays silent,
+    // code 5 says "no response and no current": nothing fitted, or no rail.
     if delta < MODULE_PRESENT_MA {
         report::note(format_args!(
-            "{delta} mA over baseline: nothing fitted, or the 3V3_PCIE rail did not come up"
+            "{delta} mA over baseline: nothing fitted, no rail, or not started yet; trying AT anyway"
         ));
-        return report::check("module_present", false);
+        result::arm_fault(ModemFault::NoCurrent);
+        return true;
     }
 
     // Too much current only arms the fault: the module still gets asked to do
@@ -398,8 +444,8 @@ async fn wait_for_at(
 /// Proves the SIM holder on the module, its ESD network and the module's own SIM
 /// interface.
 ///
-/// The holder is on the module (J8 of `custom_ec2x_mini_pcie`), not on this
-/// board, so a failure here is always the module or the SIM — never the jig.
+/// The holder is on the card, not on this board, so a failure here is always the
+/// card or the SIM, never the jig.
 pub async fn sim(io: &mut ModemIo) -> bool {
     let mut buf = [0_u8; 256];
 
@@ -442,6 +488,53 @@ pub async fn sim(io: &mut ModemIo) -> bool {
 
 // --------------------------------------------------- step 8 modem_current --
 
+/// Quectel's power-down: `AT+QPOWD` until accepted, then `POWERED DOWN` and a
+/// settle time. Sends nothing else meanwhile, as Quectel asks. Gives up at
+/// [`POWERDOWN_LIMIT_MS`]; the caller cuts the rail either way.
+///
+/// The bare form, because it means a normal power-down on every firmware, and an
+/// EC21EFAR06A03M4G answers ERROR to the parameterised one.
+async fn power_down(io: &mut ModemIo, buf: &mut [u8]) {
+    let started = now();
+    let elapsed_ms = || (now().micros_since(&started) / 1000) as u32;
+
+    let mut attempts = 0;
+    let mut powered_down = false;
+    let accepted = loop {
+        attempts += 1;
+        let reply = io.exchange(b"AT+QPOWD\r", buf, POWERDOWN_RETRY_MS).await;
+        if contains(reply, b"OK") {
+            powered_down = contains(reply, b"POWERED DOWN");
+            break true;
+        }
+        if elapsed_ms() + POWERDOWN_RETRY_MS > POWERDOWN_LIMIT_MS {
+            break false;
+        }
+        delay_ms(POWERDOWN_RETRY_MS).await;
+    };
+    report::meas_info("powerdown_attempts", attempts.into(), "");
+
+    if accepted && !powered_down {
+        let remaining = POWERDOWN_LIMIT_MS.saturating_sub(elapsed_ms());
+        powered_down = io.wait_for(b"POWERED DOWN", remaining).await;
+    }
+    report::meas_info("powerdown_time", elapsed_ms().into(), "ms");
+    report::info(
+        "powerdown",
+        format_args!(
+            "{}",
+            match (accepted, powered_down) {
+                (true, true) => "accepted, POWERED DOWN",
+                (true, false) => "accepted, no POWERED DOWN within the limit; rail cut anyway",
+                (false, _) => "refused until the limit; rail cut anyway",
+            }
+        ),
+    );
+    if powered_down {
+        delay_ms(POWERED_DOWN_SETTLE_MS).await;
+    }
+}
+
 /// Running current with the radio off, then a polite power-down.
 ///
 /// Also proves the load switch actually switches: the current has to come back
@@ -473,37 +566,16 @@ pub async fn current(io: &mut ModemIo, charger: &mut Charger, baseline_ma: i32) 
         format_args!("{}", if alive { "alive" } else { "not responding" }),
     );
 
-    // Only ask a module that is listening. Asking one that is not costs two
-    // full command timeouts, which is enough to blow this step's budget -- and
-    // then the step is dropped mid-way, the rail is never cut here, and the
-    // rail-off check below is lost. That check is the one thing still worth
-    // proving about a module that has stopped talking.
-    let mut acknowledged = false;
+    // Only ask a module that is listening. One that is not would only use up
+    // the power-down limit, and the rail-off check below is still worth doing.
     if alive {
-        // Two spellings, because they are not interchangeable across Quectel
-        // firmwares: an EC21EFAR06A03M4G answers ERROR to the parameterised
-        // form and accepts the bare one. Trying both keeps this working across
-        // module revisions instead of encoding one bench module's quirk.
-        for cmd in [b"AT+QPOWD\r".as_slice(), b"AT+QPOWD=1\r".as_slice()] {
-            let reply = io.exchange(cmd, &mut buf, POWERDOWN_TIMEOUT_MS).await;
-            if contains(reply, b"OK") {
-                acknowledged = true;
-                break;
-            }
-        }
+        power_down(io, &mut buf).await;
+    } else {
+        report::info(
+            "powerdown",
+            format_args!("skipped, module not responding; rail cut instead"),
+        );
     }
-    report::info(
-        "powerdown",
-        format_args!(
-            "{}",
-            match (alive, acknowledged) {
-                (_, true) => "accepted",
-                (true, false) => "refused; rail cut anyway, and the current below is the proof",
-                (false, false) => "skipped, module not responding; rail cut instead",
-            }
-        ),
-    );
-    delay_ms(POWERDOWN_GRACE_MS).await;
     io.power_off();
     delay_ms(RAIL_SETTLE_MS).await;
 

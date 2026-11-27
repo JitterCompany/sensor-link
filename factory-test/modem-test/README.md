@@ -13,14 +13,14 @@ Currently supported:
 
 | | |
 |---|---|
-| Modems | Quectel EC21 and EC25 on a mini-PCIe carrier (EC21 verified on hardware). Any other `AT+CGMM` model fails the test as "model not accepted". The list is `SUPPORTED_MODELS` in `src/factory/modem.rs`. |
+| Modems | Quectel EC21 and EC25 on a mini-PCIe carrier (EC21 verified on hardware), and the `SL-modem-B-MUXPE mPCIe · EG915N` card (not yet verified on hardware). Any other `AT+CGMM` model fails the test as "model not accepted". The list is `SUPPORTED_MODELS` in `src/factory/modem.rs`. |
 | Hardware | The SL23-modem-tester board |
 
 More modem types or hardware platforms can be added later, within the same modems-only scope.
 
 ## Reading the result
 
-Press **Reset** to start a run. **Busy** blinks for about 15 s, and the result is final once it
+Press **Reset** to start a run. **Busy** blinks for about 25 s, and the result is final once it
 stops. The step-by-step operator version is
 [docs/factory-test-instruction.pdf](docs/factory-test-instruction.pdf).
 

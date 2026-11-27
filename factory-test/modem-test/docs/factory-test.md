@@ -67,7 +67,7 @@ slot is never powered by a jig that failed its self-test. That also keeps the op
 swap rule simple: when `Busy` is not blinking, the slot is off.
 
 Code 6 covers both ways the firmware itself can fail: a panic, and a run that never
-finishes. The deadline task waits `RUN_DEADLINE_MS` (120 s, against a 15 s run) and, if
+finishes. The deadline task waits `RUN_DEADLINE_MS` (150 s, against a 25 s run; a module that never powers down takes up to about 110 s) and, if
 the run is still going, marks every step that never reported as failed, fails the *board*
 zone and publishes. It blames the jig rather than the step that happened to be executing:
 a run that did not finish says nothing about the module in the slot, and attributing it
@@ -119,10 +119,10 @@ extra in the operator's instructions.
 
 | code | meaning | recognised by |
 |---|---|---|
-| 2 | module present, not talking | current rose normally, no AT response |
+| 2 | module present, not talking | current rose, no AT response |
 | 3 | SIM not detected or ICCID unreadable | `CPIN?` never READY, or `QCCID` fails |
 | 4 | module drawing excessive current | step 5 delta above `MODULE_OVERCURRENT_MA`, *and* a later step failed |
-| 5 | no module current | IBUS never rose — nothing fitted, or the 3V3_PCIE rail failed |
+| 5 | no response and no current | IBUS stayed below `MODULE_PRESENT_MA` *and* no AT response: nothing fitted, or the 3V3_PCIE rail failed |
 | 6 | model not accepted | `CGMM` not in `SUPPORTED_MODELS` (`src/factory/modem.rs`) |
 
 **There is no code 1, in either zone, and there never will be.** A single flash
@@ -147,8 +147,12 @@ to be right must not be able to fail a working part on its own. Once a batch has
 through and the log holds real distributions, re-arming it as a hard gate is a one-line
 change: `arm_fault` back to `fail`.
 
-The exception is *no* current, which stays a hard gate. An empty slot has nothing to bin
-and there is nothing to wait fifteen seconds for.
+*No* current does not fail a module on its own either, since 2026-11-27. It arms code 5,
+and the AT handshake still runs. The `SL-modem-B-MUXPE mPCIe · EG915N` card makes its own
+PWRKEY press 180 to 420 ms after power-on, and its current in the first second has not
+been measured yet. On the EC21 the 10 mA gate never rejected a good module in 50 runs.
+The cost: an empty slot shows code 5 only after the boot timeout (`BOOT_TIMEOUT_MS`,
+18 s), not after 2 s.
 
 Pass is defined by communication, never by current alone: the modem answers, the model is
 accepted, the SIM reads READY and the ICCID comes back. Current is what *picks the code*
@@ -252,6 +256,11 @@ is now set from measured hardware**. Failure paths walked on real modules:
 | module fitted, SIM removed | 14.6 s | modem blink code 3, step 7 the only failure |
 | module that gets hot | 2 s | modem blink code 4, steps 6–8 NOT RUN |
 
+These runs predate 2026-11-27. Since then step 5 no longer stops the run and step 8 waits
+for a real power-down, so every run that reaches step 8 takes about 10 s longer. Measured
+since: a fresh EC21 without SIM, 25.1 s, code 3. Expected, not yet re-measured: slot empty
+or a hot module, about 20 s, still code 5 or 4.
+
 The good-module pass was re-confirmed after the over-current band was tightened: 19 mA
 against the 80 mA gate, all eight steps, 3 Mbaud link.
 
@@ -260,7 +269,7 @@ against the 80 mA gate, all eight steps, 3 Mbaud link.
 One power connection in the morning; **NRST — the `Reset` button — is the start button**
 from then on. A reset re-runs the whole sequence from `init`, with no reflash and no power
 cycle, so the operator loop is: seat module, press `Reset`, wait for `Busy` to stop
-blinking, read the verdict, swap. About 15 s of test in a ~30 s cycle.
+blinking, read the verdict, swap. About 25 s of test in a ~40 s cycle.
 
 That makes the swap a hot swap, so it is worth being precise about what the slot looks
 like between runs. Every supply pin at J7 — 2, 24, 39, 41 and 52, 3.3Vaux included — is
@@ -323,9 +332,9 @@ moment power is connected, on inrush, long before the test samples anything. The
 operator instruction asks for 1 A or more for that reason.
 
 Before the gate was measured, this module ran the full 35 s and came out as "present,
-not talking" — true, but the less useful of the two facts about it, and it
-cost the 15 s AT timeout to reach. Catching it at step 5 bins it in 2 s and tells the
-factory *how* it is broken.
+not talking" — true, but the less useful of the two facts about it. With the gate armed
+at step 5 it shows code 4, which tells the factory *how* it is broken. It now gets there
+after the AT timeout rather than in 2 s, because step 5 no longer stops the run.
 
 The no-SIM run is the one to read if you want to see the log do its job. The module
 answers `+CME ERROR: 10` to `AT+CPIN?`, so the retry loop stops on the first attempt
@@ -421,13 +430,22 @@ application's job, not this test's. Answering at 3 Mbaud is worth something extr
 on its own: it exercises the level shifters at full speed, where a marginal one
 would show up.
 
-`AT+QPOWD` is attempted in both its spellings and this firmware revision answers
-`ERROR` to both, while a plain `AT` immediately before still returns `OK` -- so
-the command is refused rather than the session being dead, most likely because
-`CFUN=4` has the radio off. The test records which of the two it was and then
-cuts the rail regardless; `modem_rail_off` gates on the current returning to the
-idle baseline, which is the real proof that the module powered down and that the
-load switch switches.
+**Power-down (since 2026-11-27).** `AT+QPOWD` is refused for a while after boot. A fresh
+EC21-E (EC21EFAR08A01M4G) answers `ERROR` until about 9 s after `RDY`, also under
+`CFUN=4`, and then accepts it; `POWERED DOWN` follows 0.1 s later. The earlier run above
+saw `ERROR` too, and blamed `CFUN=4`; the timing explains it. So step 8 sends the bare
+`AT+QPOWD` once per second until `OK`, sends nothing else meanwhile, waits for
+`POWERED DOWN` and then 3 s more, and cuts the rail. It cuts anyway 65 s after the first
+attempt. Measured: accepted at the 8th attempt, 7.3 s, step 8 12.1 s in all.
+
+The sources: the EC2x AT commands manual (v1.3 and v2.2) allows cutting the supply once
+STATUS is low or the URC has come. The EG91xN manual (v1.5) asks 3 s after both. On the
+EC21-E the current stays raised for about 2.5 s after the URC, so 3 s is used for every
+module. After that the EC21 card would restart by itself, about 9 s after the URC,
+because it holds PWRKEY low; the rail is cut well before that.
+
+`modem_rail_off` still gates on the current returning to the idle baseline, the proof that
+the load switch switches.
 
 The present threshold (10 mA over baseline) is still provisional; the over-current one
 is set from measured modules -- see *The over-current band, measured* above. Every current

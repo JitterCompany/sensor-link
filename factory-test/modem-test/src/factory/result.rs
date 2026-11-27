@@ -33,7 +33,7 @@ pub enum Step {
     Rails = 3,
     /// MCP9701A board temperature through the internal ADC
     Temperature = 4,
-    /// Modem rail up, and the current says a module is actually in the slot
+    /// Modem rail up, and its current recorded
     ModemRail = 5,
     /// Modem boots and answers AT; model accepted
     ModemAt = 6,
@@ -94,10 +94,11 @@ impl Step {
             Step::Rails => 5_000,
             Step::Temperature => 3_000,
             Step::ModemRail => 5_000,
-            // Includes the module's own boot, ~11 s
-            Step::ModemAt => 20_000,
+            // Includes the module's own boot, ~11 s, up to `BOOT_TIMEOUT_MS`
+            Step::ModemAt => 25_000,
             Step::ModemSim => 6_000,
-            Step::ModemCurrent => 5_000,
+            // The power-down limit of 65 s, the 3 s settle and two current bursts
+            Step::ModemCurrent => 75_000,
         }
     }
 
@@ -176,7 +177,7 @@ pub enum ModemFault {
     Sim = 3,
     /// Module draws far more than it should -- the known defect class
     Overcurrent = 4,
-    /// No current at all: nothing fitted, or the 3V3_PCIE rail failed
+    /// No response and no current: nothing fitted, or the 3V3_PCIE rail failed
     NoCurrent = 5,
     /// AT+CGMM reported a model this firmware does not support
     Model = 6,

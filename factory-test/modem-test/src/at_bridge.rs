@@ -254,10 +254,19 @@ mod app {
         let b = cx.local.bridge;
 
         if let Err(e) = b.charger.configure().await {
-            b.event('#', format_args!("charger configure failed, no IBUS: {e:?}"));
+            b.event(
+                '#',
+                format_args!("charger configure failed, no IBUS: {e:?}"),
+            );
         }
         b.uart.set_baud_rate(BAUD_DEFAULT);
-        b.event('#', format_args!("AT bridge ready, slot off. uid={:08x?}", hardware::device_uid()));
+        b.event(
+            '#',
+            format_args!(
+                "AT bridge ready, slot off. uid={:08x?}",
+                hardware::device_uid()
+            ),
+        );
 
         let mut periods = Periods {
             ibus_ms: IBUS_PERIOD_DEFAULT_MS,

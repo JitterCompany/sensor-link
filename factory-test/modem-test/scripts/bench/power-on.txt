@@ -1,0 +1,25 @@
+# Power-on timing and current: from VCC on to the first AT reply, IBUS every 50 ms.
+# A provisioned EC2x boots at its stored rate: put "!baud 3000000" before !on.
+!ibus 50
+!off
+sleep 3
+!on
+wait RDY 30
+AT
+wait OK 2
+ATI
+wait OK 2
+AT+CGMM
+wait OK 2
+AT+CGMR
+wait OK 2
+sleep 5
+AT+CFUN=4
+wait OK 10
+sleep 5
+AT+QPOWD=1
+wait POWERED DOWN 70
+sleep 3
+!off
+sleep 3
+!ibus 0

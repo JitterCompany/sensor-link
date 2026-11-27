@@ -27,8 +27,17 @@ The modules differ in:
 |---|---|---|
 | Baud rate at boot | 115200 | 115200 |
 | Baud rate in use | 3000000, stored with `AT&W` | 115200. 1 Mbaud, the module's maximum, failed on a test host. 921600 not tested. |
-| Wait after `POWERED DOWN` | 1 s | 3 s |
-| Power-on to `RDY` | about 11 s | not measured |
+| Wait after `POWERED DOWN` | none required by the AT commands manual (v1.3 and v2.2): cut after STATUS low or the URC. The driver waits 1 s. Measured: about 2.5 s of activity after the URC. | 3 s after STATUS low and the URC (AT commands manual v1.5) |
+| Power-on to `RDY` | 10.7 s (EC21-E, measured) | not measured |
+
+Quectel's AT commands manual for the EG91xN series (v1.5, `AT+QPOWD`) says: after `AT+QPOWD`,
+send no other AT command. The module outputs `POWERED DOWN` and sets STATUS low. Wait 3 s after
+both before cutting the supply. Cut it anyway if `POWERED DOWN` has not arrived within 65 s.
+
+On an EC21-E card, current stayed raised for about 2.5 s after the URC, in four runs. The card
+then restarted by itself, about 9 s after the URC, because it holds PWRKEY low. `AT+QPOWD=1` was
+refused with `ERROR` until about 9 s after `RDY`, so the driver retries it. The hardware design guides warn about
+that: PWRKEY must be high after `AT+QPOWD`, or the module turns on again.
 
 ### Terms
 - **Card, host, profile, extension:** as in the SL modem spec. A profile is the electrical contract
@@ -74,6 +83,15 @@ Until the module is known, the driver uses the longest boot timeout and the long
 `POWERED DOWN` of the accepted modules. `Quectel::module()` returns the detected module for logs
 and telemetry.
 
+To power off, the driver:
+
+1. Sends `AT+QPOWD=1`. On `ERROR` or no reply it sends it again, once per second, and sends no
+   other AT command in between.
+2. Waits for `POWERED DOWN`, then 3 s more, then cuts the supply.
+3. Cuts the supply anyway 65 s after the first `AT+QPOWD=1`, with or without `OK` or the URC.
+   The 65 s is Quectel's limit for the EG91xN; the EC2x manual gives 60 s for leaving the
+   network.
+
 The host describes itself through `SlModemSlot`, in the spec's terms. Extensions are added later as
 builder methods that take the pin, e.g. `.pps(pin)`. A host with `VIO` other than 3.3 V must read
 `CARD_ID` before power-on. That constructor comes with the `CARD_ID` reader, not before.
@@ -83,7 +101,8 @@ builder methods that take the pin, e.g. `.pps(pin)`. A host with `VIO` other tha
 
 ## Consequences
 - A 3.3 V slot host runs the EG915N card after a sensor-link update, with no code change.
-- A board with a soldered EG915N waits 3 s instead of 1 s after `POWERED DOWN`.
+- The wait after `POWERED DOWN` is 3 s for every module, so EC2x hosts also wait 2 s longer. The
+  extra cost is about 0.3 J per power cycle, small next to a boot and attach.
 - Power-on on a slot host can take a few extra AT probes, until a baud rate answers.
 - A device with a new card must never downgrade to firmware that does not support that card's
   module. It would lose its modem, and with it the update path. The CHANGELOG entry that adds a
